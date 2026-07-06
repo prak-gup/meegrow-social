@@ -5,10 +5,11 @@
 **Pipeline:** /e2e-dev (Grill → Research → Prototype → PRD → AX-PRD → Issues → Implement → QA)
 
 ## Current phase
-**Phase 2 — RESEARCH complete** (2026-07-06). Phase 1 grill gate passed; 6 parallel research agents done; `RESEARCH.md` synthesized + committed.
+**Phase 4 — PRD APPROVED** (2026-07-06). PRD gate passed. Client login kept in v1; X built-but-flagged.
 
 ## Next action
-**Phase 4 — PRD.** Draft `docs/dev/PRD.md` from GRILL_NOTES + RESEARCH (Opus). Then Phase 5 AX-PRD stack grill (Fable 5) on the 5 open questions in RESEARCH §4. (Phase 3 prototype skipped — no design question needs evidence yet.)
+**Phase 5 — AX-PRD (GREENFIELD, one-way doors).** Switch to **Fable 5** for the stack grill. Resolve RESEARCH §4 open questions + lock tech choices, module shape, feedback loops, testing strategy, AFK-agent runtime. Then scaffold repo passing its own CI. Draft → `docs/dev/AX-PRD.md`.
+AX-PRD grill agenda staged (see below).
 
 ## Phase 2 outputs
 - `docs/dev/RESEARCH.md` — synthesis + decisions
