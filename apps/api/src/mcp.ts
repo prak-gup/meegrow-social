@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { createPost, listPosts } from '@meegrow-social/core';
+import { createPost, listConnections, listPosts } from '@meegrow-social/core';
 import type { AuthContext } from '@meegrow-social/core';
 
 /**
@@ -41,6 +41,18 @@ export function buildMcpServer(ctx: AuthContext): McpServer {
     async () => {
       const posts = await listPosts(ctx.workspaceId);
       return { content: [{ type: 'text', text: JSON.stringify(posts) }] };
+    },
+  );
+
+  server.registerTool(
+    'list_connections',
+    {
+      description: 'List connected social accounts in the workspace, with token health.',
+      inputSchema: {},
+    },
+    async () => {
+      const connections = await listConnections(ctx.workspaceId);
+      return { content: [{ type: 'text', text: JSON.stringify(connections) }] };
     },
   );
 

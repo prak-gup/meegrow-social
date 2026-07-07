@@ -5,6 +5,7 @@ export * from './providers/fake.js';
 export * from './providers/registry.js';
 export * from './services/apikeys.js';
 export * from './services/auth.js';
+export * from './services/connections.js';
 export * from './services/scheduler.js';
 export * from './services/posts.js';
 export * from './services/publish.js';
