@@ -21,13 +21,13 @@ the **decisions and constraints** those briefs imply for the PRD + AX-PRD.
    - **Google GBP**: v4 API sits at **0 QPM** until a manual access request is approved (business must be verified/active 60+ days) → then 300 QPM.
    - **Google/YouTube + GBP OAuth**: unverified/"Testing" apps get **7-day refresh-token expiry** — must complete OAuth verification for durable tokens.
    - **LinkedIn**: Community Management API review (org posting) — the known long pole.
-   → **PRD implication:** launch on the integrations already approved (Meta IG+FB, GBP posting
+     → **PRD implication:** launch on the integrations already approved (Meta IG+FB, GBP posting
      works today); ship LinkedIn/X/YouTube providers behind flags; a milestone tracks approvals.
 
 3. **X is now a metered cost center.** Since Feb 6 2026 X is pay-per-use: **$0.015/post, $0.20 if it
    contains a link** (13×). For a marketing publisher (mostly link posts) X is expensive.
    → **Decision:** build the X provider (cheap, interface already known) but **deprioritize** it and
-     add cost-accounting; it is NOT a launch-blocking platform.
+   add cost-accounting; it is NOT a launch-blocking platform.
 
 4. **Don't hardcode metric names.** Meta is mid-migration `impressions → views` (IG done; FB Page
    metrics dropping Nov 15 2025 → Jun 15 2026). Analytics schema must be **key-value/flexible**, not
@@ -43,7 +43,7 @@ the **decisions and constraints** those briefs imply for the PRD + AX-PRD.
    monorepo, shared `core` service layer that REST and MCP both call as thin adapters. Postgres +
    Redis only — no Temporal, no Elasticsearch (the explicit anti-goal). Postiz uses Temporal for
    durable scheduling; **BullMQ delayed jobs replicate the needed semantics** (durable timer + retries
-   + per-account concurrency) without operating Temporal.
+   - per-account concurrency) without operating Temporal.
 
 ---
 
@@ -53,18 +53,18 @@ Redirect convention (adopt): `${APP_URL}/integrations/social/<identifier>`. Prov
 `isBetweenSteps` do two-phase OAuth (user picks Page/Org/Channel/Location after redirect):
 Facebook, Instagram(-business), LinkedIn-Page, YouTube, GMB.
 
-| platform | scopes | publish endpoint | media flow | analytics | notes |
-|---|---|---|---|---|---|
-| **instagram** (via Page) | instagram_basic, pages_show_list, pages_read_engagement, business_management, instagram_content_publish, instagram_manage_comments, instagram_manage_insights | `graph.facebook.com/v25/{ig}/media` → `/media_publish` | 2-step container; **media must be a PUBLIC URL**; carousel children | `/{id}/insights` (views not impressions) | 100 posts/24h |
-| **instagram-standalone** (IG Login) | instagram_business_basic/_content_publish/_manage_comments/_manage_insights | `graph.instagram.com/{user}/media` → publish | 2-step container | graph.instagram.com insights | refreshCron token (60d) |
-| **facebook** | pages_show_list, business_management, pages_manage_posts, pages_manage_engagement, pages_read_engagement, read_insights | `graph.facebook.com/v25/{page}/feed \| /photos \| /videos \| /video_reels` | direct per-type; reels/stories phased | `/{page}/insights`, `/{post}/insights` | non-expiring Page tokens via /me/accounts |
-| **linkedin** (personal) | openid, profile, w_member_social, r_basicprofile | `api.linkedin.com/rest/posts` | `/rest/images \| /rest/videos` initialize→upload→attach | `/v2/socialActions/{urn}` | needs `LinkedIn-Version: YYYYMM` header |
-| **linkedin-page** (org) | + rw_organization_admin, w_organization_social, r_organization_social | `/rest/posts` (author = org URN) | same | organizationalEntityShare/FollowerStatistics | **needs Community Management API approval** |
-| **x / twitter** | (OAuth2+PKCE now): tweet.read/write, users.read, offline.access, media.write | `api.x.com/2/tweets` | `POST /2/media/upload` chunked (v1.1 sunset Jun 2025) | public_metrics | **metered**; 2h token; single-use rotating refresh |
-| **youtube** | userinfo.profile/email, youtube, youtube.force-ssl, youtube.readonly, youtube.upload, youtubepartner, yt-analytics.readonly (all **sensitive**, no paid audit) | `videos.insert` (resumable, SDK) | resumable upload | YouTube Analytics API (`reports.query`, ~48h delay) | ~100 uploads/day; verification-gated; Brand-Account Manager path for multi-client |
-| **gmb** (Google Business) | userinfo.profile/email, business.manage | `mybusiness.googleapis.com/v4/{id}/localPosts` (STANDARD/EVENT/OFFER/ALERT) | `mybusinessbusinessinformation/v1/{loc}/media` (sourceUrl) | `businessprofileperformance/v1/{loc}:fetchMultiDailyMetricsTimeSeries` | v4 at 0 QPM until access approved |
-| **threads** (later) | threads_basic/_content_publish/_manage_replies/_manage_insights | `graph.threads.net/v1.0/{user}/threads` → publish | 2-step container | threads_insights | refreshCron |
-| **tiktok** (later) | video.list, user.info.basic, video.publish/upload, user.info.profile/stats | `open.tiktokapis.com/v2/post/publish/{video}/init/` | creator_info query → init → status poll | video.query metrics | maxConcurrent 300 |
+| platform                            | scopes                                                                                                                                                         | publish endpoint                                                            | media flow                                                          | analytics                                                              | notes                                                                             |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| **instagram** (via Page)            | instagram_basic, pages_show_list, pages_read_engagement, business_management, instagram_content_publish, instagram_manage_comments, instagram_manage_insights  | `graph.facebook.com/v25/{ig}/media` → `/media_publish`                      | 2-step container; **media must be a PUBLIC URL**; carousel children | `/{id}/insights` (views not impressions)                               | 100 posts/24h                                                                     |
+| **instagram-standalone** (IG Login) | instagram_business_basic/_content_publish/_manage_comments/_manage_insights                                                                                    | `graph.instagram.com/{user}/media` → publish                                | 2-step container                                                    | graph.instagram.com insights                                           | refreshCron token (60d)                                                           |
+| **facebook**                        | pages_show_list, business_management, pages_manage_posts, pages_manage_engagement, pages_read_engagement, read_insights                                        | `graph.facebook.com/v25/{page}/feed \| /photos \| /videos \| /video_reels`  | direct per-type; reels/stories phased                               | `/{page}/insights`, `/{post}/insights`                                 | non-expiring Page tokens via /me/accounts                                         |
+| **linkedin** (personal)             | openid, profile, w_member_social, r_basicprofile                                                                                                               | `api.linkedin.com/rest/posts`                                               | `/rest/images \| /rest/videos` initialize→upload→attach             | `/v2/socialActions/{urn}`                                              | needs `LinkedIn-Version: YYYYMM` header                                           |
+| **linkedin-page** (org)             | + rw_organization_admin, w_organization_social, r_organization_social                                                                                          | `/rest/posts` (author = org URN)                                            | same                                                                | organizationalEntityShare/FollowerStatistics                           | **needs Community Management API approval**                                       |
+| **x / twitter**                     | (OAuth2+PKCE now): tweet.read/write, users.read, offline.access, media.write                                                                                   | `api.x.com/2/tweets`                                                        | `POST /2/media/upload` chunked (v1.1 sunset Jun 2025)               | public_metrics                                                         | **metered**; 2h token; single-use rotating refresh                                |
+| **youtube**                         | userinfo.profile/email, youtube, youtube.force-ssl, youtube.readonly, youtube.upload, youtubepartner, yt-analytics.readonly (all **sensitive**, no paid audit) | `videos.insert` (resumable, SDK)                                            | resumable upload                                                    | YouTube Analytics API (`reports.query`, ~48h delay)                    | ~100 uploads/day; verification-gated; Brand-Account Manager path for multi-client |
+| **gmb** (Google Business)           | userinfo.profile/email, business.manage                                                                                                                        | `mybusiness.googleapis.com/v4/{id}/localPosts` (STANDARD/EVENT/OFFER/ALERT) | `mybusinessbusinessinformation/v1/{loc}/media` (sourceUrl)          | `businessprofileperformance/v1/{loc}:fetchMultiDailyMetricsTimeSeries` | v4 at 0 QPM until access approved                                                 |
+| **threads** (later)                 | threads_basic/_content_publish/_manage_replies/_manage_insights                                                                                                | `graph.threads.net/v1.0/{user}/threads` → publish                           | 2-step container                                                    | threads_insights                                                       | refreshCron                                                                       |
+| **tiktok** (later)                  | video.list, user.info.basic, video.publish/upload, user.info.profile/stats                                                                                     | `open.tiktokapis.com/v2/post/publish/{video}/init/`                         | creator_info query → init → status poll                             | video.query metrics                                                    | maxConcurrent 300                                                                 |
 
 Media specs captured in `research/meta.md` (IG 4:5–1.91:1 images ≤8MB; Reels 9:16 MP4 3–90s ~1GB;
 caption 2200/30 hashtags) and `research/x-youtube.md` (Shorts = 9:16 <3min + #Shorts, no dedicated API).
@@ -132,5 +132,6 @@ exposure → OAuth 2.1 timing; (e) dashboard framework (Next.js vs Vite+Fastify-
 ---
 
 ## Phase 2 gate
+
 Research complete; decisions above are ready to harden into the PRD (Phase 4) and the one-way-door
 stack choices into the AX-PRD (Phase 5). Nothing here reopens the Phase 1 grill decisions.

@@ -1,6 +1,6 @@
 # AX-PRD — Meegrow Social
 
-**Status:** Draft for approval (Phase 5 gate = repo scaffold passes its own CI)
+**Status:** APPROVED 2026-07-06 — building scaffold (Phase 5 gate = repo scaffold passes its own CI)
 **Last updated:** 2026-07-06
 **Upstream:** `PRD.md` (approved), `RESEARCH.md` §4, grill round 2026-07-06 (Fable 5)
 
@@ -12,23 +12,23 @@ increment inside these walls.
 
 ## 1. Tech choices (one-way doors — LOCKED)
 
-| Door | Choice | Why (short) |
-|---|---|---|
-| Language | **TypeScript, strict** (Node 22 LTS) | End-to-end types = the #1 AFK-agent guardrail |
-| Package mgmt | **pnpm + Turborepo** monorepo | Shared contracts, per-package CI caching |
-| HTTP server | **Fastify** | Less framework magic than Nest; plain functions = predictable diffs |
-| DB | **Postgres 17 + Drizzle ORM** | No codegen drift; SQL control needed for RLS |
-| Tenancy enforcement | **RLS from M0** (`SET LOCAL app.workspace_id` per request/job) | Cross-tenant leak = impossible-by-construction; chosen against app-layer-only scoping due to prior antidote isolation-leak scar |
-| Jobs | **BullMQ on Redis 7** | Delayed jobs (publish), repeatables (analytics poll, token sweeper); hand-rolled DLQ table |
-| MCP | **Streamable HTTP, STATELESS**, single `/mcp` on the api service | Headless agents reconnect cheaply; no session affinity behind Caddy |
-| API auth (machine) | Per-workspace keys `sk_live_…` — SHA-256 at rest, prefix shown, scopes[], revocable | Same key authorizes REST + MCP |
-| Human auth | Email+password + Google SSO, invite-only (Lucia-style session pattern, no auth SaaS) | No external auth dependency |
-| Webhooks | **Hand-rolled on BullMQ** (~300 lines): HMAC svix-compatible headers, backoff, DLQ + replay | Light-ops principle; consumers are antidote + n8n |
-| Media | S3 + public URLs; **ffprobe validate-and-reject**, NO transcoding in v1 | antidote already emits correct formats |
-| Dashboard | **Vite + React SPA** (Tailwind + shadcn), static via Caddy, pure API consumer | No SSR traps; dogfoods the API |
-| Analytics store | Key-value metric rows (`metric` text, `value` numeric, `captured_at`) | Survives platform metric renames (impressions→views) |
-| Deploy | 1 EC2 · docker compose: `api` (REST+MCP), `worker`, `postgres`, `redis`; Caddy on host; S3 media | Proven ops pattern; ≤$30/mo |
-| CI | GitHub Actions + pre-commit (lint-staged) | Same gates local and remote |
+| Door                | Choice                                                                                           | Why (short)                                                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Language            | **TypeScript, strict** (Node 22 LTS)                                                             | End-to-end types = the #1 AFK-agent guardrail                                                                                   |
+| Package mgmt        | **pnpm + Turborepo** monorepo                                                                    | Shared contracts, per-package CI caching                                                                                        |
+| HTTP server         | **Fastify**                                                                                      | Less framework magic than Nest; plain functions = predictable diffs                                                             |
+| DB                  | **Postgres 17 + Drizzle ORM**                                                                    | No codegen drift; SQL control needed for RLS                                                                                    |
+| Tenancy enforcement | **RLS from M0** (`SET LOCAL app.workspace_id` per request/job)                                   | Cross-tenant leak = impossible-by-construction; chosen against app-layer-only scoping due to prior antidote isolation-leak scar |
+| Jobs                | **BullMQ on Redis 7**                                                                            | Delayed jobs (publish), repeatables (analytics poll, token sweeper); hand-rolled DLQ table                                      |
+| MCP                 | **Streamable HTTP, STATELESS**, single `/mcp` on the api service                                 | Headless agents reconnect cheaply; no session affinity behind Caddy                                                             |
+| API auth (machine)  | Per-workspace keys `sk_live_…` — SHA-256 at rest, prefix shown, scopes[], revocable              | Same key authorizes REST + MCP                                                                                                  |
+| Human auth          | Email+password + Google SSO, invite-only (Lucia-style session pattern, no auth SaaS)             | No external auth dependency                                                                                                     |
+| Webhooks            | **Hand-rolled on BullMQ** (~300 lines): HMAC svix-compatible headers, backoff, DLQ + replay      | Light-ops principle; consumers are antidote + n8n                                                                               |
+| Media               | S3 + public URLs; **ffprobe validate-and-reject**, NO transcoding in v1                          | antidote already emits correct formats                                                                                          |
+| Dashboard           | **Vite + React SPA** (Tailwind + shadcn), static via Caddy, pure API consumer                    | No SSR traps; dogfoods the API                                                                                                  |
+| Analytics store     | Key-value metric rows (`metric` text, `value` numeric, `captured_at`)                            | Survives platform metric renames (impressions→views)                                                                            |
+| Deploy              | 1 EC2 · docker compose: `api` (REST+MCP), `worker`, `postgres`, `redis`; Caddy on host; S3 media | Proven ops pattern; ≤$30/mo                                                                                                     |
+| CI                  | GitHub Actions + pre-commit (lint-staged)                                                        | Same gates local and remote                                                                                                     |
 
 Deliberately NOT chosen: NestJS, Prisma, Temporal, Elasticsearch, Svix (any form), Next.js,
 auth SaaS, tRPC (REST + OpenAPI is the public contract; internal dashboard uses the same API).
@@ -54,11 +54,12 @@ meegrow-social/
 ```
 
 **Deep modules (sealed cores — HITL changes only):**
+
 - `core/providers` — the `SocialProvider` interface (Postiz-derived):
   `generateAuthUrl / authenticate / refreshToken / post(details[]) / analytics / postAnalytics`
-  + metadata (`identifier`, `isBetweenSteps`, `maxConcurrentJobs`, `tokenModel`). Typed errors:
-  `ProviderAuthError` (→ mark needsReconnect) vs `ProviderBadRequestError` (→ fail post) vs
-  `ProviderTransientError` (→ retry). Resilient fetch wrapper (429/5xx backoff) lives here.
+  - metadata (`identifier`, `isBetweenSteps`, `maxConcurrentJobs`, `tokenModel`). Typed errors:
+    `ProviderAuthError` (→ mark needsReconnect) vs `ProviderBadRequestError` (→ fail post) vs
+    `ProviderTransientError` (→ retry). Resilient fetch wrapper (429/5xx backoff) lives here.
 - `core/scheduling` — job orchestration semantics: idempotency keys, delayed-job lifecycle,
   cancel/edit interruption, DLQ writes.
 - `db` tenant context — the ONLY way to get a DB handle is `withWorkspace(workspaceId, fn)`
@@ -101,6 +102,7 @@ An AFK agent's definition of done = "PR open, CI green, acceptance criteria demo
 ## 5. Where AFK agents run
 
 **Local git worktrees on Prakhar's Mac** (existing agents-meegrow pattern):
+
 - Each AFK agent = headless Claude Code (Sonnet) in its own worktree, pulls ONE unblocked
   `afk`-labeled GitHub issue, implements, opens PR, CI gates merge. Sentinel: `NO MORE TASKS`.
 - HITL issues (`hitl` label) are NEVER touched by AFK agents — worked in the main session (Opus).
@@ -112,6 +114,7 @@ An AFK agent's definition of done = "PR open, CI green, acceptance criteria demo
 ## 6. Scaffold definition (the Phase 5 gate)
 
 The scaffold PR must contain, and pass CI with:
+
 - Turborepo + pnpm workspaces wired (`contracts`, `db`, `core`, `testing`, `api`, `worker`, `web`)
 - Strict tsconfig base, ESLint+Prettier config, pre-commit hooks, GitHub Actions workflow (gates §3)
 - Drizzle setup + initial migration: `workspaces`, `users`, `memberships`, `api_keys`,

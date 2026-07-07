@@ -1,0 +1,31 @@
+{
+  "name": "@meegrow-social/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run --exclude '**/*.integration.test.ts'",
+    "test:integration": "vitest run '**/*.integration.test.ts'",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.1",
+    "@meegrow-social/contracts": "workspace:*",
+    "@meegrow-social/core": "workspace:*",
+    "@meegrow-social/db": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "bullmq": "^5.34.5",
+    "drizzle-orm": "^0.38.3",
+    "fastify": "^5.2.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@meegrow-social/testing": "workspace:*",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

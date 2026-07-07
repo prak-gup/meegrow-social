@@ -1,0 +1,47 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: mgs
+          POSTGRES_PASSWORD: mgs
+          POSTGRES_DB: meegrow_social
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U mgs -d meegrow_social"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7.2-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgres://mgs:mgs@localhost:5432/meegrow_social
+      APP_DATABASE_URL: postgres://mgs_app:mgs_app@localhost:5432/meegrow_social
+      REDIS_URL: redis://localhost:6379
+      TOKEN_ENCRYPTION_KEY: ci-only-key-32byteslong-0000000000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: bash scripts/guardrails.sh
+      - run: pnpm lint
+      - run: pnpm build
+      - run: pnpm --filter @meegrow-social/db db:migrate
+      - run: pnpm test
+      - run: pnpm test:integration
