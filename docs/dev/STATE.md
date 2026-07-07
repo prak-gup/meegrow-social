@@ -6,7 +6,9 @@
 
 ## Current phase
 
-**Phase 5 — SCAFFOLD COMPLETE + GREEN** (2026-07-07). AX-PRD approved; monorepo scaffolded and passing
+**Phase 6 — ISSUE GRAPH PUBLISHED** (2026-07-07). 31 GitHub issues on prak-gup/meegrow-social with hitl/afk + M1..M-launch labels, blocked-by graph in bodies. M1=#1-18 (minus #11 deploy=M2), M2=#11,19-23, M3=#24-27, M4=#28-30, launch=#31. QA issues per milestone (#18,#23,#27,#30).
+
+Scaffold (Phase 5) was completed same day: AX-PRD approved; monorepo scaffolded and passing
 its own gate locally: build 7/7, unit 5/5, integration 11/11 (RLS read-isolation + WITH-CHECK write
 rejection against the non-superuser `mgs_app` role, publish e2e via FakeProvider, API cross-workspace
 no-leak), lint/guardrails/format clean. This IS the M0 walking skeleton (create post via REST **and**
@@ -14,11 +16,11 @@ MCP → schedule → publish → record → read back).
 
 ## Next action
 
-1. Push repo to GitHub; confirm CI green (service containers).
-2. **Switch to Fable 5** → Phase 6: /to-issues on PRD → real GitHub issues, hitl/afk labels,
-   blocked-by graph, milestone labels (M1 Meta core → M-launch). Quiz Prakhar on granularity/tags first.
-3. Phase 7 tracer bullet is effectively done (scaffold = walking skeleton); first real issue = the
-   Instagram or Facebook provider (HITL, Opus) replacing FakeProvider.
+**Phase 7 — Implement.**
+1. START NOW (human, no code): issue #1 approvals workstream — submit GBP access, Google OAuth verification, LinkedIn CMA, Meta advanced-access check.
+2. First HITL slice: **#2 OAuth connect plumbing** (Opus, main session) — everything else in M1 hangs off it.
+3. Immediately parallelizable AFK issues (Sonnet, local worktrees, .env.test only): **#3 #4 #5 #6 #7 #8 #9** (then #12 #15 #16 #17 as blockers clear).
+4. Then HITL providers #13 Instagram → #14 Facebook (live creds + fixture capture), → #18 M1 QA.
 
 ## Key scaffold facts (for any resuming session)
 
