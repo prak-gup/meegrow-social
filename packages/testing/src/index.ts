@@ -1,5 +1,6 @@
 import { db, withWorkspace, schema } from '@meegrow-social/db';
 import { encryptToken, setScheduler, type Scheduler } from '@meegrow-social/core';
+import type { WeeklySlot } from '@meegrow-social/contracts';
 import { sql } from 'drizzle-orm';
 
 /** Truncate every table — call in beforeEach for isolated integration tests. */
@@ -49,6 +50,26 @@ export async function createConnection(
       .returning();
     if (!conn) throw new Error('failed to create connection');
     return conn.id;
+  });
+}
+
+export async function createQueue(
+  workspaceId: string,
+  opts: { name?: string; timezone?: string; slots?: WeeklySlot[]; active?: boolean } = {},
+): Promise<string> {
+  return withWorkspace(workspaceId, async (tx) => {
+    const [row] = await tx
+      .insert(schema.queues)
+      .values({
+        workspaceId,
+        name: opts.name ?? 'Test Queue',
+        timezone: opts.timezone ?? 'Asia/Kolkata',
+        slots: opts.slots ?? [{ dow: 1, time: '09:00' }],
+        active: opts.active ?? true,
+      })
+      .returning();
+    if (!row) throw new Error('failed to create queue');
+    return row.id;
   });
 }
 

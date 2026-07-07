@@ -1,0 +1,1 @@
+ALTER TABLE "posts" ADD COLUMN "queue_id" uuid;

@@ -67,5 +67,7 @@ export const postView = z.object({
   publishAt: z.coerce.date().nullable(),
   releaseUrl: z.string().url().nullable(),
   error: z.string().nullable(),
+  /** Set when this post was created via a queue's next-free-slot assignment (PRD F3.4). */
+  queueId: z.string().uuid().nullable(),
 });
 export type PostView = z.infer<typeof postView>;

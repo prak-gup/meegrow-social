@@ -44,6 +44,30 @@ export function buildMcpServer(ctx: AuthContext): McpServer {
     },
   );
 
+  server.registerTool(
+    'add_to_queue',
+    {
+      description:
+        'Add a post to a queue; it is assigned the next unoccupied timezone-aware weekly slot ' +
+        '(PRD F3.4) instead of an exact publish time.',
+      inputSchema: {
+        caption: z.string().default(''),
+        connectionId: z.string().uuid(),
+        provider: z.string(),
+        queueId: z.string().uuid(),
+      },
+    },
+    async (args) => {
+      const posts = await createPost(ctx.workspaceId, {
+        caption: args.caption,
+        media: [],
+        variants: [{ connectionId: args.connectionId, provider: args.provider as never }],
+        schedule: { type: 'queue', queueId: args.queueId },
+      });
+      return { content: [{ type: 'text', text: JSON.stringify(posts) }] };
+    },
+  );
+
   return server;
 }
 
