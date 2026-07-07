@@ -5,6 +5,7 @@ import { getProvider } from '../providers/registry.js';
 import type { AuthTokens, PostDetails } from '../providers/types.js';
 import { decryptToken } from '../crypto.js';
 import { ProviderAuthError, ProviderBadRequestError } from '../errors.js';
+import { resolveMediaRefs } from './media.js';
 
 export interface PublishOutcome {
   postId: string;
@@ -40,7 +41,9 @@ export async function publishPost(workspaceId: string, postId: string): Promise<
       externalId: conn.externalId,
       displayName: conn.displayName,
     };
-    const media = (post.media as MediaRef[]) ?? [];
+    // Posts may be created with only a mediaId (no url yet) — resolve public URLs here (PRD F3.3:
+    // IG/GBP require them at publish time).
+    const media = await resolveMediaRefs(tx, (post.media as MediaRef[]) ?? []);
     const details: PostDetails[] = [{ caption: post.caption, media }];
 
     await tx.update(schema.posts).set({ status: 'publishing' }).where(eq(schema.posts.id, postId));

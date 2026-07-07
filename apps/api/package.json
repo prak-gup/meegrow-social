@@ -14,6 +14,8 @@
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
+    "@fastify/multipart": "^10.0.0",
+    "@fastify/static": "^9.1.3",
     "@meegrow-social/contracts": "workspace:*",
     "@meegrow-social/core": "workspace:*",
     "@meegrow-social/db": "workspace:*",
