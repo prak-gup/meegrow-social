@@ -17,6 +17,7 @@ MCP → schedule → publish → record → read back).
 ## Next action
 
 **Phase 7 — Implement.**
+
 1. START NOW (human, no code): issue #1 approvals workstream — submit GBP access, Google OAuth verification, LinkedIn CMA, Meta advanced-access check.
 2. First HITL slice: **#2 OAuth connect plumbing** (Opus, main session) — everything else in M1 hangs off it.
 3. Immediately parallelizable AFK issues (Sonnet, local worktrees, .env.test only): **#3 #4 #5 #6 #7 #8 #9** (then #12 #15 #16 #17 as blockers clear).
