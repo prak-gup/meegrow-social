@@ -6,7 +6,11 @@
 
 ## Current phase
 
-**Phase 7 — Implement (IN PROGRESS). Wave 1 MERGED to main + CI green.** (2026-07-08)
+**Phase 7 — Implement (IN PROGRESS). Wave 1 + #12 MERGED to main + CI green.** (2026-07-08)
+
+Wave 2:
+
+- **#12 token-health + refresh sweeper** (AFK-intent, done HITL/inline, PR #39 MERGED) — token-model-aware health (7d refreshable / 14d one-time windows), `expiresInDays` on ConnectionView, hourly BullMQ sweeper (`refreshExpiringTokens`, optimistic-CAS idempotency), auth-failure → `needs_reconnect` + webhook **outbox** (`core/services/webhooks.ts` → `webhook_deliveries` rows; #6 builds the signed-delivery drainer). No migration, no `server.ts` change. 129 tests green. Webhook-outbox handoff logged for #6.
 
 Merged to main (squash), each CI-green, then integrated locally (111 tests / 19 files green on main):
 
@@ -18,21 +22,23 @@ Merged to main (squash), each CI-green, then integrated locally (111 tests / 19 
 Migrations on main: 0000 base · 0001 oauth_flows · 0002 posts.queue_id (parallel `0001_*` collision resolved by regenerating #4's as 0002). Worktrees removed; merged branches deleted.
 Filed follow-up **#36** (atomic oauth-flow consume — non-blocking hardening).
 
+**GOTCHA — AFK subagent dispatch is environmentally blocked in this session:** `Agent`/`general-purpose` subagents inherit this session's huge MCP tool-schema set (plane×2, dataforseo, firecrawl, stitch, antidote×6, …) which alone exceeds the subagent context budget → "Prompt is too long" even on a 1-line prompt. #12 was therefore implemented inline (HITL) against a written brief. For #16 etc.: either go inline, or open a fresh session without the heavy MCP servers attached, or use a restricted-tool agent type.
+
 Scaffold (Phase 5) = M0 walking skeleton; issue graph (Phase 6) = 31 issues (M1=#1-18 minus #11; M2=#11,19-23; M3=#24-27; M4=#28-30; launch=#31; QA #18/#23/#27/#30).
 
 ## Team + deploy (2026-07-08, added mid-Phase-7)
 
 - **Priyanshi = GitHub `priyanshijain1`** (from Meegrowlabs/au-auto-news-console). INVITED (write) to prak-gup/meegrow-social + prak-gup/meegrow-social-postiz — **pending her acceptance** (can't assign issues until she accepts). Her mission = issue **#1** (platform approvals) + **#37** (E2E QA staging). Assign both once she accepts.
 - **Deploy (#11) = PR #38 open** — Dockerfile + compose.prod + Caddy snippet + CI deploy workflow + docs/dev/DEPLOY.md. Target: REUSE the Postiz box **35.154.66.120** (own isolated PG/Redis, API 127.0.0.1:8990, Caddy → social.meegrowlabs.com). CODE done; HUMAN half = DNS A record + clone to /opt/meegrow-social + fill .env + Caddy reload + first `docker compose up`. Docker image build UNTESTED locally (daemon down) — first deploy validates. This unblocks the OAuth callback URL → approvals.
-- **#12 token-health = PARKED** on branch feat/12-token-health (1 wip commit: added expiresInDays to ConnectionView — build currently red on that branch until listConnections populates it). Resume after deploy.
+- **#12 token-health = DONE** (PR #39 merged 2026-07-08). Was parked on feat/12-token-health; resumed + shipped.
 
 ## Next action
 
 **Wave 2.** LESSON FROM WAVE 1: parallel worktrees produced 4 green PRs but heavy `server.ts`/migration merge friction. Preference going forward — SERIALIZE issues that touch `apps/api/src/server.ts`, `packages/core/src/services/posts.ts`, or migrations; only fan out truly disjoint work.
 
-- Unblocked AFK now: **#8 api-keys** (server.ts — serialize), **#6 webhooks** (server.ts + publish.ts — serialize), **#5 post-lifecycle** (server.ts + posts.ts — serialize), **#9 analytics collection** (adds accountAnalytics to SocialProvider — touches sealed core, lean HITL). **#36** hardening (db only — safe to parallelize).
-- Needs #2 (now merged): **#12 token-health/refresh sweeper** (AFK).
-- HITL next: **#10 human auth** (sessions), then providers **#13 Instagram → #14 Facebook** (real Meta creds + live fixture capture) → **#18 M1 QA**. **#15 MCP-expansion**, **#16/#17 dashboard** after #10.
+- Unblocked AFK now: **#8 api-keys** (server.ts — serialize), **#6 webhooks** (server.ts + publish.ts — serialize; consumes #12's webhook_deliveries outbox), **#5 post-lifecycle** (server.ts + posts.ts — serialize), **#9 analytics collection** (adds accountAnalytics to SocialProvider — touches sealed core, lean HITL). **#36** hardening (db only — safe to parallelize).
+- **#12 token-health = DONE (PR #39).**
+- HITL **NOW: #10 human auth** (sessions — current session), then providers **#13 Instagram → #14 Facebook** (real Meta creds + live fixture capture) → **#18 M1 QA**. **#15 MCP-expansion**, **#16/#17 dashboard** after #10. Note: **#16 is also blocked by #5** (post-lifecycle, not yet merged) — do #5 before/with #16.
 - Human, no code: **issue #1 approvals** (GBP access, Google OAuth verification, LinkedIn CMA, Meta advanced-access) — STILL UNSTARTED, long pole for M2/M3.
 - Still needed: **Priyanshi's GitHub username** (Postiz keep-alive handoff + optional QA here).
 

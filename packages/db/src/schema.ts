@@ -68,6 +68,24 @@ export const memberships = pgTable('memberships', {
   createdAt: createdAt(),
 });
 
+/**
+ * Server-side login sessions (issue #10). NON-RLS / identity-routing, like users/memberships: a
+ * session resolves user → active membership → workspace BEFORE any tenant context is set, so it
+ * can't itself be tenant-scoped. The cookie carries an opaque random token; only its sha-256 is
+ * stored (`tokenHash`) so a DB leak grants no live sessions. `activeWorkspaceId` has no FK (mirrors
+ * posts.queue_id) — a user may hold several memberships and switch between them.
+ */
+export const sessions = pgTable('sessions', {
+  id: id(),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull().unique(),
+  activeWorkspaceId: uuid('active_workspace_id'),
+  expiresAt: ts('expires_at').notNull(),
+  createdAt: createdAt(),
+});
+
 // --- Tenant-scoped tables (RLS-forced; see migrate.ts) ---
 
 export const apiKeys = pgTable('api_keys', {
