@@ -20,6 +20,12 @@ Filed follow-up **#36** (atomic oauth-flow consume — non-blocking hardening).
 
 Scaffold (Phase 5) = M0 walking skeleton; issue graph (Phase 6) = 31 issues (M1=#1-18 minus #11; M2=#11,19-23; M3=#24-27; M4=#28-30; launch=#31; QA #18/#23/#27/#30).
 
+## Team + deploy (2026-07-08, added mid-Phase-7)
+
+- **Priyanshi = GitHub `priyanshijain1`** (from Meegrowlabs/au-auto-news-console). INVITED (write) to prak-gup/meegrow-social + prak-gup/meegrow-social-postiz — **pending her acceptance** (can't assign issues until she accepts). Her mission = issue **#1** (platform approvals) + **#37** (E2E QA staging). Assign both once she accepts.
+- **Deploy (#11) = PR #38 open** — Dockerfile + compose.prod + Caddy snippet + CI deploy workflow + docs/dev/DEPLOY.md. Target: REUSE the Postiz box **35.154.66.120** (own isolated PG/Redis, API 127.0.0.1:8990, Caddy → social.meegrowlabs.com). CODE done; HUMAN half = DNS A record + clone to /opt/meegrow-social + fill .env + Caddy reload + first `docker compose up`. Docker image build UNTESTED locally (daemon down) — first deploy validates. This unblocks the OAuth callback URL → approvals.
+- **#12 token-health = PARKED** on branch feat/12-token-health (1 wip commit: added expiresInDays to ConnectionView — build currently red on that branch until listConnections populates it). Resume after deploy.
+
 ## Next action
 
 **Wave 2.** LESSON FROM WAVE 1: parallel worktrees produced 4 green PRs but heavy `server.ts`/migration merge friction. Preference going forward — SERIALIZE issues that touch `apps/api/src/server.ts`, `packages/core/src/services/posts.ts`, or migrations; only fan out truly disjoint work.
