@@ -6,11 +6,13 @@
 
 ## Current phase
 
-**Phase 7 — Implement (IN PROGRESS). Wave 1 + #12 MERGED to main + CI green.** (2026-07-08)
+**Phase 7 — Implement (IN PROGRESS). Wave 1 + #12 + #10 + #5 MERGED to main + CI green.** (2026-07-09)
 
 Wave 2:
 
-- **#12 token-health + refresh sweeper** (AFK-intent, done HITL/inline, PR #39 MERGED) — token-model-aware health (7d refreshable / 14d one-time windows), `expiresInDays` on ConnectionView, hourly BullMQ sweeper (`refreshExpiringTokens`, optimistic-CAS idempotency), auth-failure → `needs_reconnect` + webhook **outbox** (`core/services/webhooks.ts` → `webhook_deliveries` rows; #6 builds the signed-delivery drainer). No migration, no `server.ts` change. 129 tests green. Webhook-outbox handoff logged for #6.
+- **#12 token-health + refresh sweeper** (AFK-intent, done HITL/inline, PR #39 MERGED) — token-model-aware health (7d refreshable / 14d one-time windows), `expiresInDays` on ConnectionView, hourly BullMQ sweeper (`refreshExpiringTokens`, optimistic-CAS idempotency), auth-failure → `needs_reconnect` + webhook **outbox** (`core/services/webhooks.ts` → `webhook_deliveries` rows; #6 builds the signed-delivery drainer). No migration, no `server.ts` change. Webhook-outbox handoff logged for #6.
+- **#10 human auth** (HITL/inline, PR #40 MERGED) — argon2id (`@node-rs/argon2` napi prebuild; variant locked by `$argon2id$`-prefix test — the Algorithm const-enum can't be referenced under `verbatimModuleSyntax`), opaque sha-256-hashed sessions (migration **0003** `sessions`, non-tenant), httpOnly+SameSite=Lax+Secure(env) cookie, login/logout/me/rotate/switch-workspace, CSRF = SameSite=Lax + Origin check on cookie-authed mutations, seed script `pnpm --filter @meegrow-social/api seed:owner`. Session-authed requests hit the same `/v1` as key-authed.
+- **#5 post-lifecycle** (AFK-intent, done HITL/inline) — DELETE/PATCH `/v1/posts/:id` (cancel interrupts the BullMQ job via a new `Scheduler.cancelPublish` port; edit reschedules/demotes/promotes; rejected past `scheduled`), filterable `GET /v1/posts` (status/provider/connectionId/from/to + stable order + offset paging), `GET /v1/posts/calendar` (tz-aware day buckets via Luxon), `GET /v1/post-groups/:id`. No migration. 156 tests green. **This unblocks #16's Posts edit/cancel.**
 
 Merged to main (squash), each CI-green, then integrated locally (111 tests / 19 files green on main):
 
@@ -19,7 +21,7 @@ Merged to main (squash), each CI-green, then integrated locally (111 tests / 19 
 - **#4 queues** (AFK, PR #34) — CRUD + DST-correct next-free-slot (Luxon) + add_to_queue.
 - **#3 media** (AFK, PR #35) — disk+S3 storage drivers, ffprobe validate-and-reject, /v1/media + register_media_from_url, publish resolves mediaId→url.
 
-Migrations on main: 0000 base · 0001 oauth_flows · 0002 posts.queue_id (parallel `0001_*` collision resolved by regenerating #4's as 0002). Worktrees removed; merged branches deleted.
+Migrations on main: 0000 base · 0001 oauth_flows · 0002 posts.queue_id (parallel `0001_*` collision resolved by regenerating #4's as 0002) · 0003 sessions (#10, non-tenant). Worktrees removed; merged branches deleted.
 Filed follow-up **#36** (atomic oauth-flow consume — non-blocking hardening).
 
 **GOTCHA — AFK subagent dispatch is environmentally blocked in this session:** `Agent`/`general-purpose` subagents inherit this session's huge MCP tool-schema set (plane×2, dataforseo, firecrawl, stitch, antidote×6, …) which alone exceeds the subagent context budget → "Prompt is too long" even on a 1-line prompt. #12 was therefore implemented inline (HITL) against a written brief. For #16 etc.: either go inline, or open a fresh session without the heavy MCP servers attached, or use a restricted-tool agent type.
@@ -36,9 +38,9 @@ Scaffold (Phase 5) = M0 walking skeleton; issue graph (Phase 6) = 31 issues (M1=
 
 **Wave 2.** LESSON FROM WAVE 1: parallel worktrees produced 4 green PRs but heavy `server.ts`/migration merge friction. Preference going forward — SERIALIZE issues that touch `apps/api/src/server.ts`, `packages/core/src/services/posts.ts`, or migrations; only fan out truly disjoint work.
 
-- Unblocked AFK now: **#8 api-keys** (server.ts — serialize), **#6 webhooks** (server.ts + publish.ts — serialize; consumes #12's webhook_deliveries outbox), **#5 post-lifecycle** (server.ts + posts.ts — serialize), **#9 analytics collection** (adds accountAnalytics to SocialProvider — touches sealed core, lean HITL). **#36** hardening (db only — safe to parallelize).
-- **#12 token-health = DONE (PR #39).**
-- HITL **NOW: #10 human auth** (sessions — current session), then providers **#13 Instagram → #14 Facebook** (real Meta creds + live fixture capture) → **#18 M1 QA**. **#15 MCP-expansion**, **#16/#17 dashboard** after #10. Note: **#16 is also blocked by #5** (post-lifecycle, not yet merged) — do #5 before/with #16.
+- Unblocked AFK now: **#8 api-keys** (server.ts — serialize), **#6 webhooks** (server.ts + publish.ts — serialize; consumes #12's webhook_deliveries outbox), **#9 analytics collection** (adds accountAnalytics to SocialProvider — touches sealed core, lean HITL). **#36** hardening (db only — safe to parallelize).
+- **#12, #10, #5 = DONE (PRs #39/#40/#5).** #5 unblocks #16's Posts edit/cancel.
+- NEXT: **#16 dashboard** (large SPA build — Vite+React today has NO Tailwind/shadcn/router/typed-client yet; must add all of that + Connections/Composer/Posts pages). afk-label but dispatch is env-blocked (see GOTCHA above) → inline. All blockers (#2/#3/#4/#5/#10) now merged.
 - Human, no code: **issue #1 approvals** (GBP access, Google OAuth verification, LinkedIn CMA, Meta advanced-access) — STILL UNSTARTED, long pole for M2/M3.
 - Still needed: **Priyanshi's GitHub username** (Postiz keep-alive handoff + optional QA here).
 

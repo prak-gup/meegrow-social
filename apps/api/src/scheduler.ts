@@ -31,5 +31,10 @@ export function createBullScheduler(redisUrl: string): Scheduler {
         },
       );
     },
+    async cancelPublish({ postId }) {
+      // remove() targets the delayed/waiting job by its deterministic jobId. Returns false (no throw)
+      // if the job already completed/failed/was removed — i.e. a safe no-op for late cancels.
+      await queue.remove(`publish:${postId}`);
+    },
   };
 }

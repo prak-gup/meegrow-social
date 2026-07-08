@@ -5,15 +5,18 @@ import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import {
+  calendarPostsQuery,
   createPostInput,
   createQueueInput,
   finishConnectInput,
+  listPostsQuery,
   loginInput,
   logsAggregateInput,
   logsQueryInput,
   providerIdentifier,
   registerMediaFromUrlInput,
   switchWorkspaceInput,
+  updatePostInput,
   updateQueueInput,
   validateMediaInput,
 } from '@meegrow-social/contracts';
@@ -22,6 +25,8 @@ import {
   authenticateApiKey,
   authenticateSession,
   buildUserView,
+  calendarPosts,
+  cancelPost,
   createPost,
   createQueue,
   createSession,
@@ -31,6 +36,7 @@ import {
   finishConnect,
   getMedia,
   getPost,
+  getPostGroup,
   getQueue,
   handleCallback,
   listConnections,
@@ -47,11 +53,13 @@ import {
   SESSION_TTL_MS,
   startConnect,
   switchActiveWorkspace,
+  updatePost,
   updateQueue,
   uploadMedia,
   validateMediaAgainstPlatform,
   verifyUserCredentials,
   type AuthContext,
+  PostStateError,
 } from '@meegrow-social/core';
 import { buildMcpServer, newStatelessTransport } from './mcp.js';
 
@@ -289,12 +297,53 @@ export async function buildServer(): Promise<FastifyInstance> {
     }
   });
 
-  app.get('/v1/posts', async (req) => ({ posts: await listPosts(req.authContext!.workspaceId) }));
+  app.get('/v1/posts', async (req, reply) => {
+    const parsed = listPostsQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    return { posts: await listPosts(req.authContext!.workspaceId, parsed.data) };
+  });
+
+  // Registered before /:id so the static path wins (find-my-way prefers static over parametric).
+  app.get('/v1/posts/calendar', async (req, reply) => {
+    const parsed = calendarPostsQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    return calendarPosts(req.authContext!.workspaceId, parsed.data);
+  });
 
   app.get<{ Params: { id: string } }>('/v1/posts/:id', async (req, reply) => {
     const post = await getPost(req.authContext!.workspaceId, req.params.id);
     if (!post) return reply.code(404).send({ error: 'not found' });
     return { post };
+  });
+
+  app.patch<{ Params: { id: string } }>('/v1/posts/:id', async (req, reply) => {
+    const parsed = updatePostInput.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    try {
+      const post = await updatePost(req.authContext!.workspaceId, req.params.id, parsed.data);
+      if (!post) return reply.code(404).send({ error: 'not found' });
+      return { post };
+    } catch (err) {
+      if (err instanceof PostStateError) return reply.code(409).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  app.delete<{ Params: { id: string } }>('/v1/posts/:id', async (req, reply) => {
+    try {
+      const ok = await cancelPost(req.authContext!.workspaceId, req.params.id);
+      if (!ok) return reply.code(404).send({ error: 'not found' });
+      return { cancelled: true };
+    } catch (err) {
+      if (err instanceof PostStateError) return reply.code(409).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  app.get<{ Params: { id: string } }>('/v1/post-groups/:id', async (req, reply) => {
+    const group = await getPostGroup(req.authContext!.workspaceId, req.params.id);
+    if (!group) return reply.code(404).send({ error: 'not found' });
+    return { group };
   });
 
   app.post('/v1/media', async (req, reply) => {
