@@ -1,5 +1,5 @@
 {
-  "id": "4d61e75e-2959-421f-a48c-e8cf71d0f8ce",
+  "id": "5661b346-0273-4eb5-b429-239655bef777",
   "prevId": "9d638fce-36f5-456a-9d03-ddc2b0a1ff9b",
   "version": "7",
   "dialect": "postgresql",
@@ -548,6 +548,82 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.oauth_flows": {
+      "name": "oauth_flows",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "code_verifier": {
+          "name": "code_verifier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "redirect_uri": {
+          "name": "redirect_uri",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "encrypted_tokens": {
+          "name": "encrypted_tokens",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "accounts": {
+          "name": "accounts",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.post_groups": {
       "name": "post_groups",
       "schema": "",
@@ -688,12 +764,6 @@
         "idempotency_key": {
           "name": "idempotency_key",
           "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "queue_id": {
-          "name": "queue_id",
-          "type": "uuid",
           "primaryKey": false,
           "notNull": false
         },
