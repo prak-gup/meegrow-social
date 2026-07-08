@@ -6,37 +6,31 @@
 
 ## Current phase
 
-**Phase 6 — ISSUE GRAPH PUBLISHED** (2026-07-07). 31 GitHub issues on prak-gup/meegrow-social with hitl/afk + M1..M-launch labels, blocked-by graph in bodies. M1=#1-18 (minus #11 deploy=M2), M2=#11,19-23, M3=#24-27, M4=#28-30, launch=#31. QA issues per milestone (#18,#23,#27,#30).
+**Phase 7 — Implement (IN PROGRESS). Wave 1 MERGED to main + CI green.** (2026-07-08)
 
-Scaffold (Phase 5) was completed same day: AX-PRD approved; monorepo scaffolded and passing
-its own gate locally: build 7/7, unit 5/5, integration 11/11 (RLS read-isolation + WITH-CHECK write
-rejection against the non-superuser `mgs_app` role, publish e2e via FakeProvider, API cross-workspace
-no-leak), lint/guardrails/format clean. This IS the M0 walking skeleton (create post via REST **and**
-MCP → schedule → publish → record → read back).
+Merged to main (squash), each CI-green, then integrated locally (111 tests / 19 files green on main):
+
+- **#2 OAuth connect plumbing** (HITL, PR #32) — start/callback/two-phase-finish, opaque-flow-id state, connections API/MCP.
+- **#7 logs** (AFK, PR #33) — request-logging hook + filterable /v1/logs + aggregate + retention job.
+- **#4 queues** (AFK, PR #34) — CRUD + DST-correct next-free-slot (Luxon) + add_to_queue.
+- **#3 media** (AFK, PR #35) — disk+S3 storage drivers, ffprobe validate-and-reject, /v1/media + register_media_from_url, publish resolves mediaId→url.
+
+Migrations on main: 0000 base · 0001 oauth_flows · 0002 posts.queue_id (parallel `0001_*` collision resolved by regenerating #4's as 0002). Worktrees removed; merged branches deleted.
+Filed follow-up **#36** (atomic oauth-flow consume — non-blocking hardening).
+
+Scaffold (Phase 5) = M0 walking skeleton; issue graph (Phase 6) = 31 issues (M1=#1-18 minus #11; M2=#11,19-23; M3=#24-27; M4=#28-30; launch=#31; QA #18/#23/#27/#30).
 
 ## Next action
 
-**Phase 7 — Implement (IN PROGRESS).**
+**Wave 2.** LESSON FROM WAVE 1: parallel worktrees produced 4 green PRs but heavy `server.ts`/migration merge friction. Preference going forward — SERIALIZE issues that touch `apps/api/src/server.ts`, `packages/core/src/services/posts.ts`, or migrations; only fan out truly disjoint work.
 
-OPEN PRs (all CI-green in isolation; NOT merged):
+- Unblocked AFK now: **#8 api-keys** (server.ts — serialize), **#6 webhooks** (server.ts + publish.ts — serialize), **#5 post-lifecycle** (server.ts + posts.ts — serialize), **#9 analytics collection** (adds accountAnalytics to SocialProvider — touches sealed core, lean HITL). **#36** hardening (db only — safe to parallelize).
+- Needs #2 (now merged): **#12 token-health/refresh sweeper** (AFK).
+- HITL next: **#10 human auth** (sessions), then providers **#13 Instagram → #14 Facebook** (real Meta creds + live fixture capture) → **#18 M1 QA**. **#15 MCP-expansion**, **#16/#17 dashboard** after #10.
+- Human, no code: **issue #1 approvals** (GBP access, Google OAuth verification, LinkedIn CMA, Meta advanced-access) — STILL UNSTARTED, long pole for M2/M3.
+- Still needed: **Priyanshi's GitHub username** (Postiz keep-alive handoff + optional QA here).
 
-- **PR #32 = issue #2 OAuth connect plumbing** (HITL — awaiting human review of the state/flow security model). Branch feat/2-oauth-connect. THE foundation; merge FIRST.
-- **PR #33 = issue #7 logs** (AFK). Branch feat/7-logs.
-- **PR #34 = issue #4 queues** (AFK). Branch feat/4-queues.
-- issue #3 media: AFK agent still building (worktree ../mgs-wt-3, branch feat/3-media-library).
-
-MERGE SEQUENCING (conflicts are real, resolve in order):
-
-1. Merge #32 (#2) first.
-2. Then for each AFK PR: rebase onto main, REGENERATE its drizzle migration to the next ordinal (all three branched off main and made a `0001_*` — #2=oauth_flows, #4=posts.queue_id; #7 needed none), resolve `apps/api/src/server.ts` + `packages/core/src/services/posts.ts` overlaps, re-run gate, merge.
-3. Worktrees to clean up after merge: `git worktree remove ../mgs-wt-{3,4,7}`.
-
-THEN:
-
-- Remaining M1 AFK issues: #5 post-lifecycle, #6 webhooks, #8 api-keys, #9 analytics (unblocked) → #12 token-health (needs #2 merged), #15 MCP-expansion, #16/#17 dashboard (need #10 auth).
-- HITL: #10 human auth; providers #13 Instagram → #14 Facebook (real Meta creds + fixture capture) → #18 M1 QA.
-- Human, no code: issue #1 approvals workstream (GBP access, Google OAuth verification, LinkedIn CMA, Meta advanced-access) — still unstarted, long pole for M2/M3.
-- Still needed: Priyanshi's GitHub username (Postiz keep-alive handoff + optional QA on this repo).
+RLS note for resuming: app connects as non-superuser `mgs_app` (APP_DATABASE_URL); admin conn = DATABASE_URL. Integration tests share one DB → Vitest `fileParallelism:false`; parallel AFK agents must NOT run integration locally (per-PR CI validates it). Local dev used host Postgres 14 on :5432 (Docker Desktop was down).
 
 ## Key scaffold facts (for any resuming session)
 
