@@ -27,4 +27,10 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // The SPA (#16) is the documented fetch-based API consumer (AX-PRD §1) — only the backend apps
+    // (api/worker) must route network through core. Lift the no-fetch guardrail for apps/web.
+    files: ['apps/web/src/**/*.{ts,tsx}'],
+    rules: { 'no-restricted-globals': 'off' },
+  },
 );

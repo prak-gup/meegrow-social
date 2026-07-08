@@ -28,7 +28,9 @@ export class FakeProvider implements SocialProvider {
     redirectUri: string;
     state: string;
   }): Promise<GenerateAuthUrl> {
-    return { url: `${redirectUri}?fake=1&state=${state}` };
+    // Include a fake `code` so a real browser navigation completes the OAuth round-trip through the
+    // public /connect/callback in dev (the callback requires both state + code).
+    return { url: `${redirectUri}?fake=1&state=${state}&code=fake-code` };
   }
 
   async authenticate(): Promise<AuthTokens> {
