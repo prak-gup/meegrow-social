@@ -18,6 +18,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1080.0",
     "@meegrow-social/contracts": "workspace:*",
     "@meegrow-social/db": "workspace:*",
     "drizzle-orm": "^0.38.3",

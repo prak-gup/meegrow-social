@@ -13,7 +13,8 @@ See `docs/dev/` for the full paper trail: `PRD.md` (what), `AX-PRD.md` (how / on
 packages/contracts  Zod schemas + types — single source of truth for every boundary
 packages/db         Drizzle schema, migrations, FORCE-RLS, withWorkspace() tenant helper
 packages/core       Sealed business logic: SocialProvider interface + registry, posts,
-                    publish, auth, api-keys, scheduler port. No app/framework code.
+                    publish, auth, api-keys, scheduler port, media (storage driver + ffprobe
+                    validate-and-reject). No app/framework code.
 packages/testing    Factories, DB reset, recording scheduler
 apps/api            Fastify REST + stateless /mcp — thin adapters over core
 apps/worker         BullMQ consumer → core.publishPost, DLQ on exhaustion
@@ -33,7 +34,8 @@ apps/web            Vite + React dashboard shell (pure API consumer)
 
 ## Dev setup
 
-Requires Node ≥ 22 and pnpm. Postgres + Redis via Docker (or a local Postgres).
+Requires Node ≥ 22, pnpm, and `ffprobe` on PATH (ffmpeg package — used to probe media
+dimensions/duration/codec; never transcodes). Postgres + Redis via Docker (or a local Postgres).
 
 ```bash
 pnpm install

@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { createPost, listConnections, listPosts } from '@meegrow-social/core';
+import { createPost, listConnections, listPosts, registerMediaFromUrl } from '@meegrow-social/core';
 import type { AuthContext } from '@meegrow-social/core';
 
 /**
@@ -41,6 +41,23 @@ export function buildMcpServer(ctx: AuthContext): McpServer {
     async () => {
       const posts = await listPosts(ctx.workspaceId);
       return { content: [{ type: 'text', text: JSON.stringify(posts) }] };
+    },
+  );
+
+  server.registerTool(
+    'register_media_from_url',
+    {
+      description:
+        'Register media already hosted at a public URL (e.g. antidote-generated images) ' +
+        'without re-uploading it — returns a mediaId usable in create_post media refs.',
+      inputSchema: {
+        url: z.string().url(),
+        kind: z.enum(['image', 'video']).optional(),
+      },
+    },
+    async (args) => {
+      const media = await registerMediaFromUrl(ctx.workspaceId, { url: args.url, kind: args.kind });
+      return { content: [{ type: 'text', text: JSON.stringify(media) }] };
     },
   );
 

@@ -37,6 +37,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      # ubuntu-latest ships ffmpeg already; this is a cheap no-op safety net so media (#3)
+      # ffprobe-based tests never depend on runner-image drift.
+      - run: ffprobe -version || (sudo apt-get update && sudo apt-get install -y ffmpeg)
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: bash scripts/guardrails.sh

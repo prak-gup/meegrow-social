@@ -1,5 +1,8 @@
+import { resolve } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
+import multipart from '@fastify/multipart';
+import fastifyStatic from '@fastify/static';
 import {
   createPostInput,
   createQueueInput,
@@ -7,16 +10,20 @@ import {
   logsAggregateInput,
   logsQueryInput,
   providerIdentifier,
+  registerMediaFromUrlInput,
   updateQueueInput,
+  validateMediaInput,
 } from '@meegrow-social/contracts';
 import {
   aggregateEventLogs,
   authenticateApiKey,
   createPost,
   createQueue,
+  DEFAULT_MEDIA_DISK_DIR,
   deleteConnection,
   deleteQueue,
   finishConnect,
+  getMedia,
   getPost,
   getQueue,
   handleCallback,
@@ -27,8 +34,11 @@ import {
   QueueInactiveError,
   QueueNotFoundError,
   recordApiRequestLog,
+  registerMediaFromUrl,
   startConnect,
   updateQueue,
+  uploadMedia,
+  validateMediaAgainstPlatform,
   type AuthContext,
 } from '@meegrow-social/core';
 import { buildMcpServer, newStatelessTransport } from './mcp.js';
@@ -48,6 +58,9 @@ function bearer(req: FastifyRequest): string | null {
   if (!h?.startsWith('Bearer ')) return null;
   return h.slice('Bearer '.length).trim();
 }
+
+// Largest per-platform spec today is IG reels at 1GB (RESEARCH.md) — leave a little headroom.
+const MAX_UPLOAD_BYTES = 1200 * 1024 * 1024;
 
 /**
  * Fire-and-forget request-log write, shared by the `onResponse` hook (covers /v1 routes) and the
@@ -72,14 +85,25 @@ function logRequest(
 export async function buildServer(): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: true });
+  await app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES } });
+
+  // Disk-backed media is served straight off disk in dev/test; prod (MEDIA_STORAGE_DRIVER=s3)
+  // serves public URLs directly from S3 and never needs this route.
+  if ((process.env.MEDIA_STORAGE_DRIVER ?? 'disk') !== 's3') {
+    await app.register(fastifyStatic, {
+      root: resolve(process.env.MEDIA_DISK_DIR ?? DEFAULT_MEDIA_DISK_DIR),
+      prefix: '/media/',
+      decorateReply: false,
+    });
+  }
 
   app.get('/healthz', async () => ({ ok: true }));
 
-  // API-key auth for everything except health and the public OAuth callback (a browser redirect
-  // from the provider — it carries no API key; its own opaque state is the credential).
+  // API-key auth for everything except health, the public OAuth callback (a browser redirect with
+  // no API key — its opaque state is the credential), and the public media route.
   app.addHook('preHandler', async (req, reply) => {
-    const path = req.url.split('?')[0];
-    if (path === '/healthz' || path === '/connect/callback') return;
+    const path = req.url.split('?')[0] ?? '';
+    if (path === '/healthz' || path === '/connect/callback' || path.startsWith('/media/')) return;
     const key = bearer(req);
     const ctx = key ? await authenticateApiKey(key) : null;
     if (!ctx) return reply.code(401).send({ error: 'invalid or missing API key' });
@@ -165,6 +189,50 @@ export async function buildServer(): Promise<FastifyInstance> {
     const post = await getPost(req.authContext!.workspaceId, req.params.id);
     if (!post) return reply.code(404).send({ error: 'not found' });
     return { post };
+  });
+
+  app.post('/v1/media', async (req, reply) => {
+    const file = await req.file();
+    if (!file) return reply.code(400).send({ error: 'multipart "file" field is required' });
+    const data = await file.toBuffer();
+    const media = await uploadMedia(req.authContext!.workspaceId, {
+      filename: file.filename,
+      contentType: file.mimetype,
+      data,
+    });
+    return reply
+      .code(201)
+      .send({ mediaId: media.id, url: media.url, kind: media.kind, meta: media.meta });
+  });
+
+  app.post('/v1/media/register', async (req, reply) => {
+    const parsed = registerMediaFromUrlInput.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const media = await registerMediaFromUrl(req.authContext!.workspaceId, parsed.data);
+    return reply
+      .code(201)
+      .send({ mediaId: media.id, url: media.url, kind: media.kind, meta: media.meta });
+  });
+
+  app.get<{ Params: { id: string } }>('/v1/media/:id', async (req, reply) => {
+    const media = await getMedia(req.authContext!.workspaceId, req.params.id);
+    if (!media) return reply.code(404).send({ error: 'not found' });
+    return { media };
+  });
+
+  app.post<{ Params: { id: string } }>('/v1/media/:id/validate', async (req, reply) => {
+    const parsed = validateMediaInput.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    try {
+      const result = await validateMediaAgainstPlatform(
+        req.authContext!.workspaceId,
+        req.params.id,
+        parsed.data.provider,
+      );
+      return result;
+    } catch (err) {
+      return reply.code(404).send({ error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   // --- Queues (PRD F3.4) ---

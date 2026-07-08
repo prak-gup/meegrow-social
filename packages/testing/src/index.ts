@@ -1,5 +1,14 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { db, withWorkspace, schema } from '@meegrow-social/db';
-import { encryptToken, setScheduler, type Scheduler } from '@meegrow-social/core';
+import {
+  DiskStorageDriver,
+  encryptToken,
+  setScheduler,
+  setStorageDriver,
+  type Scheduler,
+} from '@meegrow-social/core';
 import type { WeeklySlot } from '@meegrow-social/contracts';
 import { sql } from 'drizzle-orm';
 
@@ -52,6 +61,14 @@ export async function createConnection(
     if (!conn) throw new Error('failed to create connection');
     return conn.id;
   });
+}
+
+/** Points the media storage driver at a fresh temp dir — disk-only, never touches AWS in tests. */
+export function useTempDiskStorage(): { rootDir: string; publicBaseUrl: string } {
+  const rootDir = mkdtempSync(join(tmpdir(), 'mgs-media-'));
+  const publicBaseUrl = 'http://localhost:8990/media';
+  setStorageDriver(new DiskStorageDriver({ rootDir, publicBaseUrl }));
+  return { rootDir, publicBaseUrl };
 }
 
 export async function createQueue(

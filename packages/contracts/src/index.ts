@@ -4,3 +4,4 @@ export * from './connections.js';
 export * from './queues.js';
 export * from './webhooks.js';
 export * from './logs.js';
+export * from './media.js';
