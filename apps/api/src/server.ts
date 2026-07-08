@@ -1,24 +1,30 @@
 import { resolve } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
+import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import {
   createPostInput,
   createQueueInput,
   finishConnectInput,
+  loginInput,
   logsAggregateInput,
   logsQueryInput,
   providerIdentifier,
   registerMediaFromUrlInput,
+  switchWorkspaceInput,
   updateQueueInput,
   validateMediaInput,
 } from '@meegrow-social/contracts';
 import {
   aggregateEventLogs,
   authenticateApiKey,
+  authenticateSession,
+  buildUserView,
   createPost,
   createQueue,
+  createSession,
   DEFAULT_MEDIA_DISK_DIR,
   deleteConnection,
   deleteQueue,
@@ -35,16 +41,50 @@ import {
   QueueNotFoundError,
   recordApiRequestLog,
   registerMediaFromUrl,
+  revokeSession,
+  rotateSession,
+  SESSION_COOKIE,
+  SESSION_TTL_MS,
   startConnect,
+  switchActiveWorkspace,
   updateQueue,
   uploadMedia,
   validateMediaAgainstPlatform,
+  verifyUserCredentials,
   type AuthContext,
 } from '@meegrow-social/core';
 import { buildMcpServer, newStatelessTransport } from './mcp.js';
 
 function appUrl(): string {
   return process.env.APP_URL ?? `http://localhost:${process.env.API_PORT ?? 8990}`;
+}
+
+const SESSION_MAX_AGE_S = Math.floor(SESSION_TTL_MS / 1000);
+
+/** Session cookie options. `Secure` is env-gated so dev/test over http still sends the cookie. */
+function sessionCookieOptions() {
+  return {
+    httpOnly: true,
+    secure: process.env.COOKIE_SECURE === 'true',
+    sameSite: 'lax' as const,
+    path: '/',
+    maxAge: SESSION_MAX_AGE_S,
+  };
+}
+
+/**
+ * CSRF helper (issue #10). SameSite=Lax on the session cookie is the primary defense; this Origin
+ * check is belt-and-suspenders for cookie-authed state changes. An absent Origin is allowed (browsers
+ * send Origin on cross-site mutations; we lean on SameSite there). API-key requests aren't checked —
+ * bearer headers aren't auto-sent by browsers, so they aren't CSRF-exposed.
+ */
+function originAllowed(req: FastifyRequest): boolean {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  const allowed = [appUrl().replace(/\/$/, '')];
+  const extra = process.env.EXTRA_ALLOWED_ORIGINS;
+  if (extra) for (const o of extra.split(',')) if (o.trim()) allowed.push(o.trim());
+  return allowed.includes(origin);
 }
 
 declare module 'fastify' {
@@ -85,6 +125,7 @@ function logRequest(
 export async function buildServer(): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: true });
+  await app.register(cookie);
   await app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES } });
 
   // Disk-backed media is served straight off disk in dev/test; prod (MEDIA_STORAGE_DRIVER=s3)
@@ -99,15 +140,30 @@ export async function buildServer(): Promise<FastifyInstance> {
 
   app.get('/healthz', async () => ({ ok: true }));
 
-  // API-key auth for everything except health, the public OAuth callback (a browser redirect with
-  // no API key — its opaque state is the credential), and the public media route.
+  // API-key OR session-cookie auth for everything except health, the public OAuth callback (a
+  // browser redirect with no credential — its opaque state is the credential), the public media
+  // route, and the public login endpoint.
   app.addHook('preHandler', async (req, reply) => {
     const path = req.url.split('?')[0] ?? '';
-    if (path === '/healthz' || path === '/connect/callback' || path.startsWith('/media/')) return;
+    if (
+      path === '/healthz' ||
+      path === '/connect/callback' ||
+      path === '/v1/auth/login' ||
+      path.startsWith('/media/')
+    ) {
+      return;
+    }
     const key = bearer(req);
-    const ctx = key ? await authenticateApiKey(key) : null;
-    if (!ctx) return reply.code(401).send({ error: 'invalid or missing API key' });
+    let ctx: AuthContext | null = key ? await authenticateApiKey(key) : null;
+    if (!ctx) {
+      const token = req.cookies[SESSION_COOKIE];
+      if (token) ctx = await authenticateSession(token);
+    }
+    if (!ctx) return reply.code(401).send({ error: 'unauthenticated' });
     req.authContext = ctx;
+    if (ctx.sessionId && req.method !== 'GET' && req.method !== 'HEAD' && !originAllowed(req)) {
+      return reply.code(403).send({ error: 'cross-origin request blocked' });
+    }
   });
 
   // Request-logging hook (PRD F8.1): records every authed /v1 call into event_logs. Does NOT
@@ -120,6 +176,56 @@ export async function buildServer(): Promise<FastifyInstance> {
       reply.statusCode,
       reply.elapsedTime,
     );
+  });
+
+  // --- Human auth (issue #10): email+password sessions, invite-only. No public signup. ---
+  app.post('/v1/auth/login', async (req, reply) => {
+    const parsed = loginInput.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const creds = await verifyUserCredentials(parsed.data.email, parsed.data.password);
+    if (!creds) return reply.code(401).send({ error: 'invalid credentials' });
+    const session = await createSession(creds.id);
+    const user = await buildUserView(creds.id);
+    if (!user) return reply.code(500).send({ error: 'user not found' });
+    reply.setCookie(SESSION_COOKIE, session.token, sessionCookieOptions());
+    return reply.send({ user, activeWorkspaceId: session.activeWorkspaceId });
+  });
+
+  app.post('/v1/auth/logout', async (req, reply) => {
+    if (req.authContext?.sessionId) await revokeSession(req.authContext.sessionId);
+    reply.clearCookie(SESSION_COOKIE, { path: '/' });
+    return reply.send({ ok: true });
+  });
+
+  app.get('/v1/auth/me', async (req, reply) => {
+    const userId = req.authContext?.userId;
+    if (!userId) return reply.code(401).send({ error: 'session required' });
+    const user = await buildUserView(userId);
+    if (!user) return reply.code(404).send({ error: 'not found' });
+    return { user, activeWorkspaceId: req.authContext!.workspaceId };
+  });
+
+  // Switch the workspace this session targets (dashboard workspace switcher, #16). Session-only.
+  app.post('/v1/auth/session/workspace', async (req, reply) => {
+    const ctx = req.authContext!;
+    if (!ctx.sessionId || !ctx.userId) {
+      return reply.code(401).send({ error: 'session required' });
+    }
+    const parsed = switchWorkspaceInput.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const ok = await switchActiveWorkspace(ctx.sessionId, ctx.userId, parsed.data.workspaceId);
+    if (!ok) return reply.code(403).send({ error: 'not a member of that workspace' });
+    return { activeWorkspaceId: parsed.data.workspaceId };
+  });
+
+  // Rotate the session token (sliding renewal). Session-only.
+  app.post('/v1/auth/session/rotate', async (req, reply) => {
+    const sessionId = req.authContext?.sessionId;
+    if (!sessionId) return reply.code(401).send({ error: 'session required' });
+    const rotated = await rotateSession(sessionId);
+    if (!rotated) return reply.code(401).send({ error: 'session required' });
+    reply.setCookie(SESSION_COOKIE, rotated.token, sessionCookieOptions());
+    return { ok: true };
   });
 
   // --- Connections ---

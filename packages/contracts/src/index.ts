@@ -1,4 +1,5 @@
 export * from './providers.js';
+export * from './auth.js';
 export * from './posts.js';
 export * from './connections.js';
 export * from './queues.js';

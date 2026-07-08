@@ -5,6 +5,7 @@ import { db, withWorkspace, schema } from '@meegrow-social/db';
 import {
   DiskStorageDriver,
   encryptToken,
+  hashPassword,
   setScheduler,
   setStorageDriver,
   type Scheduler,
@@ -16,6 +17,7 @@ import { sql } from 'drizzle-orm';
 export async function resetDb(): Promise<void> {
   const tables = [
     'oauth_flows',
+    'sessions',
     'jobs_dlq',
     'event_logs',
     'metrics',
@@ -39,6 +41,29 @@ export async function createWorkspace(name = 'Test WS'): Promise<string> {
   const [ws] = await db().insert(schema.workspaces).values({ name, slug }).returning();
   if (!ws) throw new Error('failed to create workspace');
   return ws.id;
+}
+
+/** Create a human user (issue #10) with an argon2id-hashed password. Returns id + the plaintext. */
+export async function createUser(
+  email = `user-${Math.floor(performance.now() * 1000)}@test.local`,
+  password = 'password123',
+  name = 'Test User',
+): Promise<{ id: string; email: string; password: string }> {
+  const [u] = await db()
+    .insert(schema.users)
+    .values({ email, passwordHash: await hashPassword(password), name })
+    .returning();
+  if (!u) throw new Error('failed to create user');
+  return { id: u.id, email, password };
+}
+
+/** Link a user to a workspace with a role (owner | admin | member | viewer). */
+export async function createMembership(
+  userId: string,
+  workspaceId: string,
+  role: 'owner' | 'admin' | 'member' | 'viewer' = 'owner',
+): Promise<void> {
+  await db().insert(schema.memberships).values({ userId, workspaceId, role });
 }
 
 export interface ConnectionOpts {

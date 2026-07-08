@@ -4,7 +4,11 @@ import { generateApiKey, hashKey } from './apikeys.js';
 
 export interface AuthContext {
   workspaceId: string;
-  apiKeyId: string;
+  /** Present when authed via API key (`sk_live_…`). */
+  apiKeyId?: string;
+  /** Present when authed via a login session cookie (#10). */
+  userId?: string;
+  sessionId?: string;
 }
 
 /** Resolve a raw `sk_live_…` key to its workspace. Returns null if unknown/revoked/expired. */
