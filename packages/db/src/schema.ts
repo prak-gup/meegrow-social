@@ -39,6 +39,25 @@ export const users = pgTable('users', {
   createdAt: createdAt(),
 });
 
+/**
+ * Ephemeral OAuth connect flows. NON-RLS on purpose: the public provider callback (a browser
+ * redirect with no API key) looks a flow up by its opaque id, so it can't carry tenant context.
+ * The row holds workspaceId; the actual connection is then created via withWorkspace(). Single-use
+ * via `status`, time-boxed via `expiresAt`.
+ */
+export const oauthFlows = pgTable('oauth_flows', {
+  id: id(),
+  workspaceId: uuid('workspace_id').notNull(),
+  provider: text('provider').notNull(),
+  codeVerifier: text('code_verifier'),
+  redirectUri: text('redirect_uri').notNull(),
+  encryptedTokens: text('encrypted_tokens'), // set after callback for isBetweenSteps providers
+  accounts: jsonb('accounts'), // candidate accounts for the pick step
+  status: text('status').notNull().default('pending'), // pending | awaiting_account | consumed
+  expiresAt: ts('expires_at').notNull(),
+  createdAt: createdAt(),
+});
+
 export const memberships = pgTable('memberships', {
   id: id(),
   workspaceId: workspaceId(),
@@ -125,6 +144,9 @@ export const posts = pgTable('posts', {
   releaseUrl: text('release_url'),
   error: text('error'),
   idempotencyKey: text('idempotency_key'),
+  // Nullable, no FK (see `connectionId` above for the same pattern): set when a post was created
+  // via queue slotting (PRD F3.4). Used to compute slot occupancy for the next add-to-queue call.
+  queueId: uuid('queue_id'),
   createdAt: createdAt(),
 });
 
