@@ -4,6 +4,7 @@ import type {
   MetricPoint,
   PostDetails,
   PostResult,
+  ProviderAccount,
   SocialProvider,
 } from './types.js';
 
@@ -19,8 +20,14 @@ export class FakeProvider implements SocialProvider {
   readonly tokenModel = 'auto-refresh' as const;
   readonly maxConcurrentJobs = 5;
 
-  async generateAuthUrl(redirectUri: string): Promise<GenerateAuthUrl> {
-    return { url: `${redirectUri}?fake=1`, state: 'fake-state' };
+  async generateAuthUrl({
+    redirectUri,
+    state,
+  }: {
+    redirectUri: string;
+    state: string;
+  }): Promise<GenerateAuthUrl> {
+    return { url: `${redirectUri}?fake=1&state=${state}` };
   }
 
   async authenticate(): Promise<AuthTokens> {
@@ -40,6 +47,52 @@ export class FakeProvider implements SocialProvider {
       .toString('hex')
       .slice(0, 12)}`;
     return { externalPostId: id, releaseUrl: `https://fake.local/p/${id}` };
+  }
+
+  async postAnalytics(): Promise<MetricPoint[]> {
+    return [{ metric: 'views', value: 0, capturedAt: new Date(0) }];
+  }
+}
+
+/**
+ * Two-phase (isBetweenSteps) test provider: after auth the user must pick one of several accounts,
+ * mirroring FB Page / LinkedIn Org / YouTube Channel / GBP Location selection. Test-only.
+ */
+export class FakeBetweenStepsProvider implements SocialProvider {
+  readonly identifier = 'fake_2step' as const;
+  readonly displayName = 'Fake Two-Step Provider';
+  readonly isBetweenSteps = true;
+  readonly tokenModel = 'refresh-cron' as const;
+  readonly maxConcurrentJobs = 3;
+
+  async generateAuthUrl({
+    redirectUri,
+    state,
+  }: {
+    redirectUri: string;
+    state: string;
+  }): Promise<GenerateAuthUrl> {
+    return { url: `${redirectUri}?fake2=1&state=${state}`, codeVerifier: 'fake-verifier' };
+  }
+
+  async authenticate(): Promise<AuthTokens> {
+    // externalId/displayName are placeholders until the user picks an account.
+    return { accessToken: 'fake2-token', externalId: 'pending', displayName: 'pending' };
+  }
+
+  async listAccounts(): Promise<ProviderAccount[]> {
+    return [
+      { externalId: 'page-1', displayName: 'Page One' },
+      { externalId: 'page-2', displayName: 'Page Two' },
+    ];
+  }
+
+  async refreshToken(): Promise<AuthTokens> {
+    return { accessToken: 'fake2-token-refreshed', externalId: 'x', displayName: 'x' };
+  }
+
+  async post(): Promise<PostResult> {
+    return { externalPostId: 'fake2', releaseUrl: 'https://fake2.local/p/1' };
   }
 
   async postAnalytics(): Promise<MetricPoint[]> {
