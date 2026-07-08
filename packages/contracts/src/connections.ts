@@ -8,6 +8,8 @@ export const connectionView = z.object({
   displayName: z.string(),
   needsReconnect: z.boolean(),
   expiresAt: z.coerce.date().nullable(),
+  /** Whole days until the token expires; null when the token has no expiry. Negative = expired. */
+  expiresInDays: z.number().int().nullable(),
   health: connectionHealth,
   createdAt: z.coerce.date(),
 });

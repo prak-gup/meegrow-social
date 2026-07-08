@@ -7,3 +7,6 @@ dist/
 *.log
 coverage/
 .DS_Store
+
+# Subagent-driven-development scratch (briefs, reports, progress ledger)
+.superpowers/

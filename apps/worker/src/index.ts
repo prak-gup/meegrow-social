@@ -1,6 +1,7 @@
 import { Worker } from 'bullmq';
 import { publishPost, withWorkspace, schema } from './deps.js';
 import { buildRetentionWorker } from './retention.js';
+import { buildTokenHealthWorker } from './token-health.js';
 
 // Must match apps/api/src/scheduler.ts PUBLISH_QUEUE.
 const PUBLISH_QUEUE = 'publish';
@@ -40,4 +41,5 @@ const redisUrl = process.env.REDIS_URL;
 if (!redisUrl) throw new Error('REDIS_URL is not set');
 buildWorker(redisUrl);
 buildRetentionWorker(redisUrl);
-console.log('meegrow-social worker consuming publish + logs-retention queues');
+buildTokenHealthWorker(redisUrl);
+console.log('meegrow-social worker consuming publish + logs-retention + token-health queues');

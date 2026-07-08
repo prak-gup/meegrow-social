@@ -7,6 +7,7 @@ import type {
   ProviderAccount,
   SocialProvider,
 } from './types.js';
+import { ProviderAuthError } from '../errors.js';
 
 /**
  * Test/scaffold provider. Publishes to nowhere, deterministically. The tracer bullet and all
@@ -37,6 +38,9 @@ export class FakeProvider implements SocialProvider {
   async refreshToken(): Promise<AuthTokens> {
     return {
       accessToken: 'fake-token-refreshed',
+      refreshToken: 'fake-refresh',
+      // 8 days out — beyond the 7d refresh window, so a second sweep won't re-refresh (idempotency).
+      expiresAt: new Date(Date.now() + 8 * 24 * 60 * 60 * 1000),
       externalId: 'fake-account',
       displayName: 'Fake Account',
     };
@@ -93,6 +97,126 @@ export class FakeBetweenStepsProvider implements SocialProvider {
 
   async post(): Promise<PostResult> {
     return { externalPostId: 'fake2', releaseUrl: 'https://fake2.local/p/1' };
+  }
+
+  async postAnalytics(): Promise<MetricPoint[]> {
+    return [{ metric: 'views', value: 0, capturedAt: new Date(0) }];
+  }
+}
+
+/**
+ * One-time-token test provider (issue #12): tokens can't be refreshed — the sweeper must NEVER
+ * refresh these, only surface them as 'expiring' (T-14d) for manual re-auth.
+ */
+export class FakeOneTimeProvider implements SocialProvider {
+  readonly identifier = 'fake_onetime' as const;
+  readonly displayName = 'Fake One-Time Provider';
+  readonly isBetweenSteps = false;
+  readonly tokenModel = 'one-time' as const;
+  readonly maxConcurrentJobs = 1;
+
+  async generateAuthUrl({
+    redirectUri,
+    state,
+  }: {
+    redirectUri: string;
+    state: string;
+  }): Promise<GenerateAuthUrl> {
+    return { url: `${redirectUri}?fake_onetime=1&state=${state}` };
+  }
+
+  async authenticate(): Promise<AuthTokens> {
+    return { accessToken: 'fake-onetime-token', externalId: 'onetime-1', displayName: 'One-Time' };
+  }
+
+  // One-time tokens are never refreshed; if ever called, treat as auth failure.
+  async refreshToken(): Promise<AuthTokens> {
+    throw new ProviderAuthError('one-time tokens cannot be refreshed');
+  }
+
+  async post(): Promise<PostResult> {
+    return { externalPostId: 'fake_onetime', releaseUrl: 'https://fake-onetime.local/p/1' };
+  }
+
+  async postAnalytics(): Promise<MetricPoint[]> {
+    return [{ metric: 'views', value: 0, capturedAt: new Date(0) }];
+  }
+}
+
+/**
+ * Refreshable test provider whose refresh always fails with ProviderAuthError (issue #12 failure
+ * path): the sweeper must mark the connection needs_reconnect + emit connection.needs_reconnect.
+ */
+export class FakeFailingRefreshProvider implements SocialProvider {
+  readonly identifier = 'fake_fail_refresh' as const;
+  readonly displayName = 'Fake Failing-Refresh Provider';
+  readonly isBetweenSteps = false;
+  readonly tokenModel = 'auto-refresh' as const;
+  readonly maxConcurrentJobs = 1;
+
+  async generateAuthUrl({
+    redirectUri,
+    state,
+  }: {
+    redirectUri: string;
+    state: string;
+  }): Promise<GenerateAuthUrl> {
+    return { url: `${redirectUri}?fake_fail=1&state=${state}` };
+  }
+
+  async authenticate(): Promise<AuthTokens> {
+    return { accessToken: 'fake-fail-token', externalId: 'fail-1', displayName: 'Failing' };
+  }
+
+  async refreshToken(): Promise<AuthTokens> {
+    throw new ProviderAuthError('refresh denied (fake)');
+  }
+
+  async post(): Promise<PostResult> {
+    return { externalPostId: 'fake_fail', releaseUrl: 'https://fake-fail.local/p/1' };
+  }
+
+  async postAnalytics(): Promise<MetricPoint[]> {
+    return [{ metric: 'views', value: 0, capturedAt: new Date(0) }];
+  }
+}
+
+/**
+ * Refreshable test provider whose refresh fails with a NON-auth (transient) error (issue #12): the
+ * sweeper must log it and leave the connection alone — NOT flag needs_reconnect — so the next sweep
+ * retries. Locks the catch-order invariant.
+ */
+export class FakeTransientRefreshProvider implements SocialProvider {
+  readonly identifier = 'fake_transient_refresh' as const;
+  readonly displayName = 'Fake Transient-Refresh Provider';
+  readonly isBetweenSteps = false;
+  readonly tokenModel = 'auto-refresh' as const;
+  readonly maxConcurrentJobs = 1;
+
+  async generateAuthUrl({
+    redirectUri,
+    state,
+  }: {
+    redirectUri: string;
+    state: string;
+  }): Promise<GenerateAuthUrl> {
+    return { url: `${redirectUri}?fake_transient=1&state=${state}` };
+  }
+
+  async authenticate(): Promise<AuthTokens> {
+    return {
+      accessToken: 'fake-transient-token',
+      externalId: 'transient-1',
+      displayName: 'Transient',
+    };
+  }
+
+  async refreshToken(): Promise<AuthTokens> {
+    throw new Error('upstream timeout (fake transient)');
+  }
+
+  async post(): Promise<PostResult> {
+    return { externalPostId: 'fake_transient', releaseUrl: 'https://fake-transient.local/p/1' };
   }
 
   async postAnalytics(): Promise<MetricPoint[]> {

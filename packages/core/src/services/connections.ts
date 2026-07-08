@@ -5,22 +5,43 @@ import type {
   ConnectionView,
   ConnectionHealth,
   ProviderIdentifier,
+  TokenModel,
 } from '@meegrow-social/contracts';
 import { getProvider } from '../providers/registry.js';
 import type { AuthTokens } from '../providers/types.js';
 import { decryptToken, encryptToken } from '../crypto.js';
 
 const FLOW_TTL_MS = 10 * 60 * 1000;
-const EXPIRING_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/** Refreshable tokens (auto-refresh / refresh-cron) surface 'expiring' within 7d of expiry. */
+export const EXPIRING_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/** One-time tokens can't be auto-refreshed, so they surface 'expiring' earlier (14d) for manual re-auth. */
+export const ONE_TIME_EXPIRING_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function callbackUri(appUrl: string): string {
   return `${appUrl.replace(/\/$/, '')}/connect/callback`;
 }
 
-export function computeHealth(needsReconnect: boolean, expiresAt: Date | null): ConnectionHealth {
+/**
+ * Token health drives both the dashboard badge and the refresh sweeper's candidate filter.
+ * `needsReconnect` always wins; otherwise the expiring window depends on tokenModel — refreshable
+ * tokens get a 7d window (the sweeper refreshes them), one-time tokens get a 14d window (manual only).
+ */
+export function computeHealth(
+  tokenModel: TokenModel,
+  needsReconnect: boolean,
+  expiresAt: Date | null,
+): ConnectionHealth {
   if (needsReconnect) return 'needs_reconnect';
-  if (expiresAt && expiresAt.getTime() - Date.now() < EXPIRING_WINDOW_MS) return 'expiring';
-  return 'healthy';
+  if (!expiresAt) return 'healthy';
+  const window = tokenModel === 'one-time' ? ONE_TIME_EXPIRING_WINDOW_MS : EXPIRING_WINDOW_MS;
+  return expiresAt.getTime() - Date.now() < window ? 'expiring' : 'healthy';
+}
+
+/** Whole days until expiry (floor); null when the token has no expiry. Negative = already expired. */
+export function expiresInDaysFrom(expiresAt: Date | null): number | null {
+  if (!expiresAt) return null;
+  return Math.floor((expiresAt.getTime() - Date.now()) / DAY_MS);
 }
 
 /** Step 1: create a single-use flow row and return the provider auth URL to redirect the user to. */
@@ -146,7 +167,8 @@ export async function listConnections(workspaceId: string): Promise<ConnectionVi
       displayName: r.displayName,
       needsReconnect: r.needsReconnect,
       expiresAt: r.expiresAt,
-      health: computeHealth(r.needsReconnect, r.expiresAt),
+      expiresInDays: expiresInDaysFrom(r.expiresAt),
+      health: computeHealth(r.tokenModel as TokenModel, r.needsReconnect, r.expiresAt),
       createdAt: r.createdAt,
     }));
   });

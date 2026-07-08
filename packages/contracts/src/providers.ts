@@ -15,6 +15,10 @@ export const providerIdentifier = z.enum([
   'youtube',
   'fake',
   'fake_2step',
+  // Test-only (issue #12): exercise the token-health matrix + sweeper failure path.
+  'fake_onetime',
+  'fake_fail_refresh',
+  'fake_transient_refresh',
 ]);
 export type ProviderIdentifier = z.infer<typeof providerIdentifier>;
 

@@ -41,10 +41,20 @@ export async function createWorkspace(name = 'Test WS'): Promise<string> {
   return ws.id;
 }
 
+export interface ConnectionOpts {
+  expiresAt?: Date | null;
+  refreshToken?: string | null;
+  tokenModel?: 'auto-refresh' | 'refresh-cron' | 'one-time';
+  needsReconnect?: boolean;
+  externalId?: string;
+  accessToken?: string;
+}
+
 export async function createConnection(
   workspaceId: string,
   provider = 'fake',
   displayName = 'Fake Account',
+  opts: ConnectionOpts = {},
 ): Promise<string> {
   return withWorkspace(workspaceId, async (tx) => {
     const [conn] = await tx
@@ -52,10 +62,13 @@ export async function createConnection(
       .values({
         workspaceId,
         provider,
-        externalId: 'ext-1',
+        externalId: opts.externalId ?? 'ext-1',
         displayName,
-        accessToken: encryptToken('secret-access-token'),
-        tokenModel: 'auto-refresh',
+        accessToken: encryptToken(opts.accessToken ?? 'secret-access-token'),
+        refreshToken: opts.refreshToken ? encryptToken(opts.refreshToken) : null,
+        tokenModel: opts.tokenModel ?? 'auto-refresh',
+        expiresAt: opts.expiresAt ?? null,
+        needsReconnect: opts.needsReconnect ?? false,
       })
       .returning();
     if (!conn) throw new Error('failed to create connection');
