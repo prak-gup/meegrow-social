@@ -1,0 +1,11 @@
+node_modules
+**/node_modules
+**/dist
+.turbo
+.git
+.env
+.env.*
+*.log
+.data
+coverage
+docs/dev/research

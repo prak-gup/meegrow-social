@@ -1,0 +1,34 @@
+name: Deploy
+# Deploys to the staging box after CI passes on main. Requires repo secrets:
+#   DEPLOY_HOST  — e.g. 35.154.66.120
+#   DEPLOY_USER  — e.g. ubuntu
+#   DEPLOY_SSH_KEY — private key with access to the box
+# The box must have /opt/meegrow-social as a git clone of this repo with a filled .env.
+on:
+  workflow_run:
+    workflows: ['CI']
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    # Only deploy if the CI run succeeded (or when manually dispatched).
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /opt/meegrow-social
+            git fetch --all
+            git reset --hard origin/main
+            docker compose -f compose.prod.yml build
+            docker compose -f compose.prod.yml run --rm migrate
+            docker compose -f compose.prod.yml up -d api worker
+            docker compose -f compose.prod.yml ps
