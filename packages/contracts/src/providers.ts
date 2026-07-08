@@ -14,6 +14,7 @@ export const providerIdentifier = z.enum([
   'x',
   'youtube',
   'fake',
+  'fake_2step',
 ]);
 export type ProviderIdentifier = z.infer<typeof providerIdentifier>;
 

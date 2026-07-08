@@ -5,6 +5,7 @@ import { sql } from 'drizzle-orm';
 /** Truncate every table — call in beforeEach for isolated integration tests. */
 export async function resetDb(): Promise<void> {
   const tables = [
+    'oauth_flows',
     'jobs_dlq',
     'event_logs',
     'metrics',

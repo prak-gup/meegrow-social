@@ -1,3 +1,4 @@
 export * from './providers.js';
 export * from './posts.js';
+export * from './connections.js';
 export * from './webhooks.js';

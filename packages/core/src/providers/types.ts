@@ -10,8 +10,14 @@ export interface AuthTokens {
 
 export interface GenerateAuthUrl {
   url: string;
-  state: string;
+  /** Provider-generated PKCE verifier, persisted by the connect service for the callback. */
   codeVerifier?: string;
+}
+
+/** A selectable account for two-phase (isBetweenSteps) providers — a Page/Org/Channel/Location. */
+export interface ProviderAccount {
+  externalId: string;
+  displayName: string;
 }
 
 /** One unit to publish. `post()` takes an array → native thread/carousel support (Postiz pattern). */
@@ -43,12 +49,18 @@ export interface SocialProvider {
   readonly tokenModel: TokenModel;
   readonly maxConcurrentJobs: number;
 
-  generateAuthUrl(redirectUri: string): Promise<GenerateAuthUrl>;
+  /** The connect service supplies `state` (an opaque flow id); the provider embeds it in the URL. */
+  generateAuthUrl(params: { redirectUri: string; state: string }): Promise<GenerateAuthUrl>;
   authenticate(params: {
     code: string;
     codeVerifier?: string;
     redirectUri: string;
   }): Promise<AuthTokens>;
+  /**
+   * Only meaningful when `isBetweenSteps`: after auth, list the Pages/Orgs/Channels/Locations the
+   * user may connect. The user picks one, then the connect service finalizes the connection.
+   */
+  listAccounts?(tokens: AuthTokens): Promise<ProviderAccount[]>;
   refreshToken(refreshToken: string): Promise<AuthTokens>;
   /** Publish an array of details (thread/carousel) to one connected account. */
   post(tokens: AuthTokens, details: PostDetails[]): Promise<PostResult>;

@@ -1,6 +1,6 @@
 import type { ProviderIdentifier } from '@meegrow-social/contracts';
 import type { SocialProvider } from './types.js';
-import { FakeProvider } from './fake.js';
+import { FakeBetweenStepsProvider, FakeProvider } from './fake.js';
 
 /**
  * Explicit registry (Postiz pattern — no decorator auto-discovery). Real providers get added to
@@ -22,5 +22,6 @@ export function listProviders(): SocialProvider[] {
   return [...providers.values()];
 }
 
-// Scaffold default: the fake provider is always available.
+// Scaffold defaults: fake providers (single-step + two-step) are always available for tests.
 registerProvider(new FakeProvider());
+registerProvider(new FakeBetweenStepsProvider());
