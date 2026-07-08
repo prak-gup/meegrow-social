@@ -1,40 +1,33 @@
-/**
- * Dashboard shell (scaffold). The dashboard is a pure API consumer (AX-PRD §1) — it will talk to
- * the same REST API that antidote uses. Real login + Tailwind/shadcn polish are M1/M2 issues.
- */
-export function App(): JSX.Element {
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { useAuth } from './lib/auth';
+import { AppLayout } from './components/AppLayout';
+import { Login } from './pages/Login';
+import { Connections } from './pages/Connections';
+import { Composer } from './pages/Composer';
+import { Posts } from './pages/Posts';
+
+/** Gates the authenticated area: waits for the session probe, redirects to /login if absent. */
+function Protected() {
+  const { me, loading } = useAuth();
+  if (loading) return <div className="p-8 text-muted-foreground">Loading…</div>;
+  if (!me) return <Navigate to="/login" replace />;
+  return <AppLayout />; // AppLayout renders the <Outlet /> the nested routes fill.
+}
+
+export function App() {
+  const { me, loading } = useAuth();
   return (
-    <main
-      style={{
-        fontFamily: 'system-ui, sans-serif',
-        display: 'grid',
-        placeItems: 'center',
-        minHeight: '100vh',
-      }}
-    >
-      <div style={{ width: 320 }}>
-        <h1>Meegrow Social</h1>
-        <p style={{ color: '#666' }}>Sign in to your workspace</p>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-          }}
-        >
-          <input
-            placeholder="Email"
-            type="email"
-            style={{ width: '100%', padding: 8, marginBottom: 8 }}
-          />
-          <input
-            placeholder="Password"
-            type="password"
-            style={{ width: '100%', padding: 8, marginBottom: 8 }}
-          />
-          <button type="submit" style={{ width: '100%', padding: 8 }}>
-            Sign in
-          </button>
-        </form>
-      </div>
-    </main>
+    <Routes>
+      <Route
+        path="/login"
+        element={me && !loading ? <Navigate to="/connections" replace /> : <Login />}
+      />
+      <Route element={<Protected />}>
+        <Route path="/connections" element={<Connections />} />
+        <Route path="/composer" element={<Composer />} />
+        <Route path="/posts" element={<Posts />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/connections" replace />} />
+    </Routes>
   );
 }
