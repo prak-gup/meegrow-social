@@ -130,13 +130,20 @@ export async function createQueue(
 }
 
 /** A scheduler that records calls instead of enqueuing. */
-export function useRecordingScheduler(): { calls: Array<{ postId: string; when: Date | 'now' }> } {
+export function useRecordingScheduler(): {
+  calls: Array<{ postId: string; when: Date | 'now' }>;
+  cancels: string[];
+} {
   const calls: Array<{ postId: string; when: Date | 'now' }> = [];
+  const cancels: string[] = [];
   const scheduler: Scheduler = {
     async schedulePublish({ postId, when }) {
       calls.push({ postId, when });
     },
+    async cancelPublish({ postId }) {
+      cancels.push(postId);
+    },
   };
   setScheduler(scheduler);
-  return { calls };
+  return { calls, cancels };
 }

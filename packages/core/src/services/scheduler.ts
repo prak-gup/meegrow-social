@@ -8,6 +8,8 @@ export interface Scheduler {
     postId: string;
     when: Date | 'now';
   }): Promise<void>;
+  /** Cancel a scheduled publish job so it never fires. No-op if it has already fired/finished. */
+  cancelPublish(input: { postId: string }): Promise<void>;
 }
 
 let _scheduler: Scheduler | undefined;
