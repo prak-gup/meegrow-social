@@ -144,6 +144,9 @@ export const posts = pgTable('posts', {
   releaseUrl: text('release_url'),
   error: text('error'),
   idempotencyKey: text('idempotency_key'),
+  // Nullable, no FK (see `connectionId` above for the same pattern): set when a post was created
+  // via queue slotting (PRD F3.4). Used to compute slot occupancy for the next add-to-queue call.
+  queueId: uuid('queue_id'),
   createdAt: createdAt(),
 });
 

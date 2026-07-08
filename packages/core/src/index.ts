@@ -9,4 +9,5 @@ export * from './services/connections.js';
 export * from './services/scheduler.js';
 export * from './services/posts.js';
 export * from './services/publish.js';
+export * from './services/queues.js';
 export * from './services/logs.js';

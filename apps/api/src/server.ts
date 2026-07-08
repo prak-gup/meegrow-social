@@ -2,24 +2,33 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import {
   createPostInput,
+  createQueueInput,
   finishConnectInput,
   logsAggregateInput,
   logsQueryInput,
   providerIdentifier,
+  updateQueueInput,
 } from '@meegrow-social/contracts';
 import {
   aggregateEventLogs,
   authenticateApiKey,
   createPost,
+  createQueue,
   deleteConnection,
+  deleteQueue,
   finishConnect,
   getPost,
+  getQueue,
   handleCallback,
   listConnections,
   listPosts,
+  listQueues,
   queryEventLogs,
+  QueueInactiveError,
+  QueueNotFoundError,
   recordApiRequestLog,
   startConnect,
+  updateQueue,
   type AuthContext,
 } from '@meegrow-social/core';
 import { buildMcpServer, newStatelessTransport } from './mcp.js';
@@ -140,8 +149,14 @@ export async function buildServer(): Promise<FastifyInstance> {
   app.post('/v1/posts', async (req, reply) => {
     const parsed = createPostInput.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
-    const posts = await createPost(req.authContext!.workspaceId, parsed.data);
-    return reply.code(201).send({ posts });
+    try {
+      const posts = await createPost(req.authContext!.workspaceId, parsed.data);
+      return reply.code(201).send({ posts });
+    } catch (err) {
+      if (err instanceof QueueNotFoundError) return reply.code(404).send({ error: err.message });
+      if (err instanceof QueueInactiveError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
   });
 
   app.get('/v1/posts', async (req) => ({ posts: await listPosts(req.authContext!.workspaceId) }));
@@ -150,6 +165,38 @@ export async function buildServer(): Promise<FastifyInstance> {
     const post = await getPost(req.authContext!.workspaceId, req.params.id);
     if (!post) return reply.code(404).send({ error: 'not found' });
     return { post };
+  });
+
+  // --- Queues (PRD F3.4) ---
+  app.post('/v1/queues', async (req, reply) => {
+    const parsed = createQueueInput.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const queue = await createQueue(req.authContext!.workspaceId, parsed.data);
+    return reply.code(201).send({ queue });
+  });
+
+  app.get('/v1/queues', async (req) => ({
+    queues: await listQueues(req.authContext!.workspaceId),
+  }));
+
+  app.get<{ Params: { id: string } }>('/v1/queues/:id', async (req, reply) => {
+    const queue = await getQueue(req.authContext!.workspaceId, req.params.id);
+    if (!queue) return reply.code(404).send({ error: 'not found' });
+    return { queue };
+  });
+
+  app.patch<{ Params: { id: string } }>('/v1/queues/:id', async (req, reply) => {
+    const parsed = updateQueueInput.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const queue = await updateQueue(req.authContext!.workspaceId, req.params.id, parsed.data);
+    if (!queue) return reply.code(404).send({ error: 'not found' });
+    return { queue };
+  });
+
+  app.delete<{ Params: { id: string } }>('/v1/queues/:id', async (req, reply) => {
+    const deleted = await deleteQueue(req.authContext!.workspaceId, req.params.id);
+    if (!deleted) return reply.code(404).send({ error: 'not found' });
+    return reply.code(204).send();
   });
 
   // Logs & observability (PRD F8) — thin parse → call core → serialize, per AX-PRD §2.
