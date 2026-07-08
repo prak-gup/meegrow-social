@@ -31,6 +31,9 @@ describe('OAuth connect flow', () => {
     expect(conns).toHaveLength(1);
     expect(conns[0]?.displayName).toBe('Fake Account');
     expect(conns[0]?.health).toBe('healthy');
+    // FakeProvider issues tokens with no expiry → both null on the view (#12).
+    expect(conns[0]?.expiresAt).toBeNull();
+    expect(conns[0]?.expiresInDays).toBeNull();
   });
 
   it('two-step provider requires an account pick, then finishes', async () => {
