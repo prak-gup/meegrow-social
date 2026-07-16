@@ -11,7 +11,15 @@
 Graph `/feed` → a real story. Analytics then flowed back from live Graph (`followers: 1`).
 
 Shipped today: **#11 deploy** (social.meegrowlabs.com + CI auto-deploy), **#14 Facebook provider**,
-**#45 connect UX**, **#9 analytics collection**, plus a critical scheduler fix. Issues #44/#45 filed.
+**#45 connect UX**, **#9 analytics collection**, **#13 Instagram provider**, plus a critical
+scheduler fix. Issues #44/#45 filed.
+
+**#13 Instagram is merged + live in prod but NOT bring-up-verified** — `prakgup` has **no linked
+Instagram Business account** (Meta omits `instagram_business_account` from the Page node, no error).
+Live bring-up needs an IG Business account linked to one of the three granted Pages (`prakgup`,
+`Com Com`, `Meegrow Labs - Zero to AI Hero`). Until then the IG picker will correctly show its
+empty state. See `docs/dev/research/meta.md` §2.4 for the token-scope and permalink gotchas the
+live bring-up taught us.
 
 ### 🔴 THE FINDING OF THE DAY — scheduled publishing had NEVER worked
 

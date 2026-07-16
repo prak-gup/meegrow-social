@@ -84,6 +84,23 @@ Docs:
 - Store `expires_at` per connected account. Run a daily cron that flags accounts where `expires_at - now < 7 days` and surfaces a "Reconnect account" prompt. FB **Page** tokens read as non-expiring (`expires_at: 0`); the thing that actually expires and needs reconnect is usually the **60-day user token** and the IG long-lived token — the countdown you show ("29 days left") is `data_access_expires_at` / `expires_at` on the user/IG token.
 - Also handle **error subcode 458/463/467** (app unauthorized / token expired / invalid) at publish time by forcing reconnect.
 
+
+### 2.4 Token scope gotchas (learned the hard way, 2026-07-16/17 live bring-up)
+- **`/me/accounts` requires a USER token.** With a **Page** token `/me` resolves to the *Page*, which
+  has no `accounts` edge — you get the baffling `(#100) Tried accessing nonexisting field (accounts)`
+  rather than an auth error. We store the Page token, so pages cannot be re-enumerated after connect;
+  `listAccounts`/`finalizeAccount` must run while the user token still exists (during the OAuth flow).
+  To read a connected Page later, query its own node: `GET /{page-id}?fields=...` works with the Page token.
+- **`post_impressions_unique` is REJECTED** (confirmed live 2026-07-16). Only `post_video_views` and
+  `post_clicks` returned. Meta **400s the entire insights call** on one unknown metric name rather
+  than omitting it — so request metrics ONE AT A TIME and skip failures, or a single retired name
+  costs you every metric. This is §6's deprecation risk, live.
+- **An IG permalink is an opaque shortcode** (`/p/CxYz123/`), NOT the numeric media id that
+  `media_publish` returns. `instagram.com/p/{media-id}` 404s — fetch `?fields=permalink` instead.
+- **A Page with no linked IG Business account** simply omits `instagram_business_account` from the
+  response (no error). Filter those out of the account picker rather than offering one that fails at
+  publish. `prakgup` (110548613724876) has no linked IG account — #13 needs one for live bring-up.
+
 ---
 
 ## 3. Publishing to Instagram (container → publish, 2 steps)
