@@ -10,6 +10,7 @@ import {
   FakeTransientRefreshProvider,
 } from './fake.js';
 import { FacebookPagesProvider } from './meta/facebook.js';
+import { InstagramProvider } from './meta/instagram.js';
 
 /**
  * Explicit registry (Postiz pattern — no decorator auto-discovery). Real providers get added to
@@ -51,13 +52,11 @@ export function registerConfiguredProviders(): void {
   const appId = process.env.FACEBOOK_APP_ID;
   const appSecret = process.env.FACEBOOK_APP_SECRET;
   if (appId && appSecret) {
-    registerProvider(
-      new FacebookPagesProvider({
-        appId,
-        appSecret,
-        loginConfigId: process.env.FACEBOOK_LOGIN_CONFIG_ID,
-      }),
-    );
+    // One Meta app, two providers (#14 + #13) — instagram-via-page authorises through the same
+    // Facebook Login config, so it needs no credentials of its own.
+    const config = { appId, appSecret, loginConfigId: process.env.FACEBOOK_LOGIN_CONFIG_ID };
+    registerProvider(new FacebookPagesProvider(config));
+    registerProvider(new InstagramProvider(config));
   }
 }
 
