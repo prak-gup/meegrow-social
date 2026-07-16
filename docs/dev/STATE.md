@@ -4,6 +4,48 @@
 
 **Pipeline:** /e2e-dev (Grill → Research → Prototype → PRD → AX-PRD → Issues → Implement → QA)
 
+## 🎉 FIRST REAL POST PUBLISHED (2026-07-16)
+
+**Meegrow Social published to a live Facebook Page.** `prakgup` (110548613724876) → post
+`110548613724876_1038920145164880`. Composer → API → BullMQ → worker → FacebookPagesProvider →
+Graph `/feed` → a real story. Analytics then flowed back from live Graph (`followers: 1`).
+
+Shipped today: **#11 deploy** (social.meegrowlabs.com + CI auto-deploy), **#14 Facebook provider**,
+**#45 connect UX**, **#9 analytics collection**, plus a critical scheduler fix. Issues #44/#45 filed.
+
+### 🔴 THE FINDING OF THE DAY — scheduled publishing had NEVER worked
+
+`apps/api/src/scheduler.ts` used `jobId: \`publish:${postId}\``. **BullMQ rejects custom job ids
+containing `:`** ("Custom Id cannot contain :", verified in bullmq 5.79.2 source; it applies to
+queue names too). `createPost`commits the post row and *then* calls`schedulePublish`, so every
+scheduled post ever created was persisted as `scheduled`and **stranded with no job behind it** —
+not`failed`, so nothing surfaced; not queued, so no worker saw it. Publish-now, schedule-at and
+add-to-queue were all dead in production.
+
+**109 green tests missed it** because every test touching scheduling injects the recording
+scheduler from `packages/testing`, which accepts any id. **A fake defines a more permissive
+contract than the real adapter** — green tests only proved we satisfied the fake. Fixed in PR #47
+(`publish-${postId}`) + `apps/api/src/scheduler.integration.test.ts` now drives real BullMQ (CI has
+Redis). Same class of gap likely exists for other adapters (S3 keys, provider id formats).
+
+Extracted to skills: `bullmq-jobid-colon-and-fake-adapter-blindspot`, `http-200-is-not-page-exists`.
+
+### Live-verified facts that fixtures could not have told us
+
+- **`post_impressions_unique` is REJECTED by Meta** — only `post_video_views` + `post_clicks`
+  returned. Drop it from `POST_METRICS` and find the views-era replacement. The per-metric fetch
+  saved us: one call with all three would have errored and yielded **zero** post metrics.
+- `followers_count` node field works (the deprecated `page_fans` decision was right).
+- FB Page token stores with **no expiry** → `health: healthy` forever, sweeper skips it. The
+  `finalizeAccount` hook (added to the sealed provider contract in #14) does the user→Page swap.
+
+### Deploy gotcha
+
+`git reset --hard` is the **first** step of deploy.yml, so the box's SHA advances at deploy
+_start_. Polling it (or reading container age) looks exactly like "deploy silently serving stale
+code". **Probe the behaviour** — hit the endpoint the new build adds. Note `POST /v1/posts` returns
+**201**, not 200.
+
 ## Current phase
 
 **Phase 7 — Implement (IN PROGRESS). Wave 1 + #12 + #10 + #5 + #16 MERGED to main + CI green.** (2026-07-09)
