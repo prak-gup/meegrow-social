@@ -3,6 +3,8 @@ export * from './crypto.js';
 export * from './providers/types.js';
 export * from './providers/fake.js';
 export * from './providers/registry.js';
+export * from './providers/meta/client.js';
+export * from './providers/meta/facebook.js';
 export * from './media/validate.js';
 export * from './media/ffprobe.js';
 export * from './media/storage/index.js';

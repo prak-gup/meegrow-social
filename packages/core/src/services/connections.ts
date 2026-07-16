@@ -142,7 +142,11 @@ export async function finishConnect(
   if (!chosen) throw new Error('chosen account is not one of the offered accounts');
   if (!flow.encryptedTokens) throw new Error('flow is missing tokens');
 
-  const tokens = deserialize(decryptToken(flow.encryptedTokens));
+  const userTokens = deserialize(decryptToken(flow.encryptedTokens));
+  // Some two-phase providers must connect the chosen account with account-scoped tokens rather than
+  // the user-level ones (Facebook: a Page's own non-expiring Page token). See SocialProvider.
+  const impl = getProvider(flow.provider as ProviderIdentifier);
+  const tokens = impl.finalizeAccount ? await impl.finalizeAccount(userTokens, chosen) : userTokens;
   const connectionId = await createConnection(
     flow.workspaceId,
     flow.provider as ProviderIdentifier,
