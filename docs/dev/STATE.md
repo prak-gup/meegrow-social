@@ -15,17 +15,17 @@ Shipped today: **#11 deploy** (social.meegrowlabs.com + CI auto-deploy), **#14 F
 
 ### 🔴 THE FINDING OF THE DAY — scheduled publishing had NEVER worked
 
-`apps/api/src/scheduler.ts` used `jobId: \`publish:${postId}\``. **BullMQ rejects custom job ids
-containing `:`** ("Custom Id cannot contain :", verified in bullmq 5.79.2 source; it applies to
-queue names too). `createPost`commits the post row and *then* calls`schedulePublish`, so every
-scheduled post ever created was persisted as `scheduled`and **stranded with no job behind it** —
-not`failed`, so nothing surfaced; not queued, so no worker saw it. Publish-now, schedule-at and
+`apps/api/src/scheduler.ts` built its job id as `publish:<postId>`. **BullMQ rejects custom job ids
+containing a colon** ("Custom Id cannot contain :", verified in bullmq 5.79.2 source — it applies to
+queue names too). `createPost` commits the post row and _then_ calls `schedulePublish`, so every
+scheduled post ever created was persisted as `scheduled` and **stranded with no job behind it** —
+not `failed`, so nothing surfaced; not queued, so no worker saw it. Publish-now, schedule-at and
 add-to-queue were all dead in production.
 
 **109 green tests missed it** because every test touching scheduling injects the recording
 scheduler from `packages/testing`, which accepts any id. **A fake defines a more permissive
 contract than the real adapter** — green tests only proved we satisfied the fake. Fixed in PR #47
-(`publish-${postId}`) + `apps/api/src/scheduler.integration.test.ts` now drives real BullMQ (CI has
+(now `publish-<postId>`) + `apps/api/src/scheduler.integration.test.ts` drives real BullMQ (CI has
 Redis). Same class of gap likely exists for other adapters (S3 keys, provider id formats).
 
 Extracted to skills: `bullmq-jobid-colon-and-fake-adapter-blindspot`, `http-200-is-not-page-exists`.
