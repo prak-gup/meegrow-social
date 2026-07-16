@@ -6,6 +6,7 @@ import type {
   MediaView,
   PostGroupView,
   PostView,
+  ProviderView,
   QueueView,
   UpdatePostInput,
 } from '@meegrow-social/contracts';
@@ -66,6 +67,8 @@ export const api = {
   rotateSession: () => request<{ ok: true }>('POST', '/v1/auth/session/rotate'),
 
   // --- Connections (#2) ---
+  /** Platforms registered in this environment — fakes in dev, real providers in prod (#45). */
+  listProviders: () => request<{ providers: ProviderView[] }>('GET', '/v1/providers'),
   listConnections: () => request<{ connections: ConnectionView[] }>('GET', '/v1/connections'),
   authUrl: (provider: string) =>
     request<{ url: string }>('GET', `/v1/connections/${encodeURIComponent(provider)}/auth-url`),

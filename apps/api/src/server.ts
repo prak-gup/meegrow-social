@@ -41,6 +41,7 @@ import {
   handleCallback,
   listConnections,
   listPosts,
+  listProviders,
   listQueues,
   queryEventLogs,
   QueueInactiveError,
@@ -65,6 +66,40 @@ import { buildMcpServer, newStatelessTransport } from './mcp.js';
 
 function appUrl(): string {
   return process.env.APP_URL ?? `http://localhost:${process.env.API_PORT ?? 8990}`;
+}
+
+/**
+ * The page the OAuth popup lands on (#45). It hands the callback result to the dashboard that
+ * opened it and closes; two-phase providers carry a flowId that exists nowhere else, so dumping
+ * JSON into the popup left the user stranded. Falls back to rendering the outcome as text when
+ * there's no opener (e.g. the provider redirected in the top-level window).
+ *
+ * The payload is provider-derived (Page names come from Meta), so it is embedded as JSON with `<`
+ * escaped — that closes the `</script>` breakout, the only injection route into this page. The
+ * message is posted to our own origin, never `*`, so nothing else can read it.
+ */
+export function connectPopupHtml(payload: unknown): string {
+  const json = JSON.stringify(payload).replace(/</g, '\\u003c');
+  const origin = JSON.stringify(appUrl().replace(/\/$/, ''));
+  return `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Connecting…</title></head>
+<body style="font:14px system-ui;padding:24px;color:#111">
+<p id="m">Finishing up — you can close this window.</p>
+<script>
+(function () {
+  var payload = ${json};
+  if (window.opener) {
+    window.opener.postMessage({ source: 'meegrow-social-connect', payload: payload }, ${origin});
+    window.close();
+  } else {
+    document.getElementById('m').textContent =
+      payload.status === 'error' ? 'Connect failed: ' + payload.error : 'Connected. You can close this window.';
+  }
+})();
+</script>
+</body>
+</html>`;
 }
 
 const SESSION_MAX_AGE_S = Math.floor(SESSION_TTL_MS / 1000);
@@ -247,18 +282,25 @@ export async function buildServer(): Promise<FastifyInstance> {
     },
   );
 
-  // Public: provider redirects the user's browser here after consent.
+  // Public: provider redirects the user's browser here after consent. This lands in the popup the
+  // dashboard opened, so it answers with a tiny HTML page that hands the result to the opener and
+  // closes itself (#45) — a two-phase provider's flowId only exists here, and JSON in a popup is
+  // unusable. handleCallback still returns the CallbackResult contract; only the transport differs.
   app.get<{ Querystring: { state?: string; code?: string } }>(
     '/connect/callback',
     async (req, reply) => {
       const { state, code } = req.query;
-      if (!state || !code) return reply.code(400).send({ error: 'missing state or code' });
+      const send = (payload: unknown, status: number): void => {
+        void reply.code(status).type('text/html; charset=utf-8').send(connectPopupHtml(payload));
+      };
+      if (!state || !code) return send({ status: 'error', error: 'missing state or code' }, 400);
       try {
-        return await handleCallback(state, code);
+        return send(await handleCallback(state, code), 200);
       } catch (err) {
-        return reply
-          .code(400)
-          .send({ error: err instanceof Error ? err.message : 'callback failed' });
+        return send(
+          { status: 'error', error: err instanceof Error ? err.message : 'callback failed' },
+          400,
+        );
       }
     },
   );
@@ -273,6 +315,17 @@ export async function buildServer(): Promise<FastifyInstance> {
     );
     return reply.code(201).send({ connectionId });
   });
+
+  // Which platforms this environment can actually connect. Registration is env-gated, so dev/CI
+  // return the fakes and production returns the real providers — the dashboard renders a button per
+  // entry rather than hardcoding one (#45).
+  app.get('/v1/providers', async () => ({
+    providers: listProviders().map((p) => ({
+      identifier: p.identifier,
+      displayName: p.displayName,
+      isBetweenSteps: p.isBetweenSteps,
+    })),
+  }));
 
   app.get('/v1/connections', async (req) => ({
     connections: await listConnections(req.authContext!.workspaceId),
