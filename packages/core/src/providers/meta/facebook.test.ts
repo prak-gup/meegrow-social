@@ -292,19 +292,16 @@ describe('post', () => {
 });
 
 describe('postAnalytics', () => {
-  it('collects per-metric insights plus followers as a node field', async () => {
+  it('collects per-metric insights', async () => {
     const { fb } = provider([
       {
         match: 'insights',
         body: { data: [{ name: 'post_impressions_unique', values: [{ value: 42 }] }] },
       },
-      { match: 'followers_count', body: { followers_count: 1234 } },
     ]);
     const points = await fb.postAnalytics(PAGE_TOKENS, '1112223334_9001');
 
     expect(points.some((p) => p.metric === 'post_impressions_unique' && p.value === 42)).toBe(true);
-    // page_fans is deprecated — followers must come from the node field (RESEARCH gotcha #6).
-    expect(points.some((p) => p.metric === 'followers' && p.value === 1234)).toBe(true);
   });
 
   it('skips a metric Meta has retired instead of failing the whole collection', async () => {
@@ -314,12 +311,10 @@ describe('postAnalytics', () => {
         status: 400,
         body: { error: { message: '(#100) metric no longer supported', code: 100 } },
       },
-      { match: 'followers_count', body: { followers_count: 77 } },
     ]);
-    const points = await fb.postAnalytics(PAGE_TOKENS, '1112223334_9001');
-
-    // Every insight metric 400s, but the follower count still lands.
-    expect(points).toEqual([expect.objectContaining({ metric: 'followers', value: 77 })]);
+    // Every requested metric 400s — the call still resolves rather than throwing, so one retired
+    // name can't take the whole sweep down with it.
+    await expect(fb.postAnalytics(PAGE_TOKENS, '1112223334_9001')).resolves.toEqual([]);
   });
 
   it('still propagates auth errors so the connection gets flagged', async () => {
@@ -333,6 +328,34 @@ describe('postAnalytics', () => {
     await expect(fb.postAnalytics(PAGE_TOKENS, '1112223334_9001')).rejects.toBeInstanceOf(
       ProviderAuthError,
     );
+  });
+});
+
+describe('accountAnalytics', () => {
+  it('reads followers from the node field, not the deprecated page_fans insight', async () => {
+    const { fb, calls } = provider([{ match: 'followers_count', body: { followers_count: 1234 } }]);
+    const points = await fb.accountAnalytics(PAGE_TOKENS);
+
+    expect(points).toEqual([expect.objectContaining({ metric: 'followers', value: 1234 })]);
+    expect(calls[0]!.url).toContain('fields=followers_count');
+    expect(calls[0]!.url).not.toContain('insights');
+    expect(calls[0]!.url).not.toContain('page_fans');
+  });
+
+  it('returns nothing rather than a bogus zero when Meta omits the field', async () => {
+    const { fb } = provider([{ match: 'followers_count', body: {} }]);
+    await expect(fb.accountAnalytics(PAGE_TOKENS)).resolves.toEqual([]);
+  });
+
+  it('propagates auth errors so the sweeper flags the connection', async () => {
+    const { fb } = provider([
+      {
+        match: 'followers_count',
+        status: 400,
+        body: { error: { message: 'Session expired', code: 190, error_subcode: 463 } },
+      },
+    ]);
+    await expect(fb.accountAnalytics(PAGE_TOKENS)).rejects.toBeInstanceOf(ProviderAuthError);
   });
 });
 

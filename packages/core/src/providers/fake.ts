@@ -58,6 +58,11 @@ export class FakeProvider implements SocialProvider {
   async postAnalytics(): Promise<MetricPoint[]> {
     return [{ metric: 'views', value: 0, capturedAt: new Date(0) }];
   }
+
+  // Deterministic so the analytics sweep (#9) can assert exact rows.
+  async accountAnalytics(): Promise<MetricPoint[]> {
+    return [{ metric: 'followers', value: 100, capturedAt: new Date(0) }];
+  }
 }
 
 /**
@@ -104,6 +109,11 @@ export class FakeBetweenStepsProvider implements SocialProvider {
   async postAnalytics(): Promise<MetricPoint[]> {
     return [{ metric: 'views', value: 0, capturedAt: new Date(0) }];
   }
+
+  // Deterministic so the analytics sweep (#9) can assert exact rows.
+  async accountAnalytics(): Promise<MetricPoint[]> {
+    return [{ metric: 'followers', value: 100, capturedAt: new Date(0) }];
+  }
 }
 
 /**
@@ -143,6 +153,11 @@ export class FakeOneTimeProvider implements SocialProvider {
   async postAnalytics(): Promise<MetricPoint[]> {
     return [{ metric: 'views', value: 0, capturedAt: new Date(0) }];
   }
+
+  // Deterministic so the analytics sweep (#9) can assert exact rows.
+  async accountAnalytics(): Promise<MetricPoint[]> {
+    return [{ metric: 'followers', value: 100, capturedAt: new Date(0) }];
+  }
 }
 
 /**
@@ -180,6 +195,11 @@ export class FakeFailingRefreshProvider implements SocialProvider {
 
   async postAnalytics(): Promise<MetricPoint[]> {
     return [{ metric: 'views', value: 0, capturedAt: new Date(0) }];
+  }
+
+  // Deterministic so the analytics sweep (#9) can assert exact rows.
+  async accountAnalytics(): Promise<MetricPoint[]> {
+    return [{ metric: 'followers', value: 100, capturedAt: new Date(0) }];
   }
 }
 
@@ -223,5 +243,112 @@ export class FakeTransientRefreshProvider implements SocialProvider {
 
   async postAnalytics(): Promise<MetricPoint[]> {
     return [{ metric: 'views', value: 0, capturedAt: new Date(0) }];
+  }
+
+  // Deterministic so the analytics sweep (#9) can assert exact rows.
+  async accountAnalytics(): Promise<MetricPoint[]> {
+    return [{ metric: 'followers', value: 100, capturedAt: new Date(0) }];
+  }
+}
+
+/**
+ * Analytics that fail with ProviderAuthError (issue #9): the sweeper must flag the connection
+ * needs_reconnect + emit `connection.needs_reconnect`, and MUST still sweep the rest of the
+ * workspace — one dead account can't take the whole sweep down.
+ */
+export class FakeFailingAnalyticsProvider implements SocialProvider {
+  readonly identifier = 'fake_fail_analytics' as const;
+  readonly displayName = 'Fake Failing-Analytics Provider';
+  readonly isBetweenSteps = false;
+  readonly tokenModel = 'auto-refresh' as const;
+  readonly maxConcurrentJobs = 1;
+
+  async generateAuthUrl({
+    redirectUri,
+    state,
+  }: {
+    redirectUri: string;
+    state: string;
+  }): Promise<GenerateAuthUrl> {
+    return { url: `${redirectUri}?fake_fail_analytics=1&state=${state}` };
+  }
+
+  async authenticate(): Promise<AuthTokens> {
+    return {
+      accessToken: 'fake-fail-analytics-token',
+      externalId: 'fail-analytics-1',
+      displayName: 'Failing Analytics',
+    };
+  }
+
+  async refreshToken(): Promise<AuthTokens> {
+    return {
+      accessToken: 'fake-fail-analytics-token',
+      externalId: 'fail-analytics-1',
+      displayName: 'Failing Analytics',
+    };
+  }
+
+  async post(): Promise<PostResult> {
+    return { externalPostId: 'fake_fail_analytics', releaseUrl: 'https://fake.local/p/fa' };
+  }
+
+  async postAnalytics(): Promise<MetricPoint[]> {
+    throw new ProviderAuthError('analytics denied (fake)');
+  }
+
+  async accountAnalytics(): Promise<MetricPoint[]> {
+    throw new ProviderAuthError('analytics denied (fake)');
+  }
+}
+
+/**
+ * Analytics that fail with a NON-auth (transient) error (issue #9): the sweeper must log it and
+ * leave the connection alone so the next sweep retries — NOT flag needs_reconnect. Locks the same
+ * catch-order invariant token-health depends on.
+ */
+export class FakeTransientAnalyticsProvider implements SocialProvider {
+  readonly identifier = 'fake_transient_analytics' as const;
+  readonly displayName = 'Fake Transient-Analytics Provider';
+  readonly isBetweenSteps = false;
+  readonly tokenModel = 'auto-refresh' as const;
+  readonly maxConcurrentJobs = 1;
+
+  async generateAuthUrl({
+    redirectUri,
+    state,
+  }: {
+    redirectUri: string;
+    state: string;
+  }): Promise<GenerateAuthUrl> {
+    return { url: `${redirectUri}?fake_transient_analytics=1&state=${state}` };
+  }
+
+  async authenticate(): Promise<AuthTokens> {
+    return {
+      accessToken: 'fake-transient-analytics-token',
+      externalId: 'transient-analytics-1',
+      displayName: 'Transient Analytics',
+    };
+  }
+
+  async refreshToken(): Promise<AuthTokens> {
+    return {
+      accessToken: 'fake-transient-analytics-token',
+      externalId: 'transient-analytics-1',
+      displayName: 'Transient Analytics',
+    };
+  }
+
+  async post(): Promise<PostResult> {
+    return { externalPostId: 'fake_transient_analytics', releaseUrl: 'https://fake.local/p/ta' };
+  }
+
+  async postAnalytics(): Promise<MetricPoint[]> {
+    throw new Error('upstream rate limit (fake transient)');
+  }
+
+  async accountAnalytics(): Promise<MetricPoint[]> {
+    throw new Error('upstream rate limit (fake transient)');
   }
 }

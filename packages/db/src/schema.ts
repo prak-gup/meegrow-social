@@ -118,6 +118,8 @@ export const connections = pgTable('connections', {
   meta: jsonb('meta')
     .notNull()
     .default(sql`'{}'::jsonb`),
+  /** Last time the analytics sweeper polled this account's followers (#9). Null = never swept. */
+  lastAnalyticsAt: ts('last_analytics_at'),
   createdAt: createdAt(),
 });
 
@@ -160,6 +162,14 @@ export const posts = pgTable('posts', {
     .default(sql`'[]'::jsonb`),
   publishAt: ts('publish_at'),
   releaseUrl: text('release_url'),
+  /**
+   * The platform's own id for the published post (e.g. FB `{page-id}_{post-id}`, IG media id).
+   * Required to poll per-post analytics (#9) — `releaseUrl` is for humans and its shape is
+   * provider-specific, so it must never be parsed to recover this. Null until published.
+   */
+  externalPostId: text('external_post_id'),
+  /** Last time the analytics sweeper polled this post (#9). Null = never swept. */
+  lastAnalyticsAt: ts('last_analytics_at'),
   error: text('error'),
   idempotencyKey: text('idempotency_key'),
   // Nullable, no FK (see `connectionId` above for the same pattern): set when a post was created

@@ -52,7 +52,14 @@ export async function publishPost(workspaceId: string, postId: string): Promise<
       const result = await provider.post(tokens, details);
       await tx
         .update(schema.posts)
-        .set({ status: 'published', releaseUrl: result.releaseUrl, error: null })
+        .set({
+          status: 'published',
+          releaseUrl: result.releaseUrl,
+          // The platform's own id — the analytics sweeper (#9) polls insights by it. Without this
+          // it was discarded at publish time and unrecoverable except by parsing releaseUrl.
+          externalPostId: result.externalPostId,
+          error: null,
+        })
         .where(eq(schema.posts.id, postId));
       await tx.insert(schema.eventLogs).values({
         workspaceId,

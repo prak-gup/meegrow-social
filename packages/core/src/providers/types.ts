@@ -76,4 +76,11 @@ export interface SocialProvider {
   post(tokens: AuthTokens, details: PostDetails[]): Promise<PostResult>;
   /** Per-post metrics for a previously published post. */
   postAnalytics(tokens: AuthTokens, externalPostId: string): Promise<MetricPoint[]>;
+  /**
+   * Account-level metrics for the connected account — follower count and any other whole-account
+   * numbers (#9). Separate from `postAnalytics` because it's polled on its own cadence (daily) and
+   * needs no post. Metric names stay provider-native and flexible: platforms rename them (Meta
+   * retired `page_fans` for a `followers_count` node field), so never hardcode a canonical set.
+   */
+  accountAnalytics(tokens: AuthTokens): Promise<MetricPoint[]>;
 }

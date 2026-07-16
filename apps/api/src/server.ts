@@ -37,6 +37,8 @@ import {
   getMedia,
   getPost,
   getPostGroup,
+  getConnectionFollowers,
+  getPostMetrics,
   getQueue,
   handleCallback,
   listConnections,
@@ -337,6 +339,15 @@ export async function buildServer(): Promise<FastifyInstance> {
     return { deleted: true };
   });
 
+  // Follower trend for one connection (#9), newest first.
+  app.get<{ Params: { id: string } }>('/v1/connections/:id/followers', async (req, reply) => {
+    const conns = await listConnections(req.authContext!.workspaceId);
+    if (!conns.some((c) => c.id === req.params.id)) {
+      return reply.code(404).send({ error: 'not found' });
+    }
+    return { followers: await getConnectionFollowers(req.authContext!.workspaceId, req.params.id) };
+  });
+
   app.post('/v1/posts', async (req, reply) => {
     const parsed = createPostInput.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
@@ -361,6 +372,14 @@ export async function buildServer(): Promise<FastifyInstance> {
     const parsed = calendarPostsQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
     return calendarPosts(req.authContext!.workspaceId, parsed.data);
+  });
+
+  // Per-post metrics (#9): newest value per metric name + the full append-only series. 404s when
+  // the post doesn't exist, rather than returning an empty series that looks like "no data yet".
+  app.get<{ Params: { id: string } }>('/v1/posts/:id/metrics', async (req, reply) => {
+    const post = await getPost(req.authContext!.workspaceId, req.params.id);
+    if (!post) return reply.code(404).send({ error: 'not found' });
+    return getPostMetrics(req.authContext!.workspaceId, req.params.id);
   });
 
   app.get<{ Params: { id: string } }>('/v1/posts/:id', async (req, reply) => {
