@@ -61,6 +61,16 @@ export interface SocialProvider {
    * user may connect. The user picks one, then the connect service finalizes the connection.
    */
   listAccounts?(tokens: AuthTokens): Promise<ProviderAccount[]>;
+  /**
+   * Only meaningful when `isBetweenSteps`: swap the user-level tokens for the ones the chosen
+   * account should actually be connected with, once the user has picked. Facebook needs this — the
+   * login yields a 60-day *user* token, but a Page must be stored with its own non-expiring *Page*
+   * token (RESEARCH meta.md §2.1). Returning per-account tokens from `listAccounts` instead would
+   * leak them into `oauth_flows.accounts`, which is plain JSON; this hook keeps them in the
+   * encrypted path. Providers whose accounts all share the user token (LinkedIn org, YouTube
+   * channel, GBP location) simply omit it.
+   */
+  finalizeAccount?(tokens: AuthTokens, account: ProviderAccount): Promise<AuthTokens>;
   refreshToken(refreshToken: string): Promise<AuthTokens>;
   /** Publish an array of details (thread/carousel) to one connected account. */
   post(tokens: AuthTokens, details: PostDetails[]): Promise<PostResult>;
