@@ -7,6 +7,12 @@ import type { AuthContext } from '@meegrow-social/core';
 /**
  * Builds a stateless MCP server bound to one workspace (resolved from the API key). Tools are
  * task-shaped and call the SAME `core` services the REST API uses — no business logic here.
+ *
+ * DELIBERATELY ABSENT — api-key management (#8). There is no `create_api_key` / `revoke_api_key`
+ * tool and there should not be: an agent authenticating *with* a key, able to mint more keys for
+ * its own workspace, can silently escalate its own persistence beyond the key you handed it — and
+ * revocation stops being a reliable off-switch. Key management is a human action over REST
+ * (`POST/GET/DELETE /v1/api-keys`). Nothing in the agent flows needs it.
  */
 export function buildMcpServer(ctx: AuthContext): McpServer {
   const server = new McpServer({ name: 'meegrow-social', version: '0.0.0' });

@@ -6,6 +6,7 @@ import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import {
   calendarPostsQuery,
+  createApiKeyInput,
   createPostInput,
   createQueueInput,
   finishConnectInput,
@@ -25,6 +26,7 @@ import {
   authenticateApiKey,
   authenticateSession,
   buildUserView,
+  createApiKeyForWorkspace,
   calendarPosts,
   cancelPost,
   createPost,
@@ -41,12 +43,14 @@ import {
   getPostMetrics,
   getQueue,
   handleCallback,
+  listApiKeys,
   listConnections,
   listPosts,
   listProviders,
   listQueues,
   queryEventLogs,
   QueueInactiveError,
+  revokeApiKey,
   QueueNotFoundError,
   recordApiRequestLog,
   registerMediaFromUrl,
@@ -316,6 +320,29 @@ export async function buildServer(): Promise<FastifyInstance> {
       parsed.data.externalId,
     );
     return reply.code(201).send({ connectionId });
+  });
+
+  // --- API keys (#8) ---------------------------------------------------------------------------
+  // Deliberately NOT exposed over MCP: an agent that can mint or revoke credentials for its own
+  // workspace is a footgun, and nothing in the agent flows needs it. Key management is a human
+  // action. (Role gating — only admins — arrives with memberships enforcement in M2; for now any
+  // valid key of the workspace can manage that workspace's keys, per the issue.)
+  app.post('/v1/api-keys', async (req, reply) => {
+    const parsed = createApiKeyInput.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const created = await createApiKeyForWorkspace(req.authContext!.workspaceId, parsed.data.name);
+    // The only response that ever carries the secret — it is not stored and cannot be re-shown.
+    return reply.code(201).send(created);
+  });
+
+  app.get('/v1/api-keys', async (req) => ({
+    apiKeys: await listApiKeys(req.authContext!.workspaceId),
+  }));
+
+  app.delete<{ Params: { id: string } }>('/v1/api-keys/:id', async (req, reply) => {
+    const ok = await revokeApiKey(req.authContext!.workspaceId, req.params.id);
+    if (!ok) return reply.code(404).send({ error: 'not found' });
+    return { revoked: true };
   });
 
   // Which platforms this environment can actually connect. Registration is env-gated, so dev/CI
