@@ -1,6 +1,16 @@
 # Add this block to the box's /etc/caddy/Caddyfile (alongside the existing postiz.meegrowlabs.com
 # block) and `sudo systemctl reload caddy`. Caddy auto-provisions the TLS cert.
-# The API serves both the JSON API and disk-backed media (/media/*), so one upstream covers both.
+# API paths (JSON API, OAuth callback, MCP, disk-backed media) proxy to the api container;
+# everything else serves the dashboard SPA, extracted from the image to /opt/meegrow-social/web-dist
+# on each deploy (see DEPLOY.md / deploy.yml).
 social.meegrowlabs.com {
-	reverse_proxy 127.0.0.1:8990
+	@api path /v1/* /connect/* /mcp /mcp/* /media/* /healthz
+	handle @api {
+		reverse_proxy 127.0.0.1:8990
+	}
+	handle {
+		root * /opt/meegrow-social/web-dist
+		try_files {path} /index.html
+		file_server
+	}
 }

@@ -22,7 +22,12 @@ private Docker network — nothing clashes with Postiz (which uses :5000); only 
    docker compose -f compose.prod.yml build
    docker compose -f compose.prod.yml run --rm migrate     # tables + RLS + mgs_app role
    docker compose -f compose.prod.yml up -d api worker
+   # publish the dashboard SPA for Caddy (repeat on every deploy; deploy.yml does this in CI)
+   cid=$(docker create meegrow-social:latest)
+   rm -rf web-dist.next && docker cp "$cid:/app/apps/web/dist" web-dist.next && docker rm "$cid"
+   rm -rf web-dist.prev; [ -d web-dist ] && mv web-dist web-dist.prev; mv web-dist.next web-dist
    curl -s https://social.meegrowlabs.com/healthz          # -> {"ok":true}
+   # dashboard: https://social.meegrowlabs.com/ (SPA served by Caddy from web-dist)
    ```
 5. **CI auto-deploy** (optional): set repo secrets `DEPLOY_HOST=35.154.66.120`, `DEPLOY_USER=ubuntu`,
    `DEPLOY_SSH_KEY=<private key>`. Then every green CI on main auto-deploys (`.github/workflows/deploy.yml`).

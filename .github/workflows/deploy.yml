@@ -31,4 +31,12 @@ jobs:
             docker compose -f compose.prod.yml build
             docker compose -f compose.prod.yml run --rm migrate
             docker compose -f compose.prod.yml up -d api worker
+            # Publish the SPA build for Caddy (served from /opt/meegrow-social/web-dist).
+            cid=$(docker create meegrow-social:latest)
+            rm -rf web-dist.next
+            docker cp "$cid:/app/apps/web/dist" web-dist.next
+            docker rm "$cid"
+            rm -rf web-dist.prev
+            [ -d web-dist ] && mv web-dist web-dist.prev
+            mv web-dist.next web-dist
             docker compose -f compose.prod.yml ps
