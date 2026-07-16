@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { FacebookPagesProvider } from './facebook.js';
 import { MetaClient, mapMetaError, type FetchLike } from './client.js';
-import { ProviderAuthError, ProviderBadRequestError, ProviderTransientError } from '../../errors.js';
+import {
+  ProviderAuthError,
+  ProviderBadRequestError,
+  ProviderTransientError,
+} from '../../errors.js';
 import type { AuthTokens } from '../types.js';
 
 /**
@@ -82,7 +86,10 @@ describe('auth dialog', () => {
 describe('authenticate', () => {
   it('exchanges code -> short-lived -> long-lived user token (both legs, server-side)', async () => {
     const { fb, calls } = provider([
-      { match: 'fb_exchange_token', body: { access_token: 'LONG-USER-TOKEN', expires_in: 5184000 } },
+      {
+        match: 'fb_exchange_token',
+        body: { access_token: 'LONG-USER-TOKEN', expires_in: 5184000 },
+      },
       { match: 'oauth/access_token', body: { access_token: 'SHORT-USER-TOKEN' } },
     ]);
     const tokens = await fb.authenticate({
@@ -175,7 +182,13 @@ describe('post', () => {
     const result = await fb.post(PAGE_TOKENS, [
       {
         caption: 'a picture',
-        media: [{ mediaId: '11111111-1111-4111-8111-111111111111', kind: 'image', url: 'https://cdn.test/a.jpg' }],
+        media: [
+          {
+            mediaId: '11111111-1111-4111-8111-111111111111',
+            kind: 'image',
+            url: 'https://cdn.test/a.jpg',
+          },
+        ],
       },
     ]);
 
@@ -192,8 +205,16 @@ describe('post', () => {
       {
         caption: 'album',
         media: [
-          { mediaId: '11111111-1111-4111-8111-111111111111', kind: 'image', url: 'https://cdn.test/a.jpg' },
-          { mediaId: '22222222-2222-4222-8222-222222222222', kind: 'image', url: 'https://cdn.test/b.jpg' },
+          {
+            mediaId: '11111111-1111-4111-8111-111111111111',
+            kind: 'image',
+            url: 'https://cdn.test/a.jpg',
+          },
+          {
+            mediaId: '22222222-2222-4222-8222-222222222222',
+            kind: 'image',
+            url: 'https://cdn.test/b.jpg',
+          },
         ],
       },
     ]);
@@ -212,7 +233,13 @@ describe('post', () => {
     const result = await fb.post(PAGE_TOKENS, [
       {
         caption: 'a clip',
-        media: [{ mediaId: '33333333-3333-4333-8333-333333333333', kind: 'video', url: 'https://cdn.test/v.mp4' }],
+        media: [
+          {
+            mediaId: '33333333-3333-4333-8333-333333333333',
+            kind: 'video',
+            url: 'https://cdn.test/v.mp4',
+          },
+        ],
       },
     ]);
 
@@ -225,7 +252,10 @@ describe('post', () => {
     const { fb, calls } = provider([]);
     await expect(
       fb.post(PAGE_TOKENS, [
-        { caption: 'x', media: [{ mediaId: '44444444-4444-4444-8444-444444444444', kind: 'image' }] },
+        {
+          caption: 'x',
+          media: [{ mediaId: '44444444-4444-4444-8444-444444444444', kind: 'image' }],
+        },
       ]),
     ).rejects.toBeInstanceOf(ProviderBadRequestError);
     expect(calls).toHaveLength(0);
@@ -233,17 +263,30 @@ describe('post', () => {
 
   it('rejects threads, mixed video+image, and multi-video as bad requests', async () => {
     const { fb } = provider([]);
-    const img = { mediaId: '11111111-1111-4111-8111-111111111111', kind: 'image' as const, url: 'https://cdn.test/a.jpg' };
-    const vid = { mediaId: '33333333-3333-4333-8333-333333333333', kind: 'video' as const, url: 'https://cdn.test/v.mp4' };
+    const img = {
+      mediaId: '11111111-1111-4111-8111-111111111111',
+      kind: 'image' as const,
+      url: 'https://cdn.test/a.jpg',
+    };
+    const vid = {
+      mediaId: '33333333-3333-4333-8333-333333333333',
+      kind: 'video' as const,
+      url: 'https://cdn.test/v.mp4',
+    };
 
     await expect(
-      fb.post(PAGE_TOKENS, [{ caption: 'a', media: [] }, { caption: 'b', media: [] }]),
+      fb.post(PAGE_TOKENS, [
+        { caption: 'a', media: [] },
+        { caption: 'b', media: [] },
+      ]),
     ).rejects.toBeInstanceOf(ProviderBadRequestError);
     await expect(
       fb.post(PAGE_TOKENS, [{ caption: 'a', media: [img, vid] }]),
     ).rejects.toBeInstanceOf(ProviderBadRequestError);
     await expect(
-      fb.post(PAGE_TOKENS, [{ caption: 'a', media: [vid, { ...vid, mediaId: '55555555-5555-4555-8555-555555555555' }] }]),
+      fb.post(PAGE_TOKENS, [
+        { caption: 'a', media: [vid, { ...vid, mediaId: '55555555-5555-4555-8555-555555555555' }] },
+      ]),
     ).rejects.toBeInstanceOf(ProviderBadRequestError);
   });
 });
@@ -296,7 +339,12 @@ describe('postAnalytics', () => {
 describe('mapMetaError — the taxonomy the scheduler branches on', () => {
   it.each([
     ['expired token subcode', 400, { error: { code: 190, error_subcode: 463 } }, ProviderAuthError],
-    ['app unauthorized subcode', 400, { error: { code: 190, error_subcode: 458 } }, ProviderAuthError],
+    [
+      'app unauthorized subcode',
+      400,
+      { error: { code: 190, error_subcode: 458 } },
+      ProviderAuthError,
+    ],
     ['no page role subcode', 403, { error: { code: 200, error_subcode: 492 } }, ProviderAuthError],
     ['plain invalid token', 400, { error: { code: 190 } }, ProviderAuthError],
     ['permissions error', 403, { error: { code: 10 } }, ProviderAuthError],
@@ -313,7 +361,9 @@ describe('mapMetaError — the taxonomy the scheduler branches on', () => {
   });
 
   it('keeps the Meta code in the message for debugging', () => {
-    const err = mapMetaError(400, { error: { message: 'Session expired', code: 190, error_subcode: 463 } });
+    const err = mapMetaError(400, {
+      error: { message: 'Session expired', code: 190, error_subcode: 463 },
+    });
     expect(err.message).toContain('Session expired');
     expect(err.message).toContain('190/463');
   });
@@ -322,7 +372,10 @@ describe('mapMetaError — the taxonomy the scheduler branches on', () => {
 describe('MetaClient.debugToken', () => {
   it('reads expires_at: 0 (page tokens) as "never expires"', async () => {
     const { fetchImpl } = recorder([
-      { match: 'debug_token', body: { data: { is_valid: true, expires_at: 0, scopes: ['pages_manage_posts'] } } },
+      {
+        match: 'debug_token',
+        body: { data: { is_valid: true, expires_at: 0, scopes: ['pages_manage_posts'] } },
+      },
     ]);
     const client = new MetaClient({ appId: 'a', appSecret: 'b', fetchImpl });
     const info = await client.debugToken('PAGE-TOKEN');

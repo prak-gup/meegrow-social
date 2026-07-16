@@ -123,7 +123,8 @@ export class FacebookPagesProvider implements SocialProvider {
     }
 
     if (videos.length === 1) return this.postVideo(tokens, pageId, detail.caption, videos[0]!);
-    if (images.length === 1) return this.postSinglePhoto(tokens, pageId, detail.caption, images[0]!);
+    if (images.length === 1)
+      return this.postSinglePhoto(tokens, pageId, detail.caption, images[0]!);
     if (images.length > 1) return this.postMultiPhoto(tokens, pageId, detail.caption, images);
     return this.postText(tokens, pageId, detail.caption);
   }
@@ -178,11 +179,7 @@ export class FacebookPagesProvider implements SocialProvider {
     return res.data ?? [];
   }
 
-  private async postText(
-    tokens: AuthTokens,
-    pageId: string,
-    caption: string,
-  ): Promise<PostResult> {
+  private async postText(tokens: AuthTokens, pageId: string, caption: string): Promise<PostResult> {
     // A caption containing a URL renders as a link post automatically — FB scrapes OG tags from the
     // destination. Link previews aren't API-customisable (RESEARCH gotcha #9), so we send text only.
     const res = await this.client.graphPost<{ id: string }>(`${pageId}/feed`, {

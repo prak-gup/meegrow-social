@@ -1,4 +1,8 @@
-import { ProviderAuthError, ProviderBadRequestError, ProviderTransientError } from '../../errors.js';
+import {
+  ProviderAuthError,
+  ProviderBadRequestError,
+  ProviderTransientError,
+} from '../../errors.js';
 
 /**
  * Shared Meta Graph client for the facebook + instagram providers (issues #14/#13 — "one Meta
@@ -13,7 +17,10 @@ export const GRAPH_VERSION = 'v21.0';
 const GRAPH_HOST = 'https://graph.facebook.com';
 const WWW_HOST = 'https://www.facebook.com';
 
-export type FetchLike = (url: string, init?: { method?: string; body?: string }) => Promise<{
+export type FetchLike = (
+  url: string,
+  init?: { method?: string; body?: string },
+) => Promise<{
   ok: boolean;
   status: number;
   json: () => Promise<unknown>;
