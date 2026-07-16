@@ -29,6 +29,16 @@ Filed follow-up **#36** (atomic oauth-flow consume — non-blocking hardening).
 
 Scaffold (Phase 5) = M0 walking skeleton; issue graph (Phase 6) = 31 issues (M1=#1-18 minus #11; M2=#11,19-23; M3=#24-27; M4=#28-30; launch=#31; QA #18/#23/#27/#30).
 
+## Deploy — LIVE (2026-07-16)
+
+**https://social.meegrowlabs.com is up** (issue #11 CLOSED, PR #38 merged after a follow-up commit).
+
+- Box: Postiz EC2 35.154.66.120, `/opt/meegrow-social` (cloned via read-only deploy key `~/.ssh/mgs_deploy` on the box). Own PG17+Redis containers, API on 127.0.0.1:8990 behind Caddy (LE cert auto-provisioned; DNS A record already existed).
+- **PR #38 gap fixed pre-merge:** it predated #16, so nothing served the SPA. Caddy now routes `/v1 /connect /mcp /media /healthz` → API and serves the SPA from `/opt/meegrow-social/web-dist`, which each deploy extracts from the image (`docker create` + `docker cp` — see deploy.yml / DEPLOY.md).
+- Migrations + RLS + mgs_app applied; `.env` secrets generated on-box (mode 600, never left the box). Owner seeded: prak.gup@gmail.com / workspace "Meegrow"; login smoke-tested 200 through Caddy.
+- CI auto-deploy ARMED: repo secrets DEPLOY_HOST/DEPLOY_USER/DEPLOY_SSH_KEY set (dedicated GHA keypair; private key only in the secret). Every green CI on main deploys.
+- **OAuth callback now registerable: `https://social.meegrowlabs.com/connect/callback`** → issue #1 approvals is UNBLOCKED (still unstarted, still the long pole).
+
 ## Team + deploy (2026-07-08, added mid-Phase-7)
 
 - **Priyanshi = GitHub `priyanshijain1`** (from Meegrowlabs/au-auto-news-console). INVITED (write) to prak-gup/meegrow-social + prak-gup/meegrow-social-postiz — **pending her acceptance** (can't assign issues until she accepts). Her mission = issue **#1** (platform approvals) + **#37** (E2E QA staging). Assign both once she accepts.
