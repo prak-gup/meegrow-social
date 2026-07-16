@@ -2,9 +2,11 @@ import type { ProviderIdentifier } from '@meegrow-social/contracts';
 import type { SocialProvider } from './types.js';
 import {
   FakeBetweenStepsProvider,
+  FakeFailingAnalyticsProvider,
   FakeFailingRefreshProvider,
   FakeOneTimeProvider,
   FakeProvider,
+  FakeTransientAnalyticsProvider,
   FakeTransientRefreshProvider,
 } from './fake.js';
 import { FacebookPagesProvider } from './meta/facebook.js';
@@ -36,6 +38,8 @@ registerProvider(new FakeBetweenStepsProvider());
 registerProvider(new FakeOneTimeProvider());
 registerProvider(new FakeFailingRefreshProvider());
 registerProvider(new FakeTransientRefreshProvider());
+registerProvider(new FakeFailingAnalyticsProvider());
+registerProvider(new FakeTransientAnalyticsProvider());
 
 /**
  * Register the real, env-configured providers. A provider whose credentials are absent is simply

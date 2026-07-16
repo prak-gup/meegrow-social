@@ -2,6 +2,7 @@ import { Worker } from 'bullmq';
 import { publishPost, withWorkspace, schema } from './deps.js';
 import { buildRetentionWorker } from './retention.js';
 import { buildTokenHealthWorker } from './token-health.js';
+import { buildAnalyticsWorker } from './analytics.js';
 
 // Must match apps/api/src/scheduler.ts PUBLISH_QUEUE.
 const PUBLISH_QUEUE = 'publish';
@@ -42,4 +43,7 @@ if (!redisUrl) throw new Error('REDIS_URL is not set');
 buildWorker(redisUrl);
 buildRetentionWorker(redisUrl);
 buildTokenHealthWorker(redisUrl);
-console.log('meegrow-social worker consuming publish + logs-retention + token-health queues');
+buildAnalyticsWorker(redisUrl);
+console.log(
+  'meegrow-social worker consuming publish + logs-retention + token-health + analytics queues',
+);

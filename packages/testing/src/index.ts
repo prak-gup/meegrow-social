@@ -36,8 +36,16 @@ export async function resetDb(): Promise<void> {
   await db().execute(sql.raw(`TRUNCATE ${tables.map((t) => `"${t}"`).join(', ')} CASCADE;`));
 }
 
+/**
+ * Monotonic suffix source. `Math.floor(performance.now())` alone is millisecond-resolution, so two
+ * createWorkspace() calls in the same millisecond produced the same slug and the second blew up on
+ * `workspaces_slug_unique` — a latent flake for any test needing two workspaces (e.g. asserting RLS
+ * isolation). A counter makes uniqueness independent of timer resolution.
+ */
+let wsCounter = 0;
+
 export async function createWorkspace(name = 'Test WS'): Promise<string> {
-  const slug = `${name.toLowerCase().replace(/\s+/g, '-')}-${Math.floor(performance.now())}`;
+  const slug = `${name.toLowerCase().replace(/\s+/g, '-')}-${Math.floor(performance.now())}-${++wsCounter}`;
   const [ws] = await db().insert(schema.workspaces).values({ name, slug }).returning();
   if (!ws) throw new Error('failed to create workspace');
   return ws.id;

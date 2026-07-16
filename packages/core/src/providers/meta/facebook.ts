@@ -130,8 +130,9 @@ export class FacebookPagesProvider implements SocialProvider {
   }
 
   /**
-   * Per-post insights + the Page's follower count. Metrics are requested individually so one
-   * deprecated name doesn't nuke the whole response (Meta errors rather than omitting).
+   * Per-post insights. Metrics are requested individually so one metric Meta has retired doesn't
+   * nuke the whole response — Meta errors the entire call rather than omitting an unknown name
+   * (RESEARCH meta.md §6), and the `impressions` family was retired across Nov 2025–Jun 2026.
    */
   async postAnalytics(tokens: AuthTokens, externalPostId: string): Promise<MetricPoint[]> {
     const capturedAt = new Date();
@@ -149,26 +150,28 @@ export class FacebookPagesProvider implements SocialProvider {
           }
         }
       } catch (err) {
-        // A metric Meta has retired shouldn't fail the whole collection; auth errors must still
-        // surface so the connection gets flagged.
+        // A retired metric shouldn't fail the whole collection; auth errors must still surface so
+        // the sweeper flags the connection needs_reconnect.
         if (err instanceof ProviderAuthError) throw err;
       }
     }
 
-    // Followers are a node field, not an insight — `page_fans` is deprecated (RESEARCH gotcha #6).
-    try {
-      const page = await this.client.graphGet<{ followers_count?: number }>(tokens.externalId, {
-        fields: 'followers_count',
-        access_token: tokens.accessToken,
-      });
-      if (typeof page.followers_count === 'number') {
-        points.push({ metric: 'followers', value: page.followers_count, capturedAt });
-      }
-    } catch (err) {
-      if (err instanceof ProviderAuthError) throw err;
-    }
-
     return points;
+  }
+
+  /**
+   * Page-level metrics. Followers come from a **node field**, not an insight: `page_fans` is
+   * deprecated (RESEARCH meta.md gotcha #6), so `GET /{page-id}?fields=followers_count` is the
+   * supported route. Polled on its own (daily) cadence by the sweeper (#9).
+   */
+  async accountAnalytics(tokens: AuthTokens): Promise<MetricPoint[]> {
+    const page = await this.client.graphGet<{ followers_count?: number }>(tokens.externalId, {
+      fields: 'followers_count',
+      access_token: tokens.accessToken,
+    });
+    return typeof page.followers_count === 'number'
+      ? [{ metric: 'followers', value: page.followers_count, capturedAt: new Date() }]
+      : [];
   }
 
   private async fetchPages(userAccessToken: string): Promise<PageAccount[]> {

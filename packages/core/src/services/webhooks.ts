@@ -8,6 +8,8 @@ import { eq } from 'drizzle-orm';
  * `connection.needs_reconnect` event before the delivery worker exists.
  */
 export const CONNECTION_NEEDS_RECONNECT_EVENT = 'connection.needs_reconnect';
+/** Emitted per post whose analytics sweep collected fresh metrics (#9). */
+export const ANALYTICS_UPDATED_EVENT = 'analytics.updated';
 
 /** A tx handle from `withWorkspace`. */
 type Tx = Parameters<Parameters<typeof withWorkspace>[1]>[0];

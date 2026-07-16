@@ -19,6 +19,9 @@ export const providerIdentifier = z.enum([
   'fake_onetime',
   'fake_fail_refresh',
   'fake_transient_refresh',
+  // Test-only (issue #9): analytics that fail auth / transiently, to drive the sweeper's taxonomy.
+  'fake_fail_analytics',
+  'fake_transient_analytics',
 ]);
 export type ProviderIdentifier = z.infer<typeof providerIdentifier>;
 
