@@ -14,17 +14,41 @@ Prakhar" and "works for clients" is Meta's approval queue, not code.
   API on `127.0.0.1:8990` behind Caddy. Secrets in `/opt/meegrow-social/.env` — **on the box only**.
 - **Deploy:** automatic. Green CI on `main` → deploys. No manual step.
 
-## Your issues
+## Current sequence (as of 2026-07-21)
 
-| #       | What                                                           | Blocked by                   |
-| ------- | -------------------------------------------------------------- | ---------------------------- |
-| **#51** | Link an IG Business account to a granted Page                  | — **start here, it's small** |
-| **#52** | Live bring-up: Instagram (image/carousel/reel)                 | #51                          |
-| **#53** | Meta App Review — Advanced Access for 7 scopes + Tech Provider | #52 for the IG screencasts   |
-| **#54** | Replace the rejected `post_impressions_unique` metric          | —                            |
-| **#1**  | Platform approvals workstream (parent)                         | —                            |
-| **#37** | E2E QA on staging                                              | —                            |
-| **#18** | M1 QA: Meta publishing core acceptance                         | —                            |
+✅ **#51 + #52 DONE** — IG account linked, and image/carousel/reel all published live with resolving
+permalinks; all 6 IG metric names accepted (unlike FB, none rejected). Verified against the prod DB.
+
+**The plan now runs two tracks in parallel — submit the slow external review, then fill the wait
+with QA + code:**
+
+1. **NOW → #53 Meta App Review.** The priority. It's a weeks-long external review, so start the
+   clock today. You already have everything it needs: working FB _and_ IG flows + the screen
+   recording. Submit, then it's Meta's queue, not yours. **One thing to prove:** the issue's
+   hypothesis that App Review is what unlocks the Tech Provider "access verification" panel — after
+   you submit, check whether that panel activates, and record the answer either way.
+2. **WHILE #53 sits — QA the base.** #18 (M1 Meta publishing acceptance) and #37 (E2E staging).
+   Lock down FB+IG before any client touches it.
+3. **WHILE #53 sits — #54, your first code issue.** Small, self-contained, and you already did the
+   metric verification for IG. Workflow + the one non-obvious rule are in the issue comment.
+4. **Then, if #54 goes smoothly — #6 webhooks** is teed up as the next coding stretch. Bigger, but
+   the hard part (the outbox) already exists: #12 writes `webhook_deliveries` rows and #9 feeds
+   `analytics.updated`. #6 is the delivery drainer + CRUD + DLQ replay on top.
+
+Read **§Five things that will save you a day** below before the code issues.
+
+## All your issues
+
+| #       | What                                                           | State / blocked by        |
+| ------- | -------------------------------------------------------------- | ------------------------- |
+| **#51** | Link an IG Business account to a granted Page                  | ✅ done                   |
+| **#52** | Live bring-up: Instagram (image/carousel/reel)                 | ✅ done                   |
+| **#53** | Meta App Review — Advanced Access for 7 scopes + Tech Provider | ▶ **now — the priority**  |
+| **#18** | M1 QA: Meta publishing core acceptance                         | ▶ while #53 waits         |
+| **#37** | E2E QA on staging                                              | ▶ while #53 waits         |
+| **#54** | Replace the rejected `post_impressions_unique` metric (code)   | ▶ your first coding issue |
+| **#6**  | Webhooks: delivery + DLQ replay (code)                         | queued — after #54        |
+| **#1**  | Platform approvals workstream (parent)                         | tracks #53                |
 
 ## Five things that will save you a day
 
