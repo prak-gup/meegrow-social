@@ -26,7 +26,7 @@ export function AppLayout() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <header className="sticky top-0 z-30 grid h-20 grid-cols-[1fr_auto_1fr] items-center border-b border-hairline bg-canvas px-10">
+      <header className="sticky top-0 z-30 flex h-20 items-center justify-between gap-3 border-b border-hairline bg-canvas px-4 md:grid md:grid-cols-[1fr_auto_1fr] md:px-10">
         <div className="flex items-center gap-2.5">
           <svg width="30" height="30" viewBox="0 0 32 32" fill="none" aria-hidden="true">
             <rect width="32" height="32" rx="9" fill="#fff" stroke="#dddddd" />
@@ -44,7 +44,8 @@ export function AppLayout() {
           </span>
         </div>
 
-        <nav className="flex justify-self-center">
+        {/* Desktop: centred product tabs. Mobile: a scroll strip below the header (see after). */}
+        <nav className="hidden justify-self-center md:flex">
           {TABS.map(({ to, label, Icon }) => (
             <NavLink
               key={to}
@@ -66,21 +67,41 @@ export function AppLayout() {
           <button
             type="button"
             onClick={() => navigate('/composer')}
-            className="inline-flex h-11 items-center gap-2 rounded-sm bg-rausch px-4 text-[15px] font-medium text-white hover:bg-rausch-active"
+            className="inline-flex h-11 items-center gap-2 rounded-sm bg-rausch px-3 text-[15px] font-medium text-white hover:bg-rausch-active md:px-4"
           >
             <Plus size={18} weight="bold" />
-            Create post
+            <span className="hidden sm:inline">Create post</span>
           </button>
           <button
             type="button"
             onClick={() => void logout().then(() => navigate('/login'))}
             className="grid h-9 w-9 place-items-center rounded-full bg-surface-strong text-sm font-semibold text-ink"
+            aria-label="Sign out"
             title="Sign out"
           >
             {initial}
           </button>
         </div>
       </header>
+
+      {/* Mobile tab strip — the centred desktop tabs don't fit a phone width. */}
+      <nav className="flex gap-1 overflow-x-auto border-b border-hairline px-4 py-1.5 md:hidden">
+        {TABS.map(({ to, label, Icon }) => (
+          <NavLink
+            key={to}
+            to={to}
+            className={({ isActive }) =>
+              cn(
+                'flex flex-none items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold text-muted',
+                isActive && 'bg-surface-strong text-ink',
+              )
+            }
+          >
+            <Icon size={18} />
+            {label}
+          </NavLink>
+        ))}
+      </nav>
 
       {showSwitcher && (
         <div className="flex justify-center border-b border-hairline-soft px-10 py-5">
@@ -90,7 +111,13 @@ export function AppLayout() {
         </div>
       )}
 
-      <main className="mx-auto max-w-content px-10 py-6">
+      {/* Keyed on the active workspace so workspace-scoped pages (Content/Connections) remount and
+          refetch when the client switcher changes scope — otherwise a same-route switch is a no-op
+          and the page keeps showing the previous client's data. */}
+      <main
+        key={me?.activeWorkspaceId ?? 'none'}
+        className="mx-auto max-w-content px-4 py-6 md:px-10"
+      >
         <Outlet />
       </main>
 

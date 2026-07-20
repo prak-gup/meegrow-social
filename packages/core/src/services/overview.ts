@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, like } from 'drizzle-orm';
 import { db, schema, withWorkspace } from '@meegrow-social/db';
 import type { OverviewView, ClientHealth, ProviderIdentifier } from '@meegrow-social/contracts';
 import { computeHealth } from './connections.js';
@@ -71,7 +71,8 @@ export async function overviewForUser(
           .where(
             and(eq(schema.metrics.metric, 'followers'), isNotNull(schema.metrics.connectionId)),
           )
-          .orderBy(desc(schema.metrics.capturedAt));
+          .orderBy(desc(schema.metrics.capturedAt))
+          .limit(1000); // bound the scan; latest-per-connection only needs recent rows
         const latestByConn = new Map<string, number>();
         for (const m of followerRows) {
           if (m.connectionId && !latestByConn.has(m.connectionId)) {
@@ -177,19 +178,43 @@ export async function createClientWorkspace(
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '') || 'client';
-  // Uniqueness without Math.random (unavailable in some contexts): probe + numeric suffix.
-  const existing = await db()
+
+  // Compute the first free suffix from ALL existing base-prefixed slugs (open-ended, not a fixed
+  // probe list), then INSERT with retry on the unique constraint so a concurrent create can't 500 —
+  // the DB, not the pre-check, is the source of truth for uniqueness.
+  const rows = await db()
     .select({ slug: schema.workspaces.slug })
     .from(schema.workspaces)
-    .where(
-      inArray(schema.workspaces.slug, [base, `${base}-2`, `${base}-3`, `${base}-4`, `${base}-5`]),
-    );
-  const taken = new Set(existing.map((e) => e.slug));
-  let slug = base;
-  for (let n = 2; taken.has(slug); n++) slug = `${base}-${n}`;
+    .where(like(schema.workspaces.slug, `${base}%`));
+  const taken = new Set(rows.map((r) => r.slug));
 
-  const [ws] = await db().insert(schema.workspaces).values({ name: name.trim(), slug }).returning();
-  if (!ws) throw new Error('failed to create workspace');
-  await db().insert(schema.memberships).values({ userId, workspaceId: ws.id, role: 'owner' });
-  return { workspaceId: ws.id, name: ws.name, slug: ws.slug };
+  const nextSlug = (): string => {
+    if (!taken.has(base)) return base;
+    for (let n = 2; ; n++) {
+      const s = `${base}-${n}`;
+      if (!taken.has(s)) return s;
+    }
+  };
+
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const slug = nextSlug();
+    try {
+      const [ws] = await db()
+        .insert(schema.workspaces)
+        .values({ name: name.trim(), slug })
+        .returning();
+      if (!ws) throw new Error('failed to create workspace');
+      await db().insert(schema.memberships).values({ userId, workspaceId: ws.id, role: 'owner' });
+      return { workspaceId: ws.id, name: ws.name, slug: ws.slug };
+    } catch (err) {
+      // 23505 = unique_violation: someone took this slug between our read and insert. Mark it taken
+      // and try the next suffix.
+      if (typeof err === 'object' && err && (err as { code?: string }).code === '23505') {
+        taken.add(slug);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('could not allocate a unique slug for the workspace');
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { clientHue } from '../lib/clientHue';
 import { CaretDown, MagnifyingGlass, Plus } from '../lib/icons';
@@ -12,14 +12,14 @@ import { CaretDown, MagnifyingGlass, Plus } from '../lib/icons';
 export function ClientSwitcher({ onAddClient }: { onAddClient: () => void }) {
   const { me, switchWorkspace } = useAuth();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const ref = useRef<HTMLDivElement>(null);
 
   const memberships = me?.user.memberships ?? [];
   const active = memberships.find((m) => m.workspaceId === me?.activeWorkspaceId);
-  const onOverview =
-    typeof window !== 'undefined' && window.location.pathname.startsWith('/overview');
+  const onOverview = pathname.startsWith('/overview'); // router-state driven, not window.location
   const label = onOverview ? 'All clients' : (active?.name ?? 'All clients');
 
   const filtered = useMemo(
@@ -32,8 +32,15 @@ export function ClientSwitcher({ onAddClient }: { onAddClient: () => void }) {
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
     document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [open]);
 
   const pickAll = () => {
@@ -52,7 +59,9 @@ export function ClientSwitcher({ onAddClient }: { onAddClient: () => void }) {
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="flex min-w-[220px] flex-col justify-center rounded-full px-6 text-left hover:bg-surface-soft"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          className="flex min-w-[150px] flex-col justify-center rounded-full px-4 text-left hover:bg-surface-soft sm:min-w-[220px] sm:px-6"
         >
           <span className="text-xs font-bold text-ink">Client</span>
           <span className="flex items-center gap-2 text-sm text-muted">
@@ -74,9 +83,9 @@ export function ClientSwitcher({ onAddClient }: { onAddClient: () => void }) {
             <CaretDown size={13} className="text-muted" />
           </span>
         </button>
-        <div className="relative flex flex-1 flex-col justify-center border-l border-hairline px-6">
+        <div className="relative hidden flex-1 flex-col justify-center border-l border-hairline px-6 sm:flex">
           <span className="text-xs font-bold text-ink">Search</span>
-          <span className="text-sm text-muted-soft">Find a post, caption, or campaign…</span>
+          <span className="text-sm text-muted">Find a post, caption, or campaign…</span>
         </div>
         <button
           type="button"
@@ -88,7 +97,7 @@ export function ClientSwitcher({ onAddClient }: { onAddClient: () => void }) {
       </div>
 
       {open && (
-        <div className="absolute left-1/2 z-40 mt-2 w-80 -translate-x-1/2 rounded-lg border border-hairline bg-canvas p-2.5 shadow-1">
+        <div className="absolute left-1/2 z-40 mt-2 w-[min(20rem,calc(100vw-2rem))] -translate-x-1/2 rounded-lg border border-hairline bg-canvas p-2.5 shadow-1">
           <div className="mb-2 flex items-center gap-2.5 rounded-full border border-hairline px-3.5 py-2.5">
             <MagnifyingGlass size={16} className="text-muted" />
             <input
@@ -139,7 +148,7 @@ export function ClientSwitcher({ onAddClient }: { onAddClient: () => void }) {
                 setOpen(false);
                 onAddClient();
               }}
-              className="flex w-full items-center gap-3 rounded-sm px-3 py-2.5 text-left font-semibold text-rausch hover:bg-surface-soft"
+              className="flex w-full items-center gap-3 rounded-sm px-3 py-2.5 text-left font-semibold text-ink hover:bg-surface-soft"
             >
               <Plus size={16} weight="bold" />
               Add client

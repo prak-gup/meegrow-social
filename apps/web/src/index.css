@@ -42,17 +42,6 @@
   }
 }
 
-/* Per-client identity hues (content axis). Resolved by clientHue() in the app. */
-:root {
-  --client-antidote: #7a5af8;
-  --client-mlearn: #08b5d6;
-  --client-gls: #f0a020;
-  --client-ecolive: #7bc62d;
-  --client-empower: #fb6a4a;
-  --client-blossom: #ec4899;
-  --client-fallback: #0ba96b;
-}
-
 html,
 body,
 #root {

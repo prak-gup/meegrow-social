@@ -107,7 +107,9 @@ export function Overview() {
               <span
                 className={
                   'grid h-11 w-11 flex-none place-items-center rounded-full ' +
-                  (a.tone === 'crit' ? 'bg-[#fdece8] text-error' : 'bg-[#fff6e8] text-[#a5670a]')
+                  (a.tone === 'crit'
+                    ? 'bg-status-bad/10 text-status-bad'
+                    : 'bg-status-warn/10 text-status-warn')
                 }
               >
                 <a.Icon size={22} />
@@ -160,7 +162,7 @@ export function Overview() {
                 </span>
                 {c.automationLive && (
                   <span className="absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-semibold text-white">
-                    <Lightning size={11} weight="fill" className="text-[#CBFB45]" />
+                    <Lightning size={11} weight="fill" className="text-status-ok" />
                     Bot live
                   </span>
                 )}
