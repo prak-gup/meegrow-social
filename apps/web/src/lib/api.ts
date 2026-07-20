@@ -9,6 +9,8 @@ import type {
   ProviderView,
   QueueView,
   UpdatePostInput,
+  OverviewView,
+  CreatedWorkspaceView,
 } from '@meegrow-social/contracts';
 
 /**
@@ -65,6 +67,11 @@ export const api = {
   switchWorkspace: (workspaceId: string) =>
     request<{ activeWorkspaceId: string }>('POST', '/v1/auth/session/workspace', { workspaceId }),
   rotateSession: () => request<{ ok: true }>('POST', '/v1/auth/session/rotate'),
+
+  // --- Overview + workspaces (redesign) ---
+  overview: () => request<OverviewView>('GET', '/v1/overview'),
+  createWorkspace: (name: string) =>
+    request<CreatedWorkspaceView>('POST', '/v1/workspaces', { name }),
 
   // --- Connections (#2) ---
   /** Platforms registered in this environment — fakes in dev, real providers in prod (#45). */

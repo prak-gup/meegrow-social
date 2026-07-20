@@ -8,6 +8,7 @@ import {
   calendarPostsQuery,
   createApiKeyInput,
   createPostInput,
+  createWorkspaceInput,
   createQueueInput,
   finishConnectInput,
   listPostsQuery,
@@ -27,6 +28,7 @@ import {
   authenticateSession,
   buildUserView,
   createApiKeyForWorkspace,
+  createClientWorkspace,
   calendarPosts,
   cancelPost,
   createPost,
@@ -45,6 +47,7 @@ import {
   handleCallback,
   listApiKeys,
   listConnections,
+  overviewForUser,
   listPosts,
   listProviders,
   listQueues,
@@ -265,6 +268,24 @@ export async function buildServer(): Promise<FastifyInstance> {
     const ok = await switchActiveWorkspace(ctx.sessionId, ctx.userId, parsed.data.workspaceId);
     if (!ok) return reply.code(403).send({ error: 'not a member of that workspace' });
     return { activeWorkspaceId: parsed.data.workspaceId };
+  });
+
+  // Cross-client control-tower rollup for the dashboard home (redesign). Session-only — it spans
+  // every workspace the user belongs to, which needs their identity, not a single workspace key.
+  app.get('/v1/overview', async (req, reply) => {
+    const userId = req.authContext?.userId;
+    if (!userId) return reply.code(401).send({ error: 'session required' });
+    return overviewForUser(userId);
+  });
+
+  // Add a client: create a workspace and make the caller its owner. Session-only.
+  app.post('/v1/workspaces', async (req, reply) => {
+    const userId = req.authContext?.userId;
+    if (!userId) return reply.code(401).send({ error: 'session required' });
+    const parsed = createWorkspaceInput.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const created = await createClientWorkspace(userId, parsed.data.name);
+    return reply.code(201).send(created);
   });
 
   // Rotate the session token (sliding renewal). Session-only.

@@ -118,12 +118,12 @@ export function Connections() {
         </div>
       </div>
 
-      {msg && <p className="text-sm text-muted-foreground">{msg}</p>}
+      {msg && <p className="text-sm text-muted">{msg}</p>}
 
       {loading ? (
-        <p className="text-muted-foreground">Loading…</p>
+        <p className="text-muted">Loading…</p>
       ) : conns.length === 0 ? (
-        <p className="text-muted-foreground">No connections yet.</p>
+        <p className="text-muted">No connections yet.</p>
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           {conns.map((c) => (
@@ -137,15 +137,15 @@ export function Connections() {
               <CardContent>
                 <dl className="space-y-1 text-sm">
                   <div>
-                    <dt className="inline text-muted-foreground">Provider: </dt>
+                    <dt className="inline text-muted">Provider: </dt>
                     <dd className="inline">{c.provider}</dd>
                   </div>
                   <div>
-                    <dt className="inline text-muted-foreground">Account: </dt>
+                    <dt className="inline text-muted">Account: </dt>
                     <dd className="inline">{c.externalId}</dd>
                   </div>
                   <div>
-                    <dt className="inline text-muted-foreground">Expires in: </dt>
+                    <dt className="inline text-muted">Expires in: </dt>
                     <dd className="inline">
                       {c.expiresInDays == null ? 'never' : `${c.expiresInDays}d`}
                     </dd>
@@ -170,7 +170,7 @@ export function Connections() {
       {pick && (
         <Modal title="Choose an account to connect" onClose={() => setPick(null)}>
           {pick.accounts.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted">
               This login didn&apos;t return any manageable accounts. Check you granted access to at
               least one, then try connecting again.
             </p>
@@ -180,7 +180,7 @@ export function Connections() {
                 <li key={a.externalId} className="flex items-center justify-between gap-3">
                   <div className="text-sm">
                     <p className="font-medium">{a.displayName}</p>
-                    <p className="text-muted-foreground">{a.externalId}</p>
+                    <p className="text-muted">{a.externalId}</p>
                   </div>
                   <Button size="sm" onClick={() => void choose(a.externalId)}>
                     Connect
@@ -196,31 +196,31 @@ export function Connections() {
         <Modal title="Account health" onClose={() => setDetail(null)}>
           <dl className="space-y-1 text-sm">
             <div>
-              <dt className="inline text-muted-foreground">Status: </dt>
+              <dt className="inline text-muted">Status: </dt>
               <dd className="inline">{detail.health}</dd>
             </div>
             <div>
-              <dt className="inline text-muted-foreground">Provider: </dt>
+              <dt className="inline text-muted">Provider: </dt>
               <dd className="inline">{detail.provider}</dd>
             </div>
             <div>
-              <dt className="inline text-muted-foreground">External ID: </dt>
+              <dt className="inline text-muted">External ID: </dt>
               <dd className="inline">{detail.externalId}</dd>
             </div>
             <div>
-              <dt className="inline text-muted-foreground">Expires at: </dt>
+              <dt className="inline text-muted">Expires at: </dt>
               <dd className="inline">
                 {detail.expiresAt ? new Date(detail.expiresAt).toLocaleString() : 'no expiry'}
               </dd>
             </div>
             <div>
-              <dt className="inline text-muted-foreground">Expires in: </dt>
+              <dt className="inline text-muted">Expires in: </dt>
               <dd className="inline">
                 {detail.expiresInDays == null ? 'never' : `${detail.expiresInDays} days`}
               </dd>
             </div>
             <div>
-              <dt className="inline text-muted-foreground">Needs reconnect: </dt>
+              <dt className="inline text-muted">Needs reconnect: </dt>
               <dd className="inline">{String(detail.needsReconnect)}</dd>
             </div>
           </dl>

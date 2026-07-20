@@ -115,7 +115,7 @@ export function Composer() {
             <Label htmlFor="media">Media</Label>
             <Input id="media" type="file" multiple onChange={(e) => void upload(e.target.files)} />
             {media.length > 0 && (
-              <p className="text-xs text-muted-foreground">{media.length} media attached</p>
+              <p className="text-xs text-muted">{media.length} media attached</p>
             )}
           </div>
 
@@ -169,7 +169,7 @@ export function Composer() {
             </div>
           )}
 
-          {msg && <p className="text-sm text-muted-foreground">{msg}</p>}
+          {msg && <p className="text-sm text-muted">{msg}</p>}
           <Button disabled={busy} onClick={() => void submit()}>
             {busy ? 'Creating…' : 'Create post'}
           </Button>

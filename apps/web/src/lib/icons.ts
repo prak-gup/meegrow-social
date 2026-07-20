@@ -1,0 +1,36 @@
+/**
+ * Phosphor icon set (regular weight) — the app's single icon vocabulary. Re-exported from one place
+ * so swapping weight or set later is a one-file change. Import from here, never from the package
+ * directly, to keep usage consistent.
+ */
+export {
+  House,
+  SquaresFour,
+  UsersThree,
+  ChartLineUp,
+  Plus,
+  MagnifyingGlass,
+  CaretDown,
+  CaretRight,
+  DotsThree,
+  Warning,
+  WarningCircle,
+  CheckCircle,
+  XCircle,
+  Clock,
+  LinkSimple,
+  Plugs,
+  PlugsConnected,
+  ArrowClockwise,
+  Trash,
+  SignOut,
+  Broadcast,
+  Lightning,
+  CalendarBlank,
+  Image as ImageIcon,
+  PlayCircle,
+  Copy,
+  Gear,
+  Bell,
+  Article,
+} from '@phosphor-icons/react';
