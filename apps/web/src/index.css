@@ -2,50 +2,88 @@
 @tailwind components;
 @tailwind utilities;
 
-/* shadcn/ui HSL tokens (Tailwind v3). Neutral/zinc palette; dark mode via .dark on <html>. */
+/*
+ * Airbnb DLS token layer (from docs/dev/DESIGN-airbnb.md). Replaces the shadcn zinc starter.
+ * Light-only, deliberately: Airbnb has no dark web theme, and the whole system leans on the white
+ * canvas. Rausch (#ff385c) is the single accent, used scarcely (primary CTAs, the search orb).
+ * Client hues are a SEPARATE, orthogonal axis (content identity), never the accent.
+ * Colors are HSL triplets consumed as hsl(var(--token)) by the tailwind theme.
+ */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
-    --radius: 0.5rem;
-  }
-  .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
+    color-scheme: light;
+    --rausch: 344 100% 61%; /* #ff385c */
+    --rausch-active: 342 89% 46%; /* #e00b41 */
+    --rausch-disabled: 348 100% 91%; /* #ffd1da */
+    --error: 16 76% 42%; /* #c13515 */
+
+    --ink: 0 0% 13%; /* #222 — never pure black */
+    --body-ink: 0 0% 25%; /* #3f3f3f */
+    --muted: 0 0% 42%; /* #6a6a6a */
+    --muted-soft: 0 0% 57%; /* #929292 */
+
+    --canvas: 0 0% 100%; /* #fff */
+    --surface-soft: 0 0% 97%; /* #f7f7f7 */
+    --surface-strong: 0 0% 95%; /* #f2f2f2 */
+
+    --hairline: 0 0% 87%; /* #ddd */
+    --hairline-soft: 0 0% 92%; /* #ebebeb */
+    --border-strong: 0 0% 76%; /* #c1c1c1 */
+
+    /* semantic status (separate from Rausch accent) */
+    --status-ok: 140 49% 36%; /* healthy / published */
+    --status-warn: 40 100% 33%; /* expiring / warning */
+    --status-bad: 16 76% 42%; /* failed / reconnect */
+    --status-idle: 0 0% 57%; /* draft / cancelled */
+
+    /* the single Airbnb elevation tier */
+    --shadow-1:
+      rgba(0, 0, 0, 0.02) 0 0 0 1px, rgba(0, 0, 0, 0.04) 0 2px 6px 0, rgba(0, 0, 0, 0.1) 0 4px 8px 0;
   }
 }
 
+/* Per-client identity hues (content axis). Resolved by clientHue() in the app. */
+:root {
+  --client-antidote: #7a5af8;
+  --client-mlearn: #08b5d6;
+  --client-gls: #f0a020;
+  --client-ecolive: #7bc62d;
+  --client-empower: #fb6a4a;
+  --client-blossom: #ec4899;
+  --client-fallback: #0ba96b;
+}
+
+html,
+body,
+#root {
+  background: hsl(var(--canvas));
+}
+
 body {
-  @apply bg-background text-foreground antialiased;
-  font-family: system-ui, -apple-system, sans-serif;
+  @apply text-ink antialiased;
+  margin: 0;
+  /* Airbnb Cereal VF → Circular → Inter (the doc's named open-source sub, self-hosted) → system. */
+  font-family:
+    'Airbnb Cereal VF',
+    Circular,
+    'Inter Variable',
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    system-ui,
+    'Helvetica Neue',
+    Roboto,
+    sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+*:focus-visible {
+  outline: 2px solid hsl(var(--ink));
+  outline-offset: 2px;
+  border-radius: 6px;
 }

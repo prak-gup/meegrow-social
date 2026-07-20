@@ -17,7 +17,7 @@ export function Modal({
       role="presentation"
     >
       <div
-        className="w-full max-w-md rounded-lg border bg-background p-6 shadow-lg"
+        className="w-full max-w-md rounded-lg border border-hairline bg-canvas p-6 shadow-1"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
@@ -25,11 +25,7 @@ export function Modal({
       >
         <div className="mb-3 flex items-center justify-between">
           <h3 className="font-semibold">{title}</h3>
-          <button
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground"
-            aria-label="Close"
-          >
+          <button onClick={onClose} className="text-muted hover:text-ink" aria-label="Close">
             ✕
           </button>
         </div>

@@ -2,16 +2,18 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import type { HTMLAttributes } from 'react';
 import { cn } from '../../lib/cn';
 
+// Status chips through semantic tokens (not raw Tailwind pastels). White pill + colored dot/text,
+// so status reads at a glance without competing with the Rausch accent or client hues.
 const badgeVariants = cva(
-  'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium',
+  'inline-flex items-center gap-1.5 rounded-full border border-hairline bg-canvas px-2.5 py-1 text-xs font-semibold',
   {
     variants: {
       variant: {
-        neutral: 'border-transparent bg-muted text-muted-foreground',
-        success: 'border-transparent bg-emerald-100 text-emerald-800',
-        warning: 'border-transparent bg-amber-100 text-amber-800',
-        danger: 'border-transparent bg-red-100 text-red-800',
-        info: 'border-transparent bg-blue-100 text-blue-800',
+        neutral: 'text-muted',
+        success: 'text-status-ok',
+        warning: 'text-status-warn',
+        danger: 'text-status-bad',
+        info: 'text-ink',
       },
     },
     defaultVariants: { variant: 'neutral' },

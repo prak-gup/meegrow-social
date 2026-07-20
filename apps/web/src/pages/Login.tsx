@@ -55,7 +55,7 @@ export function Login() {
                 autoComplete="current-password"
               />
             </div>
-            {error && <p className="text-sm text-destructive">{error}</p>}
+            {error && <p className="text-sm text-error">{error}</p>}
             <Button type="submit" disabled={busy} className="w-full">
               {busy ? 'Signing in…' : 'Sign in'}
             </Button>

@@ -146,11 +146,11 @@ export function Posts() {
       )}
 
       {loading ? (
-        <p className="text-muted-foreground">Loading…</p>
+        <p className="text-muted">Loading…</p>
       ) : view === 'calendar' ? (
         <CalendarGrid calendar={calendar} />
       ) : posts.length === 0 ? (
-        <p className="text-muted-foreground">No posts match.</p>
+        <p className="text-muted">No posts match.</p>
       ) : view === 'list' ? (
         <PostList posts={posts} onCancel={cancel} onEdit={editCaption} />
       ) : (
@@ -173,27 +173,28 @@ function PostCard({
   onCancel: (id: string) => void;
   onEdit: (post: PostView) => void;
 }) {
+  // Cancelled posts recede rather than turning the grid into a wall of grey (the old "graveyard").
+  const receded = post.status === 'cancelled';
   return (
-    <Card>
+    <Card className={receded ? 'opacity-60' : ''}>
       <CardContent className="space-y-2 p-4">
-        <div className="flex items-center justify-between">
-          <Badge variant={STATUS_VARIANT[post.status]}>{post.status}</Badge>
-          <span className="text-xs text-muted-foreground">{post.provider}</span>
-        </div>
-        <p className="line-clamp-3 text-sm">
-          {post.caption || <span className="text-muted-foreground">(no caption)</span>}
+        <p className="line-clamp-3 text-[15px] leading-snug">
+          {post.caption || <span className="text-muted">(no caption)</span>}
         </p>
+        <div className="flex items-center justify-between pt-1">
+          <span className="text-xs text-muted">{post.provider}</span>
+          <Badge variant={STATUS_VARIANT[post.status]}>{post.status}</Badge>
+        </div>
         {post.publishAt && (
-          <p className="text-xs text-muted-foreground">
-            {new Date(post.publishAt).toLocaleString()}
-          </p>
+          <p className="tnum text-xs text-muted">{new Date(post.publishAt).toLocaleString()}</p>
         )}
-        {post.error && <p className="text-xs text-destructive">{post.error}</p>}
+        {post.error && <p className="text-xs text-error">{post.error}</p>}
         <div className="flex gap-2 pt-1">
           <Button variant="outline" size="sm" onClick={() => onEdit(post)}>
             Edit
           </Button>
-          <Button variant="destructive" size="sm" onClick={() => onCancel(post.id)}>
+          {/* Cancel is a routine action — a ghost, not alarm-red. Red stays for genuine failures. */}
+          <Button variant="ghost" size="sm" onClick={() => onCancel(post.id)}>
             Cancel
           </Button>
         </div>
@@ -218,10 +219,8 @@ function PostList({
           <div key={p.id} className="flex items-center gap-3 p-3 text-sm">
             <Badge variant={STATUS_VARIANT[p.status]}>{p.status}</Badge>
             <span className="font-medium">{p.provider}</span>
-            <span className="flex-1 truncate text-muted-foreground">
-              {p.caption || '(no caption)'}
-            </span>
-            {p.error && <span className="truncate text-destructive">{p.error}</span>}
+            <span className="flex-1 truncate text-muted">{p.caption || '(no caption)'}</span>
+            {p.error && <span className="truncate text-error">{p.error}</span>}
             <Button variant="outline" size="sm" onClick={() => onEdit(p)}>
               Edit
             </Button>
@@ -237,20 +236,20 @@ function PostList({
 
 function CalendarGrid({ calendar }: { calendar: CalendarView | null }) {
   if (!calendar || calendar.days.length === 0) {
-    return <p className="text-muted-foreground">No posts scheduled this month.</p>;
+    return <p className="text-muted">No posts scheduled this month.</p>;
   }
   return (
     <div className="space-y-2">
       {calendar.days.map((day) => (
         <Card key={day.date}>
           <CardContent className="p-3">
-            <div className="mb-1 text-xs font-medium text-muted-foreground">{day.date}</div>
+            <div className="mb-1 text-xs font-medium text-muted">{day.date}</div>
             <div className="space-y-1">
               {day.posts.map((p) => (
                 <div key={p.id} className="flex items-center gap-2 text-sm">
                   <Badge variant={STATUS_VARIANT[p.status]}>{p.status}</Badge>
                   <span className="flex-1 truncate">{p.caption || '(no caption)'}</span>
-                  <span className="text-xs text-muted-foreground">{p.provider}</span>
+                  <span className="text-xs text-muted">{p.provider}</span>
                 </div>
               ))}
             </div>
