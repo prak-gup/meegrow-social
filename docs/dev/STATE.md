@@ -4,6 +4,30 @@
 
 **Pipeline:** /e2e-dev (Grill → Research → Prototype → PRD → AX-PRD → Issues → Implement → QA)
 
+## 🎨 UI REDESIGN SHIPPED (2026-07-21, PR #55)
+
+**The dashboard was rebuilt on the Airbnb design system and is LIVE + QA'd in prod.** Replaced the
+untouched shadcn zinc starter (the root cause a design workflow diagnosed) with a full token layer
+(`apps/web/src/index.css` + `tailwind.config.js`; spec committed at `docs/dev/DESIGN-airbnb.md`):
+Rausch `#ff385c` as the single scarce accent, warm ink, hairlines, 8/14/full radii, one shadow
+tier, semantic status tokens, Inter Variable (self-hosted), Phosphor icons. Light-only (matches Airbnb).
+
+**IA change that solves the 10+ clients problem:** killed the left rail. Client scope now lives in a
+searchable **Airbnb pill switcher** (`ClientSwitcher.tsx`) + top-nav tabs; "All clients" → the new
+**Overview** control tower (`GET /v1/overview` cross-workspace rollup in `core/services/overview.ts`);
+**Clients** page has **Add client** (`POST /v1/workspaces` → `createClientWorkspace`) and
+**Invite-to-connect** (the connect-grant link — external self-serve is #53-gated, operator path works).
+
+Process: design judge-panel workflow (Control Tower won) → Airbnb mockup artifacts → user picked
+direction → phased e2e build → **4-agent adversarial review workflow** (caught a real HIGH bug:
+switching client on a same route didn't rescope — fixed by keying `<main>` on activeWorkspaceId to
+force remount; plus a11y + slug-race + token-fidelity fixes) → merge → deploy → live browser QA.
+
+**Known follow-ups (filed):** #56 Content page full content-first pass, #57 the `01/01/1970` epoch
+`publishAt` sentinel showing on now-posts, #58 Connections/Composer design pass. The two hero screens
+(Overview, Clients) got the full treatment; the other pages are token-migrated (correct, not fully
+re-laid-out).
+
 ## 🎉 FIRST REAL POST PUBLISHED (2026-07-16)
 
 **Meegrow Social published to a live Facebook Page.** `prakgup` (110548613724876) → post
