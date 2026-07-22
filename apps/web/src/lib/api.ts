@@ -11,6 +11,8 @@ import type {
   UpdatePostInput,
   OverviewView,
   CreatedWorkspaceView,
+  CreatedInviteView,
+  InviteView,
 } from '@meegrow-social/contracts';
 
 /**
@@ -79,6 +81,12 @@ export const api = {
   listConnections: () => request<{ connections: ConnectionView[] }>('GET', '/v1/connections'),
   authUrl: (provider: string) =>
     request<{ url: string }>('GET', `/v1/connections/${encodeURIComponent(provider)}/auth-url`),
+  createInvite: (provider: string) =>
+    request<CreatedInviteView>('POST', `/v1/connections/${encodeURIComponent(provider)}/invite`),
+  getInvite: (token: string) =>
+    request<InviteView>('GET', `/v1/invite/${encodeURIComponent(token)}`),
+  startInvite: (token: string) =>
+    request<{ url: string }>('POST', `/v1/invite/${encodeURIComponent(token)}/start`),
   finishConnect: (flowId: string, externalId: string) =>
     request<{ connectionId: string }>('POST', '/v1/connections/finish', { flowId, externalId }),
   deleteConnection: (id: string) => request<{ deleted: true }>('DELETE', `/v1/connections/${id}`),

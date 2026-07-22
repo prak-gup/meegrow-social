@@ -58,6 +58,23 @@ export const oauthFlows = pgTable('oauth_flows', {
   createdAt: createdAt(),
 });
 
+/**
+ * Per-platform connect invites (client onboarding link). An operator mints one for a
+ * {workspace, provider}; the client opens the public link and runs the OAuth, which connects the
+ * account into that workspace. Non-tenant: redeemed by opaque token before any session exists (like
+ * oauth_flows), so it is NOT in TENANT_TABLES.
+ */
+export const connectInvites = pgTable('connect_invites', {
+  id: id(),
+  token: text('token').notNull().unique(),
+  workspaceId: uuid('workspace_id').notNull(),
+  provider: text('provider').notNull(),
+  createdBy: uuid('created_by'),
+  expiresAt: ts('expires_at').notNull(),
+  consumedAt: ts('consumed_at'),
+  createdAt: createdAt(),
+});
+
 export const memberships = pgTable('memberships', {
   id: id(),
   workspaceId: workspaceId(),

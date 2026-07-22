@@ -29,6 +29,8 @@ import {
   buildUserView,
   createApiKeyForWorkspace,
   createClientWorkspace,
+  createConnectInvite,
+  getConnectInvite,
   calendarPosts,
   cancelPost,
   createPost,
@@ -201,6 +203,9 @@ export async function buildServer(): Promise<FastifyInstance> {
       path === '/healthz' ||
       path === '/connect/callback' ||
       path === '/v1/auth/login' ||
+      // Public connect-invite endpoints — the token in the path is the credential (a client opening
+      // the link has no session). The mint endpoint (POST /v1/connections/:p/invite) IS authed.
+      path.startsWith('/v1/invite/') ||
       path.startsWith('/media/')
     ) {
       return;
@@ -308,6 +313,49 @@ export async function buildServer(): Promise<FastifyInstance> {
       return { url };
     },
   );
+
+  // Mint a per-platform connect-invite link for the active client (operator action). The client
+  // opens the returned URL to connect their own account into this workspace.
+  app.post<{ Params: { provider: string } }>(
+    '/v1/connections/:provider/invite',
+    async (req, reply) => {
+      const provider = providerIdentifier.safeParse(req.params.provider);
+      if (!provider.success) return reply.code(400).send({ error: 'unknown provider' });
+      const userId = req.authContext?.userId ?? null;
+      const invite = await createConnectInvite(
+        req.authContext!.workspaceId,
+        provider.data,
+        userId ?? req.authContext!.workspaceId,
+      );
+      return reply.code(201).send({
+        url: `${appUrl().replace(/\/$/, '')}/i/${invite.token}`,
+        token: invite.token,
+        provider: invite.provider,
+        expiresAt: invite.expiresAt,
+      });
+    },
+  );
+
+  // Public: the invite landing reads what it's for (client name + platform).
+  app.get<{ Params: { token: string } }>('/v1/invite/:token', async (req, reply) => {
+    const invite = await getConnectInvite(req.params.token);
+    if (!invite) return reply.code(404).send({ error: 'this invite link is invalid or expired' });
+    return {
+      workspaceName: invite.workspaceName,
+      provider: invite.provider,
+      providerDisplayName: invite.providerDisplayName,
+    };
+  });
+
+  // Public: the client clicked Connect — start the OAuth for the invite's workspace + provider. The
+  // existing /connect/callback finalizes into that workspace (the flow carries the workspaceId), so
+  // no session on the client's side is needed.
+  app.post<{ Params: { token: string } }>('/v1/invite/:token/start', async (req, reply) => {
+    const invite = await getConnectInvite(req.params.token);
+    if (!invite) return reply.code(404).send({ error: 'this invite link is invalid or expired' });
+    const { url } = await startConnect(invite.workspaceId, invite.provider, appUrl());
+    return { url };
+  });
 
   // Public: provider redirects the user's browser here after consent. This lands in the popup the
   // dashboard opened, so it answers with a tiny HTML page that hands the result to the opener and

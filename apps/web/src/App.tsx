@@ -7,6 +7,7 @@ import { Clients } from './pages/Clients';
 import { Connections } from './pages/Connections';
 import { Composer } from './pages/Composer';
 import { Posts } from './pages/Posts';
+import { Invite } from './pages/Invite';
 
 /** Gates the authenticated area: waits for the session probe, redirects to /login if absent. */
 function Protected() {
@@ -20,6 +21,8 @@ export function App() {
   const { me, loading } = useAuth();
   return (
     <Routes>
+      {/* Public: the client-facing connect-invite landing (no session required). */}
+      <Route path="/i/:token" element={<Invite />} />
       <Route
         path="/login"
         element={me && !loading ? <Navigate to="/overview" replace /> : <Login />}

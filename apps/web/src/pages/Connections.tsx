@@ -7,33 +7,103 @@ import type {
   ProviderView,
 } from '@meegrow-social/contracts';
 import { api } from '../lib/api';
-import { Badge } from '../components/ui/Badge';
+import { useAuth } from '../lib/auth';
 import { Button } from '../components/ui/Button';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card';
 import { Modal } from '../components/ui/Modal';
+import {
+  FacebookLogo,
+  InstagramLogo,
+  LinkedinLogo,
+  YoutubeLogo,
+  XLogo,
+  GoogleLogo,
+  Plugs,
+  ArrowClockwise,
+  LinkSimple,
+  Copy,
+  CheckCircle,
+  Warning,
+  WarningCircle,
+} from '../lib/icons';
 
-const HEALTH_VARIANT: Record<ConnectionHealth, 'success' | 'warning' | 'danger'> = {
-  healthy: 'success',
-  expiring: 'warning',
-  needs_reconnect: 'danger',
+type IconType = typeof FacebookLogo;
+interface PlatformMeta {
+  label: string;
+  Icon: IconType;
+  brand: string;
+  blurb: string;
+}
+const PLATFORM: Record<string, PlatformMeta> = {
+  facebook: {
+    label: 'Facebook Page',
+    Icon: FacebookLogo,
+    brand: '#1877F2',
+    blurb: 'Publish to a Facebook Page',
+  },
+  instagram: {
+    label: 'Instagram',
+    Icon: InstagramLogo,
+    brand: '#E4405F',
+    blurb: 'Publish to an Instagram Business account',
+  },
+  gmb: {
+    label: 'Google Business',
+    Icon: GoogleLogo,
+    brand: '#4285F4',
+    blurb: 'Post to a Business Profile',
+  },
+  linkedin: {
+    label: 'LinkedIn',
+    Icon: LinkedinLogo,
+    brand: '#0A66C2',
+    blurb: 'Post to a personal profile',
+  },
+  'linkedin-page': {
+    label: 'LinkedIn Page',
+    Icon: LinkedinLogo,
+    brand: '#0A66C2',
+    blurb: 'Post to a Company Page',
+  },
+  x: { label: 'X', Icon: XLogo, brand: '#000000', blurb: 'Post to X (Twitter)' },
+  youtube: { label: 'YouTube', Icon: YoutubeLogo, brand: '#FF0000', blurb: 'Upload to a channel' },
+};
+function meta(p: { identifier: string; displayName: string }): PlatformMeta {
+  return (
+    PLATFORM[p.identifier] ?? {
+      label: p.displayName,
+      Icon: Plugs,
+      brand: '#6a6a6a',
+      blurb: 'Test provider (dev)',
+    }
+  );
+}
+
+const HEALTH: Record<ConnectionHealth, { label: string; cls: string; Icon: IconType }> = {
+  healthy: { label: 'Healthy', cls: 'text-status-ok', Icon: CheckCircle },
+  expiring: { label: 'Expiring soon', cls: 'text-status-warn', Icon: Warning },
+  needs_reconnect: { label: 'Needs reconnect', cls: 'text-status-bad', Icon: WarningCircle },
 };
 
-/** What the OAuth popup posts back to us (#45). `error` is the popup's own failure shape. */
 type ConnectMessage = CallbackResult | { status: 'error'; error: string };
-
-/** Pending two-phase selection: the popup is gone, but the flow needs an account picked. */
 interface PendingPick {
   flowId: string;
   accounts: ProviderAccountView[];
 }
 
 export function Connections() {
+  const { me } = useAuth();
   const [conns, setConns] = useState<ConnectionView[]>([]);
   const [providers, setProviders] = useState<ProviderView[]>([]);
   const [loading, setLoading] = useState(true);
-  const [detail, setDetail] = useState<ConnectionView | null>(null);
   const [pick, setPick] = useState<PendingPick | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [invite, setInvite] = useState<{ provider: string; label: string; url: string } | null>(
+    null,
+  );
+  const [copied, setCopied] = useState(false);
+
+  const activeName =
+    me?.user.memberships.find((m) => m.workspaceId === me.activeWorkspaceId)?.name ?? 'this client';
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -45,26 +115,21 @@ export function Connections() {
       setLoading(false);
     }
   }, []);
-
   useEffect(() => {
     void load();
   }, [load]);
 
-  // The popup hands us the callback result (single-step: done; two-step: pick an account).
-  // Only same-origin messages carrying our marker are trusted — the popup posts to our origin.
   useEffect(() => {
     const onMessage = (e: MessageEvent): void => {
       if (e.origin !== window.location.origin) return;
       const data = e.data as { source?: string; payload?: ConnectMessage } | null;
       if (data?.source !== 'meegrow-social-connect' || !data.payload) return;
-
       const payload = data.payload;
-      if (payload.status === 'error') {
-        setMsg(`Connect failed: ${payload.error}`);
-      } else if (payload.status === 'choose_account') {
+      if (payload.status === 'error') setMsg(`Connect failed: ${payload.error}`);
+      else if (payload.status === 'choose_account')
         setPick({ flowId: payload.flowId, accounts: payload.accounts });
-      } else {
-        setMsg('Connected.');
+      else {
+        setMsg('Account connected.');
         void load();
       }
     };
@@ -77,110 +142,209 @@ export function Connections() {
     try {
       const { url } = await api.authUrl(provider);
       window.open(url, '_blank', 'width=600,height=700');
-      setMsg('Authorize in the popup…');
+      setMsg('Approve in the popup…');
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : 'failed to start connect');
+      setMsg(e instanceof Error ? e.message : 'Could not start the connection.');
     }
   };
-
+  const makeInvite = async (p: ProviderView) => {
+    setCopied(false);
+    try {
+      const res = await api.createInvite(p.identifier);
+      setInvite({ provider: p.identifier, label: meta(p).label, url: res.url });
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Could not create the invite link.');
+    }
+  };
   const choose = async (externalId: string) => {
     if (!pick) return;
     try {
       await api.finishConnect(pick.flowId, externalId);
       setPick(null);
-      setMsg('Connected.');
+      setMsg('Account connected.');
       void load();
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : 'failed to finish connect');
+      setMsg(e instanceof Error ? e.message : 'Could not finish connecting.');
     }
   };
-
   const disconnect = async (id: string) => {
     await api.deleteConnection(id);
     void load();
   };
 
+  // Fakes are test-only; never front them in a real environment. Show them only when NO real
+  // provider is registered (i.e. local dev), so devs can still exercise the connect flow.
+  const real = providers.filter((p) => !p.identifier.startsWith('fake'));
+  const connectable = real.length > 0 ? real : providers;
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Connections</h1>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={() => void load()}>
-            Refresh
-          </Button>
-          {/* One button per provider registered in this environment — real platforms appear only
-              where their credentials are configured, so dev shows the fakes and prod shows Meta. */}
-          {providers.map((p) => (
-            <Button key={p.identifier} size="sm" onClick={() => void connect(p.identifier)}>
-              Connect {p.displayName}
-            </Button>
-          ))}
+    <div className="space-y-8">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-[26px] font-semibold tracking-tight">Connections</h1>
+          <p className="text-[15px] text-muted">The accounts you publish to for {activeName}.</p>
         </div>
+        <button
+          onClick={() => void load()}
+          className="inline-flex h-10 items-center gap-2 rounded-full border border-hairline px-4 text-sm font-medium hover:border-ink"
+        >
+          <ArrowClockwise size={16} />
+          Refresh
+        </button>
       </div>
 
-      {msg && <p className="text-sm text-muted">{msg}</p>}
-
-      {loading ? (
-        <p className="text-muted">Loading…</p>
-      ) : conns.length === 0 ? (
-        <p className="text-muted">No connections yet.</p>
-      ) : (
-        <div className="grid gap-3 md:grid-cols-2">
-          {conns.map((c) => (
-            <Card key={c.id}>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle>{c.displayName}</CardTitle>
-                  <Badge variant={HEALTH_VARIANT[c.health]}>{c.health.replace('_', ' ')}</Badge>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <dl className="space-y-1 text-sm">
-                  <div>
-                    <dt className="inline text-muted">Provider: </dt>
-                    <dd className="inline">{c.provider}</dd>
-                  </div>
-                  <div>
-                    <dt className="inline text-muted">Account: </dt>
-                    <dd className="inline">{c.externalId}</dd>
-                  </div>
-                  <div>
-                    <dt className="inline text-muted">Expires in: </dt>
-                    <dd className="inline">
-                      {c.expiresInDays == null ? 'never' : `${c.expiresInDays}d`}
-                    </dd>
-                  </div>
-                </dl>
-                <div className="mt-3 flex gap-2">
-                  <Button variant="outline" size="sm" onClick={() => setDetail(c)}>
-                    Account health
-                  </Button>
-                  <Button variant="destructive" size="sm" onClick={() => void disconnect(c.id)}>
-                    Disconnect
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+      {msg && (
+        <div className="rounded-md border border-hairline bg-surface-soft px-4 py-3 text-sm text-ink">
+          {msg}
         </div>
       )}
 
-      {/* Two-phase providers (FB Page, IG account, LinkedIn org, YouTube channel, GBP location):
-          the user authorized, now they pick which asset to connect. */}
+      {/* connected accounts */}
+      <section>
+        <h2 className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">
+          Connected accounts
+        </h2>
+        {loading ? (
+          <p className="text-muted">Loading…</p>
+        ) : conns.length === 0 ? (
+          <div className="rounded-md border border-dashed border-hairline-strong bg-surface-soft px-5 py-8 text-center">
+            <p className="text-[15px] font-medium text-ink">No accounts connected yet</p>
+            <p className="mt-1 text-sm text-muted">
+              Connect one below, or send {activeName} an invite link.
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
+            {conns.map((c) => {
+              const m = meta({ identifier: c.provider, displayName: c.provider });
+              const h = HEALTH[c.health];
+              return (
+                <div key={c.id} className="rounded-md border border-hairline bg-canvas p-5">
+                  <div className="flex items-start gap-3.5">
+                    <span
+                      className="grid h-11 w-11 flex-none place-items-center rounded-md text-white"
+                      style={{ background: m.brand }}
+                    >
+                      <m.Icon size={24} weight="fill" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-base font-semibold">{c.displayName}</span>
+                        <span
+                          className={'flex items-center gap-1.5 text-xs font-semibold ' + h.cls}
+                        >
+                          <h.Icon size={15} weight="fill" />
+                          {h.label}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-[13px] text-muted">{m.label}</p>
+                      <p className="tnum mt-0.5 text-[13px] text-muted">
+                        {c.expiresInDays == null
+                          ? 'Token never expires'
+                          : `Renews in ${c.expiresInDays}d`}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex justify-end">
+                    <Button variant="ghost" size="sm" onClick={() => void disconnect(c.id)}>
+                      Disconnect
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* add an account */}
+      <section>
+        <h2 className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">
+          Add an account
+        </h2>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {connectable.map((p) => {
+            const m = meta(p);
+            return (
+              <div key={p.identifier} className="rounded-md border border-hairline bg-canvas p-5">
+                <div className="flex items-center gap-3.5">
+                  <span
+                    className="grid h-11 w-11 flex-none place-items-center rounded-md text-white"
+                    style={{ background: m.brand }}
+                  >
+                    <m.Icon size={24} weight="fill" />
+                  </span>
+                  <div>
+                    <div className="text-base font-semibold">{m.label}</div>
+                    <div className="text-[13px] text-muted">{m.blurb}</div>
+                  </div>
+                </div>
+                <div className="mt-4 flex gap-2">
+                  <Button variant="secondary" size="sm" onClick={() => void connect(p.identifier)}>
+                    Connect
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => void makeInvite(p)}>
+                    <LinkSimple size={16} />
+                    Invite client
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="mt-3 text-[13px] text-muted">
+          <b className="text-ink">Connect</b> authorises the account yourself.{' '}
+          <b className="text-ink">Invite client</b> makes a link {activeName} opens to connect their
+          own account — no password shared.
+        </p>
+      </section>
+
+      {/* invite link panel */}
+      {invite && (
+        <Modal title={`Invite link — ${invite.label}`} onClose={() => setInvite(null)}>
+          <p className="mb-3 text-sm text-muted">
+            Send this to {activeName}. They open it, sign into their {invite.label}, and approve —
+            the account connects here. Their password never touches you. (External sign-in needs
+            Meta App Review, issue&nbsp;#53; you can already use it for accounts you can reach.)
+          </p>
+          <div className="flex items-center gap-2.5 rounded-sm border border-hairline bg-surface-soft px-3.5 py-2.5">
+            <LinkSimple size={16} className="text-muted" />
+            <code className="flex-1 truncate font-mono text-sm text-ink">{invite.url}</code>
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setInvite(null)}>
+              Done
+            </Button>
+            <Button
+              onClick={() => {
+                void navigator.clipboard?.writeText(invite.url).then(() => setCopied(true));
+              }}
+            >
+              <Copy size={16} />
+              {copied ? 'Copied' : 'Copy link'}
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {/* two-phase account picker */}
       {pick && (
         <Modal title="Choose an account to connect" onClose={() => setPick(null)}>
           {pick.accounts.length === 0 ? (
             <p className="text-sm text-muted">
-              This login didn&apos;t return any manageable accounts. Check you granted access to at
-              least one, then try connecting again.
+              That login didn&apos;t return any manageable accounts. Grant access to at least one,
+              then try again.
             </p>
           ) : (
             <ul className="space-y-2">
               {pick.accounts.map((a) => (
-                <li key={a.externalId} className="flex items-center justify-between gap-3">
-                  <div className="text-sm">
-                    <p className="font-medium">{a.displayName}</p>
-                    <p className="text-muted">{a.externalId}</p>
+                <li
+                  key={a.externalId}
+                  className="flex items-center justify-between gap-3 rounded-sm border border-hairline px-3.5 py-3"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{a.displayName}</p>
+                    <p className="tnum truncate text-[13px] text-muted">{a.externalId}</p>
                   </div>
                   <Button size="sm" onClick={() => void choose(a.externalId)}>
                     Connect
@@ -189,41 +353,6 @@ export function Connections() {
               ))}
             </ul>
           )}
-        </Modal>
-      )}
-
-      {detail && (
-        <Modal title="Account health" onClose={() => setDetail(null)}>
-          <dl className="space-y-1 text-sm">
-            <div>
-              <dt className="inline text-muted">Status: </dt>
-              <dd className="inline">{detail.health}</dd>
-            </div>
-            <div>
-              <dt className="inline text-muted">Provider: </dt>
-              <dd className="inline">{detail.provider}</dd>
-            </div>
-            <div>
-              <dt className="inline text-muted">External ID: </dt>
-              <dd className="inline">{detail.externalId}</dd>
-            </div>
-            <div>
-              <dt className="inline text-muted">Expires at: </dt>
-              <dd className="inline">
-                {detail.expiresAt ? new Date(detail.expiresAt).toLocaleString() : 'no expiry'}
-              </dd>
-            </div>
-            <div>
-              <dt className="inline text-muted">Expires in: </dt>
-              <dd className="inline">
-                {detail.expiresInDays == null ? 'never' : `${detail.expiresInDays} days`}
-              </dd>
-            </div>
-            <div>
-              <dt className="inline text-muted">Needs reconnect: </dt>
-              <dd className="inline">{String(detail.needsReconnect)}</dd>
-            </div>
-          </dl>
         </Modal>
       )}
     </div>
