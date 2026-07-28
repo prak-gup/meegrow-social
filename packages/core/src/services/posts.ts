@@ -5,6 +5,8 @@ import {
   type CalendarView,
   type CreatePostInput,
   type ListPostsQuery,
+  optionsArmForProvider,
+  parseStoredOptions,
   type MediaRef,
   type PostGroupView,
   type PostView,
@@ -15,6 +17,8 @@ import { and, asc, eq, gte, isNotNull, lte, sql } from 'drizzle-orm';
 import { DateTime } from 'luxon';
 import { getScheduler } from './scheduler.js';
 import { nextFreeSlotForQueue } from './queues.js';
+import { tryGetProvider } from '../providers/registry.js';
+import { ProviderBadRequestError } from '../errors.js';
 
 /** Thrown when a lifecycle op targets a post in a state that doesn't allow it (→ 409 in the API). */
 export class PostStateError extends Error {}
@@ -38,6 +42,61 @@ function statusFor(mode: Exclude<CreatePostInput['schedule'], { type: 'queue' }>
 }
 
 /**
+ * Run every variant past its own provider's rules BEFORE anything is stored (#44). Contracts have
+ * already validated the *shape* of `options`; this is where platform semantics land — YouTube needs
+ * exactly one video, a GBP EVENT needs dates, a CALL button takes no url.
+ *
+ * At create time deliberately: a scheduled post whose rules are only checked in the worker fails
+ * hours later, after the client believes it is booked.
+ *
+ * NB the media refs here may not carry resolved public URLs yet — `publish.ts` resolves those — so
+ * a provider's check must key off `kind` and arity, never `url`.
+ */
+function assertVariantsPublishable(input: CreatePostInput): void {
+  for (const v of input.variants) {
+    // Non-throwing lookup: an unconfigured provider must not change what the API accepts, or CI
+    // (fakes only, no platform secrets) would diverge from production.
+    const provider = tryGetProvider(v.provider);
+    if (!provider?.assertPublishable) continue;
+    provider.assertPublishable([
+      {
+        caption: v.caption ?? input.caption,
+        media: v.media ?? input.media,
+        options: v.options,
+      },
+    ]);
+  }
+}
+
+/**
+ * The edit-time twin of `assertVariantsPublishable` (#44). A patch carries options but no provider,
+ * so the `postVariant` refinement can't run — the arm is re-checked against the stored row here.
+ */
+function assertPatchPublishable(row: PostRow, patch: UpdatePostInput): void {
+  const provider = row.provider as PostView['provider'];
+  if (patch.options !== undefined) {
+    const arm = optionsArmForProvider(provider);
+    if (!arm) {
+      throw new ProviderBadRequestError(`"${provider}" takes no per-platform options`);
+    }
+    if (patch.options.kind !== arm) {
+      throw new ProviderBadRequestError(
+        `"${provider}" needs options.kind "${arm}", got "${patch.options.kind}"`,
+      );
+    }
+  }
+  const impl = tryGetProvider(provider);
+  if (!impl?.assertPublishable) return;
+  impl.assertPublishable([
+    {
+      caption: patch.caption ?? row.caption,
+      media: patch.media ?? (row.media as MediaRef[] | null) ?? [],
+      options: patch.options ?? parseStoredOptions(row.options) ?? undefined,
+    },
+  ]);
+}
+
+/**
  * Create a post-group and one per-platform child post per variant (PRD F3.1). One call → N posts.
  * Queue mode (F3.4) computes the next free timezone-aware slot and applies it to every variant in
  * the group (one group = one slot, mirroring how `at`/`now` apply one publishAt to the whole group).
@@ -49,6 +108,7 @@ export async function createPost(
   createdBy?: string,
 ): Promise<PostView[]> {
   const input = createPostInput.parse(rawInput);
+  assertVariantsPublishable(input);
 
   let status: string;
   let publishAt: Date | null;
@@ -88,6 +148,8 @@ export async function createPost(
       status,
       caption: v.caption ?? input.caption,
       media: v.media ?? input.media,
+      // Options are per-platform by definition, so they never inherit from the group (#44).
+      options: v.options ?? null,
       publishAt,
       queueId,
     }));
@@ -187,9 +249,12 @@ export async function updatePost(
       throw new PostStateError(`a '${row.status}' post cannot be edited`);
     }
 
+    assertPatchPublishable(row, patch);
+
     const set: Record<string, unknown> = {};
     if (patch.caption !== undefined) set.caption = patch.caption;
     if (patch.media !== undefined) set.media = patch.media;
+    if (patch.options !== undefined) set.options = patch.options;
 
     let action: Action = 'none';
     let when: Date | null = null;
@@ -300,6 +365,7 @@ function toView(row: PostRow): PostView {
     connectionId: row.connectionId,
     status: row.status as PostView['status'],
     caption: row.caption,
+    options: parseStoredOptions(row.options),
     publishAt: row.publishAt,
     releaseUrl: row.releaseUrl,
     error: row.error,

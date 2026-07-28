@@ -1,4 +1,9 @@
-import type { ProviderIdentifier, TokenModel, MediaRef } from '@meegrow-social/contracts';
+import type {
+  ProviderIdentifier,
+  TokenModel,
+  MediaRef,
+  PostOptions,
+} from '@meegrow-social/contracts';
 
 export interface AuthTokens {
   accessToken: string;
@@ -24,6 +29,12 @@ export interface ProviderAccount {
 export interface PostDetails {
   caption: string;
   media: MediaRef[];
+  /**
+   * Per-platform options (#44) — YouTube title/privacy, GBP topic type + CTA, reel vs feed. Shape
+   * is validated in contracts; the arm always matches this provider by the time it arrives here.
+   * Undefined for providers that take no options.
+   */
+  options?: PostOptions;
 }
 
 export interface PostResult {
@@ -72,6 +83,19 @@ export interface SocialProvider {
    */
   finalizeAccount?(tokens: AuthTokens, account: ProviderAccount): Promise<AuthTokens>;
   refreshToken(refreshToken: string): Promise<AuthTokens>;
+  /**
+   * Semantic validation of a post BEFORE it is stored (#44). Throws `ProviderBadRequestError` when
+   * details can't publish on this platform — YouTube needs exactly one video, a GBP EVENT needs
+   * event dates, a CALL button takes no url. Contracts validate the *shape* of options; only the
+   * provider knows the platform's own rules, which is what keeps a new platform from having to edit
+   * shared contract files.
+   *
+   * Called at create time deliberately: a scheduled post whose rules are only checked at publish
+   * fails hours later inside the worker, after the client believes it is booked.
+   *
+   * Optional — a provider with no extra rules simply omits it.
+   */
+  assertPublishable?(details: PostDetails[]): void;
   /** Publish an array of details (thread/carousel) to one connected account. */
   post(tokens: AuthTokens, details: PostDetails[]): Promise<PostResult>;
   /** Per-post metrics for a previously published post. */

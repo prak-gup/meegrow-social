@@ -72,6 +72,7 @@ import {
   verifyUserCredentials,
   type AuthContext,
   PostStateError,
+  ProviderBadRequestError,
 } from '@meegrow-social/core';
 import { buildMcpServer, newStatelessTransport } from './mcp.js';
 
@@ -453,6 +454,9 @@ export async function buildServer(): Promise<FastifyInstance> {
     } catch (err) {
       if (err instanceof QueueNotFoundError) return reply.code(404).send({ error: err.message });
       if (err instanceof QueueInactiveError) return reply.code(400).send({ error: err.message });
+      // A provider's own rules rejected the post at create time (#44) — client error, not a 500.
+      if (err instanceof ProviderBadRequestError)
+        return reply.code(400).send({ error: err.message });
       throw err;
     }
   });
@@ -493,6 +497,8 @@ export async function buildServer(): Promise<FastifyInstance> {
       return { post };
     } catch (err) {
       if (err instanceof PostStateError) return reply.code(409).send({ error: err.message });
+      if (err instanceof ProviderBadRequestError)
+        return reply.code(400).send({ error: err.message });
       throw err;
     }
   });

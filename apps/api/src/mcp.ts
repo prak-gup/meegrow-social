@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { createPost, listConnections, listPosts, registerMediaFromUrl } from '@meegrow-social/core';
+import { postOptions } from '@meegrow-social/contracts';
 import type { AuthContext } from '@meegrow-social/core';
 
 /**
@@ -26,13 +27,22 @@ export function buildMcpServer(ctx: AuthContext): McpServer {
         connectionId: z.string().uuid(),
         provider: z.string(),
         publishAt: z.string().datetime().optional(),
+        // Per-platform options (#44). Required for youtube (it has no title without them), so this
+        // tool would hard-fail on that provider if it couldn't be supplied here.
+        options: postOptions.optional(),
       },
     },
     async (args) => {
       const posts = await createPost(ctx.workspaceId, {
         caption: args.caption,
         media: [],
-        variants: [{ connectionId: args.connectionId, provider: args.provider as never }],
+        variants: [
+          {
+            connectionId: args.connectionId,
+            provider: args.provider as never,
+            options: args.options,
+          },
+        ],
         schedule: args.publishAt
           ? { type: 'at', publishAt: new Date(args.publishAt) }
           : { type: 'draft' },
@@ -78,13 +88,21 @@ export function buildMcpServer(ctx: AuthContext): McpServer {
         connectionId: z.string().uuid(),
         provider: z.string(),
         queueId: z.string().uuid(),
+        /** Per-platform options (#44) — same reason as `create_post`. */
+        options: postOptions.optional(),
       },
     },
     async (args) => {
       const posts = await createPost(ctx.workspaceId, {
         caption: args.caption,
         media: [],
-        variants: [{ connectionId: args.connectionId, provider: args.provider as never }],
+        variants: [
+          {
+            connectionId: args.connectionId,
+            provider: args.provider as never,
+            options: args.options,
+          },
+        ],
         schedule: { type: 'queue', queueId: args.queueId },
       });
       return { content: [{ type: 'text', text: JSON.stringify(posts) }] };

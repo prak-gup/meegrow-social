@@ -1,6 +1,6 @@
 import { withWorkspace, schema } from '@meegrow-social/db';
 import { eq } from 'drizzle-orm';
-import type { MediaRef } from '@meegrow-social/contracts';
+import { parseStoredOptions, type MediaRef } from '@meegrow-social/contracts';
 import { getProvider } from '../providers/registry.js';
 import type { AuthTokens, PostDetails } from '../providers/types.js';
 import { decryptToken } from '../crypto.js';
@@ -44,7 +44,15 @@ export async function publishPost(workspaceId: string, postId: string): Promise<
     // Posts may be created with only a mediaId (no url yet) — resolve public URLs here (PRD F3.3:
     // IG/GBP require them at publish time).
     const media = await resolveMediaRefs(tx, (post.media as MediaRef[]) ?? []);
-    const details: PostDetails[] = [{ caption: post.caption, media }];
+    const details: PostDetails[] = [
+      {
+        caption: post.caption,
+        media,
+        // Per-platform options (#44) — validated at create time, re-parsed here because jsonb
+        // round-trips Dates to strings (see parseStoredOptions).
+        options: parseStoredOptions(post.options) ?? undefined,
+      },
+    ];
 
     await tx.update(schema.posts).set({ status: 'publishing' }).where(eq(schema.posts.id, postId));
 

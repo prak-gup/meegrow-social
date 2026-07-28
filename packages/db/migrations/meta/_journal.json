@@ -43,6 +43,13 @@
       "when": 1784700829604,
       "tag": "0005_majestic_madripoor",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785257764869,
+      "tag": "0006_fair_dexter_bennett",
+      "breakpoints": true
     }
   ]
 }
