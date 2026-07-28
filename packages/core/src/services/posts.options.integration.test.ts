@@ -165,6 +165,40 @@ describe('create-time validation (#44)', () => {
 });
 
 describe('publish hands options to the provider (#44)', () => {
+  it('gives the provider real Dates, not the strings jsonb round-trips to', async () => {
+    useRecordingScheduler();
+    const ws = await createWorkspace();
+    const connectionId = await createConnection(ws, 'gmb');
+    const [post] = await createPost(ws, {
+      caption: 'Diwali sale',
+      media: [],
+      variants: [
+        {
+          connectionId,
+          provider: 'gmb',
+          options: {
+            kind: 'gmb',
+            topicType: 'EVENT',
+            event: {
+              title: 'Diwali sale',
+              start: '2026-08-01T10:00:00.000Z',
+              end: '2026-08-02T10:00:00.000Z',
+            },
+          },
+        },
+      ],
+      schedule: { type: 'now' },
+    });
+
+    await publishPost(ws, post!.id);
+
+    const opts = received[0]![0]!.options;
+    expect(opts?.kind).toBe('gmb');
+    // `z.coerce.date()` produces a Date on the way in; jsonb serialises it to a string. If the read
+    // path only casts, the provider gets a string and any .getTime() blows up at publish time.
+    expect(opts?.kind === 'gmb' && opts.event?.start).toBeInstanceOf(Date);
+  });
+
   it('replays the stored options verbatim into post()', async () => {
     useRecordingScheduler();
     const ws = await createWorkspace();

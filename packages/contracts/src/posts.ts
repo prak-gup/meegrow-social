@@ -96,6 +96,15 @@ const youtubeOptions = z.object({
 export const postOptions = z.discriminatedUnion('kind', [metaOptions, gmbOptions, youtubeOptions]);
 export type PostOptions = z.infer<typeof postOptions>;
 
+/**
+ * Re-parse options read back out of jsonb. REQUIRED on every read path — a bare `as PostOptions`
+ * cast is a lie: storage round-trips `Date` to an ISO string, so `event.start` comes back a string
+ * and any date arithmetic inside a provider throws at publish time. `z.coerce.date()` restores it.
+ */
+export function parseStoredOptions(value: unknown): PostOptions | null {
+  return value == null ? null : postOptions.parse(value);
+}
+
 /** Which options arm a provider takes. Absent = takes no options (yet). */
 const OPTIONS_ARM: Partial<Record<ProviderIdentifier, PostOptions['kind']>> = {
   instagram: 'meta',

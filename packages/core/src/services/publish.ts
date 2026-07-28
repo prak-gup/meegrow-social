@@ -1,6 +1,6 @@
 import { withWorkspace, schema } from '@meegrow-social/db';
 import { eq } from 'drizzle-orm';
-import type { MediaRef, PostOptions } from '@meegrow-social/contracts';
+import { parseStoredOptions, type MediaRef } from '@meegrow-social/contracts';
 import { getProvider } from '../providers/registry.js';
 import type { AuthTokens, PostDetails } from '../providers/types.js';
 import { decryptToken } from '../crypto.js';
@@ -48,8 +48,9 @@ export async function publishPost(workspaceId: string, postId: string): Promise<
       {
         caption: post.caption,
         media,
-        // Per-platform options (#44) — validated at create time, replayed verbatim here.
-        options: (post.options as PostOptions | null) ?? undefined,
+        // Per-platform options (#44) — validated at create time, re-parsed here because jsonb
+        // round-trips Dates to strings (see parseStoredOptions).
+        options: parseStoredOptions(post.options) ?? undefined,
       },
     ];
 

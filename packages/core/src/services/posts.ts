@@ -6,9 +6,9 @@ import {
   type CreatePostInput,
   type ListPostsQuery,
   optionsArmForProvider,
+  parseStoredOptions,
   type MediaRef,
   type PostGroupView,
-  type PostOptions,
   type PostView,
   type UpdatePostInput,
 } from '@meegrow-social/contracts';
@@ -91,7 +91,7 @@ function assertPatchPublishable(row: PostRow, patch: UpdatePostInput): void {
     {
       caption: patch.caption ?? row.caption,
       media: patch.media ?? (row.media as MediaRef[] | null) ?? [],
-      options: patch.options ?? (row.options as PostOptions | null) ?? undefined,
+      options: patch.options ?? parseStoredOptions(row.options) ?? undefined,
     },
   ]);
 }
@@ -365,7 +365,7 @@ function toView(row: PostRow): PostView {
     connectionId: row.connectionId,
     status: row.status as PostView['status'],
     caption: row.caption,
-    options: (row.options as PostOptions | null) ?? null,
+    options: parseStoredOptions(row.options),
     publishAt: row.publishAt,
     releaseUrl: row.releaseUrl,
     error: row.error,
