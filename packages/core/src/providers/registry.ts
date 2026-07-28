@@ -28,6 +28,15 @@ export function getProvider(identifier: ProviderIdentifier): SocialProvider {
   return p;
 }
 
+/**
+ * Non-throwing lookup. Used by create-time validation (#44), which must not start rejecting posts
+ * for providers that simply aren't configured in this environment — CI and local dev run with only
+ * the fakes registered, and a missing platform secret must not change what the API accepts.
+ */
+export function tryGetProvider(identifier: ProviderIdentifier): SocialProvider | undefined {
+  return providers.get(identifier);
+}
+
 export function listProviders(): SocialProvider[] {
   return [...providers.values()];
 }

@@ -177,6 +177,12 @@ export const posts = pgTable('posts', {
   media: jsonb('media')
     .notNull()
     .default(sql`'[]'::jsonb`),
+  /**
+   * Per-platform post options (#44) — a YouTube title, a GBP topic type + CTA, a reel flag. Null
+   * for posts created before the field existed and for providers that take no options. Validated
+   * as `postOptions` in contracts and by the provider's `assertPublishable` at create time.
+   */
+  options: jsonb('options'),
   publishAt: ts('publish_at'),
   releaseUrl: text('release_url'),
   /**

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { providerIdentifier } from './providers.js';
+import { providerIdentifier, type ProviderIdentifier } from './providers.js';
 
 /**
  * Post lifecycle. Kept flexible enough for the template engine (drafts) and the scheduler
@@ -27,17 +27,138 @@ export const mediaRef = z.object({
 export type MediaRef = z.infer<typeof mediaRef>;
 
 /**
+ * Per-platform post options (#44). `caption` + `media` are not enough to express a post on any
+ * platform past Meta's feed: YouTube needs a title, GBP needs a topic type and a CTA button, and
+ * a reel is not a feed video. One arm per platform *family* — IG and FB share `meta`, because a
+ * provider-keyed union would duplicate that arm and let the two drift.
+ *
+ * Discriminated on `kind` rather than reusing the variant's `provider` for exactly that reason;
+ * `postVariant` asserts below that the arm matches the provider, so the two can't disagree.
+ *
+ * This is SHAPE validation only. Semantic rules (a GBP EVENT needs event dates, a YouTube post
+ * needs exactly one video) live on the provider's `assertPublishable`, so adding a platform never
+ * edits this file — the sealed-provider invariant in README.md.
+ */
+const metaOptions = z.object({
+  kind: z.literal('meta'),
+  format: z.enum(['feed', 'reel', 'story']).default('feed'),
+  /** IG reels only: also surface the reel on the main feed. */
+  shareToFeed: z.boolean().optional(),
+  coverUrl: z.string().url().optional(),
+});
+
+const gmbOptions = z.object({
+  kind: z.literal('gmb'),
+  topicType: z.enum(['STANDARD', 'EVENT', 'OFFER', 'ALERT']).default('STANDARD'),
+  /** The post's button. `url` is absent for CALL — the provider enforces that pairing. */
+  cta: z
+    .object({
+      actionType: z.enum(['BOOK', 'ORDER', 'SHOP', 'LEARN_MORE', 'SIGN_UP', 'CALL']),
+      url: z.string().url().optional(),
+    })
+    .optional(),
+  event: z
+    .object({
+      title: z.string().min(1).max(58),
+      start: z.coerce.date(),
+      end: z.coerce.date(),
+    })
+    .optional(),
+  offer: z
+    .object({
+      couponCode: z.string().optional(),
+      redeemUrl: z.string().url().optional(),
+      terms: z.string().optional(),
+    })
+    .optional(),
+});
+
+const youtubeOptions = z.object({
+  kind: z.literal('youtube'),
+  /**
+   * Mandatory, and deliberately NOT defaulted from `caption`: titles cap at 100 chars while
+   * captions run to 5000, so a fallback would silently truncate mid-sentence onto every client's
+   * channel. Better to reject at create time.
+   */
+  title: z.string().min(1).max(100),
+  description: z.string().max(5000).optional(),
+  /**
+   * NB: until the YouTube compliance audit clears, `videos.insert` from this project locks every
+   * upload to private regardless of what is requested here. The provider reads the status back
+   * after upload rather than trusting this value.
+   */
+  privacyStatus: z.enum(['public', 'unlisted', 'private']).default('public'),
+  categoryId: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  madeForKids: z.boolean().default(false),
+});
+
+export const postOptions = z.discriminatedUnion('kind', [metaOptions, gmbOptions, youtubeOptions]);
+export type PostOptions = z.infer<typeof postOptions>;
+
+/** Which options arm a provider takes. Absent = takes no options (yet). */
+const OPTIONS_ARM: Partial<Record<ProviderIdentifier, PostOptions['kind']>> = {
+  instagram: 'meta',
+  facebook: 'meta',
+  gmb: 'gmb',
+  youtube: 'youtube',
+};
+
+/** Providers whose options carry a field with no sensible default, so the post is invalid without. */
+const OPTIONS_REQUIRED: ReadonlySet<ProviderIdentifier> = new Set(['youtube']);
+
+/**
+ * Which options arm a provider takes, or undefined if it takes none. Exported so `updatePost` can
+ * re-run the arm check against a STORED post — a patch carries options but not a provider, so the
+ * `postVariant` refinement can't cover that path.
+ */
+export function optionsArmForProvider(
+  provider: ProviderIdentifier,
+): PostOptions['kind'] | undefined {
+  return OPTIONS_ARM[provider];
+}
+
+/**
  * A per-platform child of a post-group. This is the "per-platform variant" the PRD (F3.1) and
  * the future template engine (RESEARCH §1.5) require: each target can override caption/media.
  */
-export const postVariant = z.object({
-  connectionId: z.string().uuid(),
-  provider: providerIdentifier,
-  /** Overrides the group caption when set. */
-  caption: z.string().max(5000).optional(),
-  /** Overrides the group media when set. Array order = carousel / thread order. */
-  media: z.array(mediaRef).max(10).optional(),
-});
+export const postVariant = z
+  .object({
+    connectionId: z.string().uuid(),
+    provider: providerIdentifier,
+    /** Overrides the group caption when set. */
+    caption: z.string().max(5000).optional(),
+    /** Overrides the group media when set. Array order = carousel / thread order. */
+    media: z.array(mediaRef).max(10).optional(),
+    /** Per-platform options (#44). Required for providers in `OPTIONS_REQUIRED`. */
+    options: postOptions.optional(),
+  })
+  .superRefine((variant, ctx) => {
+    const arm = OPTIONS_ARM[variant.provider];
+    if (!variant.options) {
+      if (OPTIONS_REQUIRED.has(variant.provider)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['options'],
+          message: `"${variant.provider}" posts require options (a YouTube post has no title without them)`,
+        });
+      }
+      return;
+    }
+    if (!arm) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['options'],
+        message: `"${variant.provider}" takes no per-platform options`,
+      });
+    } else if (variant.options.kind !== arm) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['options', 'kind'],
+        message: `"${variant.provider}" needs options.kind "${arm}", got "${variant.options.kind}"`,
+      });
+    }
+  });
 export type PostVariant = z.infer<typeof postVariant>;
 
 export const scheduleMode = z.discriminatedUnion('type', [
@@ -64,6 +185,8 @@ export const postView = z.object({
   connectionId: z.string().uuid(),
   status: postStatus,
   caption: z.string(),
+  /** Per-platform options (#44). Null for posts that carry none. */
+  options: postOptions.nullable().default(null),
   publishAt: z.coerce.date().nullable(),
   releaseUrl: z.string().url().nullable(),
   error: z.string().nullable(),
@@ -82,6 +205,11 @@ export const updatePostInput = z.object({
   caption: z.string().max(5000).optional(),
   media: z.array(mediaRef).max(10).optional(),
   publishAt: z.coerce.date().nullable().optional(),
+  /**
+   * Per-platform options (#44). The arm-matches-provider check can't run here — the patch doesn't
+   * carry the provider — so `updatePost` re-checks it against the stored row.
+   */
+  options: postOptions.optional(),
 });
 export type UpdatePostInput = z.infer<typeof updatePostInput>;
 

@@ -10,14 +10,14 @@ are deferred — they ride the same port once it exists, so deferring them costs
 
 ## Decisions taken
 
-| Decision | Choice | Why |
-| --- | --- | --- |
-| Identity model | **Per-client consent**, like Meta today | Matches the connect-invite flow already shipped; clean offboarding. Cost: OAuth app stays External and must be verified per sensitive scope. |
-| Read-only Google data | **Windsor.ai as the data plane** | GA4 (7 properties), Search Console (7 sites) and GBP (1 location) are already connected and already paid for. Building native clients buys no differentiation and costs months of approvals. |
-| Publishing | **Own providers only** | Publishing through Windsor would put a second path outside the queue, DLQ, webhooks and token-health — the split-brain the guardrails exist to prevent. |
-| GBP posting interim | **No interim.** Wait for the own provider | Windsor's `create_local_post` would work in days but becomes permanent. |
-| Storage for insights | **Proxy live + short-TTL cache**, no timeseries tables | Windsor is already the warehouse. A second copy means owning restatement handling (GA4 and Ads both restate for days). |
-| First target | **One pilot client end-to-end** | Breadth later. |
+| Decision              | Choice                                                 | Why                                                                                                                                                                                          |
+| --------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity model        | **Per-client consent**, like Meta today                | Matches the connect-invite flow already shipped; clean offboarding. Cost: OAuth app stays External and must be verified per sensitive scope.                                                 |
+| Read-only Google data | **Windsor.ai as the data plane**                       | GA4 (7 properties), Search Console (7 sites) and GBP (1 location) are already connected and already paid for. Building native clients buys no differentiation and costs months of approvals. |
+| Publishing            | **Own providers only**                                 | Publishing through Windsor would put a second path outside the queue, DLQ, webhooks and token-health — the split-brain the guardrails exist to prevent.                                      |
+| GBP posting interim   | **No interim.** Wait for the own provider              | Windsor's `create_local_post` would work in days but becomes permanent.                                                                                                                      |
+| Storage for insights  | **Proxy live + short-TTL cache**, no timeseries tables | Windsor is already the warehouse. A second copy means owning restatement handling (GA4 and Ads both restate for days).                                                                       |
+| First target          | **One pilot client end-to-end**                        | Breadth later.                                                                                                                                                                               |
 
 Pilot client: **Value Plus** — the only client with both a Search Console property
 (`valueplusretail.com`) and a GBP location (`locations/13790234960711841165`) already live in Windsor.
@@ -34,13 +34,13 @@ That audit (`support.google.com/youtube/contact/yt_api_form`) is a **separate pr
 OAuth verification, with its own form and its own clock. Consequence: the highest-priority platform
 has the longest lead time, and the lowest-priority one (Search Console) needs no approval at all.
 
-| Platform | Approvals needed | Ships |
-| --- | --- | --- |
-| Search Console | none — Windsor already connected | first |
-| GBP | GBP Basic API Access + OAuth verification (`business.manage`) | second |
-| YouTube | OAuth verification (`youtube.upload`, `youtube.readonly`) **+ compliance audit** | last |
+| Platform       | Approvals needed                                                                 | Ships  |
+| -------------- | -------------------------------------------------------------------------------- | ------ |
+| Search Console | none — Windsor already connected                                                 | first  |
+| GBP            | GBP Basic API Access + OAuth verification (`business.manage`)                    | second |
+| YouTube        | OAuth verification (`youtube.upload`, `youtube.readonly`) **+ compliance audit** | last   |
 
-The audits gate *launch*, not *development*. Both submissions expect a working app to demo, so the
+The audits gate _launch_, not _development_. Both submissions expect a working app to demo, so the
 code must exist first either way.
 
 ## Architecture: two ports, not one
@@ -57,10 +57,15 @@ already sit in the `providerIdentifier` enum. Issues #25 and #21.
 
 ```ts
 export interface InsightsSource {
-  readonly identifier: InsightsSourceIdentifier;   // 'search-console' | 'gbp-insights' | 'ga4' | 'google-ads'
+  readonly identifier: InsightsSourceIdentifier; // 'search-console' | 'gbp-insights' | 'ga4' | 'google-ads'
   readonly displayName: string;
   listAccounts(): Promise<InsightsAccount[]>;
-  fetch(params: { accountId: string; from: Date; to: Date; metrics?: string[] }): Promise<InsightsRow[]>;
+  fetch(params: {
+    accountId: string;
+    from: Date;
+    to: Date;
+    metrics?: string[];
+  }): Promise<InsightsRow[]>;
 }
 ```
 
@@ -91,19 +96,19 @@ touches `contracts/posts.ts` and `core/services/posts.ts`, which STATE.md says t
 
 One new table. `insights_links`:
 
-| column | notes |
-| --- | --- |
-| `workspace_id` | FK, RLS predicate |
-| `source` | `'search-console' \| 'gbp-insights' \| …` |
+| column                | notes                                                       |
+| --------------------- | ----------------------------------------------------------- |
+| `workspace_id`        | FK, RLS predicate                                           |
+| `source`              | `'search-console' \| 'gbp-insights' \| …`                   |
 | `external_account_id` | Windsor account id, e.g. `https://www.valueplusretail.com/` |
-| `display_name` | for the UI |
-| `linked_at` | |
+| `display_name`        | for the UI                                                  |
+| `linked_at`           |                                                             |
 
 FORCE row-level security, like every other client-data table.
 
 **The isolation risk, stated plainly.** The Windsor API key is platform-level (`WINDSOR_API_KEY` in
 env), not per-workspace. That key can read all seven GA4 properties and all seven Search Console
-sites. Unlike an OAuth connection — where the token itself is the tenant boundary — here the *only*
+sites. Unlike an OAuth connection — where the token itself is the tenant boundary — here the _only_
 thing preventing workspace A from reading workspace B's client is this mapping table. Therefore:
 
 - `fetch()` takes `external_account_id` from the linked row, **never** from request input.
@@ -142,7 +147,7 @@ Both adapters call core. No logic in `apps/`.
 
 **Code, in order:**
 
-1. **#44** — per-platform post options, designed for reels *and* YouTube *and* GBP.
+1. **#44** — per-platform post options, designed for reels _and_ YouTube _and_ GBP.
 2. **New issue** — `InsightsSource` port + `WindsorSource` + `insights_links` + RLS test, with
    Search Console as the first registered source. No approvals needed; proves the port end-to-end on
    real Value Plus data.
