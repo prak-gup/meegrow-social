@@ -21,6 +21,11 @@ describe('postIsDue', () => {
   describe('fresh post (< 48h old) — hourly', () => {
     const publishAt = ago(2 * HOUR);
 
+    it('uses hourly cadence for a publish-now post stamped when it went out', () => {
+      expect(postIsDue({ publishAt: now, lastAnalyticsAt: ago(HOUR), now })).toBe(true);
+      expect(postIsDue({ publishAt: now, lastAnalyticsAt: ago(59 * MINUTE), now })).toBe(false);
+    });
+
     it('is due an hour after the last sweep', () => {
       expect(postIsDue({ publishAt, lastAnalyticsAt: ago(HOUR), now })).toBe(true);
       expect(postIsDue({ publishAt, lastAnalyticsAt: ago(HOUR + MINUTE), now })).toBe(true);
