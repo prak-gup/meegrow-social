@@ -26,3 +26,4 @@ export * from './services/token-health.js';
 export * from './services/analytics.js';
 export * from './services/overview.js';
 export * from './services/invites.js';
+export * from './services/hashtags.js';

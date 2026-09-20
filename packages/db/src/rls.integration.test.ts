@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, schema, withWorkspace } from './index.js';
 import { createConnection, createWorkspace, resetDb } from '@meegrow-social/testing';
+import { eq } from 'drizzle-orm';
 
 // Crown-jewel test (AX-PRD §3 gate 5): FORCE RLS must make cross-tenant access impossible,
 // even for the table owner. A failure here blocks any merge.
@@ -37,5 +38,39 @@ describe('row-level tenant isolation', () => {
         }),
       ),
     ).rejects.toThrow();
+  });
+
+  it('a second workspace cannot read or write the first workspace hashtag groups', async () => {
+    const a = await createWorkspace('A');
+    const b = await createWorkspace('B');
+    const [groupA] = await withWorkspace(a, (tx) =>
+      tx.insert(schema.hashtagGroups).values({ workspaceId: a, name: 'A tags' }).returning(),
+    );
+    expect(groupA?.tags).toEqual([]);
+
+    const visibleToB = await withWorkspace(b, (tx) =>
+      tx.select().from(schema.hashtagGroups).where(eq(schema.hashtagGroups.id, groupA!.id)),
+    );
+    expect(visibleToB).toEqual([]);
+
+    const updatedByB = await withWorkspace(b, (tx) =>
+      tx
+        .update(schema.hashtagGroups)
+        .set({ name: 'stolen' })
+        .where(eq(schema.hashtagGroups.id, groupA!.id))
+        .returning(),
+    );
+    expect(updatedByB).toEqual([]);
+
+    await expect(
+      withWorkspace(b, (tx) =>
+        tx.insert(schema.hashtagGroups).values({ workspaceId: a, name: 'sneaky' }),
+      ),
+    ).rejects.toThrow();
+
+    const [unchanged] = await withWorkspace(a, (tx) =>
+      tx.select().from(schema.hashtagGroups).where(eq(schema.hashtagGroups.id, groupA!.id)),
+    );
+    expect(unchanged?.name).toBe('A tags');
   });
 });

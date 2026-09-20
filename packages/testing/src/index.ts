@@ -24,6 +24,7 @@ export async function resetDb(): Promise<void> {
     'webhook_deliveries',
     'webhook_endpoints',
     'queues',
+    'hashtag_groups',
     'posts',
     'post_groups',
     'media',

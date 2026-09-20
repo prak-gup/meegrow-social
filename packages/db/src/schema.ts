@@ -213,6 +213,17 @@ export const queues = pgTable('queues', {
   createdAt: createdAt(),
 });
 
+export const hashtagGroups = pgTable('hashtag_groups', {
+  id: id(),
+  workspaceId: workspaceId(),
+  name: text('name').notNull(),
+  tags: text('tags')
+    .array()
+    .notNull()
+    .default(sql`'{}'::text[]`),
+  createdAt: createdAt(),
+});
+
 export const webhookEndpoints = pgTable('webhook_endpoints', {
   id: id(),
   workspaceId: workspaceId(),
@@ -287,6 +298,7 @@ export const TENANT_TABLES = [
   'post_groups',
   'posts',
   'queues',
+  'hashtag_groups',
   'webhook_endpoints',
   'webhook_deliveries',
   'metrics',
