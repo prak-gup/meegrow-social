@@ -62,6 +62,35 @@ describe('OAuth connect flow', () => {
     await expect(handleCallback(flowId, 'auth-code')).rejects.toThrow();
   });
 
+  it('allows exactly one concurrent callback to consume a flow', async () => {
+    const ws = await createWorkspace();
+    const { flowId } = await startConnect(ws, 'fake', APP);
+
+    const results = await Promise.allSettled([
+      handleCallback(flowId, 'auth-code'),
+      handleCallback(flowId, 'auth-code'),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect(await listConnections(ws)).toHaveLength(1);
+  });
+
+  it('allows exactly one concurrent account selection to consume a flow', async () => {
+    const ws = await createWorkspace();
+    const { flowId } = await startConnect(ws, 'fake_2step', APP);
+    await handleCallback(flowId, 'auth-code');
+
+    const results = await Promise.allSettled([
+      finishConnect(ws, flowId, 'page-1'),
+      finishConnect(ws, flowId, 'page-1'),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect(await listConnections(ws)).toHaveLength(1);
+  });
+
   it('rejects finishing an account pick for the wrong workspace', async () => {
     const wsA = await createWorkspace('A');
     const wsB = await createWorkspace('B');
