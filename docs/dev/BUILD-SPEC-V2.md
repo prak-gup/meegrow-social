@@ -43,11 +43,23 @@ webhook delivery) · E. Antidote cutover · F. Dashboard completion + approval g
 
 ### Decisions taken 2026-09-21 (do not re-litigate without a reason)
 
-- **Operator-only. Clients never log in.** You, and whoever else is on the team, publish, approve and
-  reply. Clients see work through antidote and `/client-share` pages. Consequences, all binding on the
-  issues below: #20's roles matrix covers staff roles only (`owner|admin|member|viewer`, no client
-  role); **#68's approver is always an internal user**, so client review latency never becomes
-  publishing latency; white-label and client notifications stay out of scope; no second auth surface.
+- **Clients log in. Reversed 21 Sep, same day** — the first call was operator-only; it lasted an hour.
+  What this binds:
+  - **#20 gains a `client` role**, scoped to exactly one workspace. Default permissions: read the
+    calendar, read published content, read analytics. Never: connections, API keys, logs, review
+    replies, other workspaces. The matrix is data-driven, so widening a client's rights later is a
+    row, not a migration.
+  - **#68's approver is a permission, not a person.** `workspaces.approver_role` decides whether an
+    internal member or the client clears the gate. Build the gate against the permission from the
+    start — retrofitting "who may approve" into a shipped approval flow is the expensive version.
+  - **A client-facing view of the dashboard is now in scope**: the same screens with a stripped nav
+    and no operator affordances. It is not a second app and not a second auth surface — one login,
+    one session table, one set of pages, role-gated.
+  - **Basic white-label returns** (workspace name + logo in the client view). Full theming stays out.
+  - **Consequence to watch, stated plainly:** if the client is the approver, *their* response time
+    becomes our publishing latency. Keep an internal override so a post can still go out when the
+    client goes quiet, and make the queue show who it is waiting on.
+
 - **The UI is locked** to the seven screens in the design canvas (Overview, Composer, Calendar,
   Content, Analytics, Reviews, Connections). Build against them; iterate on real screens with real
   client data, not on mockups.
