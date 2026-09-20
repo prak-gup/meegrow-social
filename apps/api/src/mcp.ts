@@ -30,23 +30,31 @@ export function buildMcpServer(ctx: AuthContext): McpServer {
         // Per-platform options (#44). Required for youtube (it has no title without them), so this
         // tool would hard-fail on that provider if it couldn't be supplied here.
         options: postOptions.optional(),
+        // Same guarantee as the REST `Idempotency-Key` header (D2). An agent loop that retries
+        // after a timeout — the failure mode that published one creative 8x to a live Instagram
+        // account — gets the original post back instead of a second one.
+        idempotencyKey: z.string().min(1).max(255).optional(),
       },
     },
     async (args) => {
-      const posts = await createPost(ctx.workspaceId, {
-        caption: args.caption,
-        media: [],
-        variants: [
-          {
-            connectionId: args.connectionId,
-            provider: args.provider as never,
-            options: args.options,
-          },
-        ],
-        schedule: args.publishAt
-          ? { type: 'at', publishAt: new Date(args.publishAt) }
-          : { type: 'draft' },
-      });
+      const posts = await createPost(
+        ctx.workspaceId,
+        {
+          caption: args.caption,
+          media: [],
+          variants: [
+            {
+              connectionId: args.connectionId,
+              provider: args.provider as never,
+              options: args.options,
+            },
+          ],
+          schedule: args.publishAt
+            ? { type: 'at', publishAt: new Date(args.publishAt) }
+            : { type: 'draft' },
+        },
+        { idempotencyKey: args.idempotencyKey },
+      );
       return { content: [{ type: 'text', text: JSON.stringify(posts) }] };
     },
   );
@@ -90,21 +98,27 @@ export function buildMcpServer(ctx: AuthContext): McpServer {
         queueId: z.string().uuid(),
         /** Per-platform options (#44) — same reason as `create_post`. */
         options: postOptions.optional(),
+        /** Idempotency (D2) — same reason as `create_post`. */
+        idempotencyKey: z.string().min(1).max(255).optional(),
       },
     },
     async (args) => {
-      const posts = await createPost(ctx.workspaceId, {
-        caption: args.caption,
-        media: [],
-        variants: [
-          {
-            connectionId: args.connectionId,
-            provider: args.provider as never,
-            options: args.options,
-          },
-        ],
-        schedule: { type: 'queue', queueId: args.queueId },
-      });
+      const posts = await createPost(
+        ctx.workspaceId,
+        {
+          caption: args.caption,
+          media: [],
+          variants: [
+            {
+              connectionId: args.connectionId,
+              provider: args.provider as never,
+              options: args.options,
+            },
+          ],
+          schedule: { type: 'queue', queueId: args.queueId },
+        },
+        { idempotencyKey: args.idempotencyKey },
+      );
       return { content: [{ type: 'text', text: JSON.stringify(posts) }] };
     },
   );

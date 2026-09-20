@@ -448,8 +448,15 @@ export async function buildServer(): Promise<FastifyInstance> {
   app.post('/v1/posts', async (req, reply) => {
     const parsed = createPostInput.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    // D2 — `Idempotency-Key`: a retried create returns the original posts instead of duplicating
+    // them. Bounded so a hostile key can't bloat the index; empty/whitespace is treated as absent.
+    const rawKey = req.headers['idempotency-key'];
+    const idempotencyKey = (Array.isArray(rawKey) ? rawKey[0] : rawKey)?.trim() || undefined;
+    if (idempotencyKey && idempotencyKey.length > 255) {
+      return reply.code(400).send({ error: 'Idempotency-Key must be at most 255 characters' });
+    }
     try {
-      const posts = await createPost(req.authContext!.workspaceId, parsed.data);
+      const posts = await createPost(req.authContext!.workspaceId, parsed.data, { idempotencyKey });
       return reply.code(201).send({ posts });
     } catch (err) {
       if (err instanceof QueueNotFoundError) return reply.code(404).send({ error: err.message });

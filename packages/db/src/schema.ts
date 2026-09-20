@@ -6,6 +6,7 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
@@ -153,16 +154,34 @@ export const media = pgTable('media', {
   createdAt: createdAt(),
 });
 
-export const postGroups = pgTable('post_groups', {
-  id: id(),
-  workspaceId: workspaceId(),
-  caption: text('caption').notNull().default(''),
-  media: jsonb('media')
-    .notNull()
-    .default(sql`'[]'::jsonb`),
-  createdBy: uuid('created_by'),
-  createdAt: createdAt(),
-});
+export const postGroups = pgTable(
+  'post_groups',
+  {
+    id: id(),
+    workspaceId: workspaceId(),
+    caption: text('caption').notNull().default(''),
+    media: jsonb('media')
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    /**
+     * Caller-supplied idempotency key (`Idempotency-Key` header / MCP arg). It lives on the GROUP,
+     * not on `posts`: one create call makes one group and N per-platform children, so a unique key
+     * on `posts` would collide with itself the moment a post targets two platforms. One request =
+     * one group = one key.
+     */
+    idempotencyKey: text('idempotency_key'),
+    createdBy: uuid('created_by'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // Partial: only keyed requests are constrained, so ordinary creates are unaffected. This index
+    // is what makes a replay *impossible* rather than merely unlikely — the concurrent second
+    // request loses the insert race with 23505 and is served the original group (services/posts.ts).
+    uniqueIndex('post_groups_workspace_idempotency_key_uniq')
+      .on(t.workspaceId, t.idempotencyKey)
+      .where(sql`${t.idempotencyKey} is not null`),
+  ],
+);
 
 export const posts = pgTable('posts', {
   id: id(),
@@ -194,7 +213,6 @@ export const posts = pgTable('posts', {
   /** Last time the analytics sweeper polled this post (#9). Null = never swept. */
   lastAnalyticsAt: ts('last_analytics_at'),
   error: text('error'),
-  idempotencyKey: text('idempotency_key'),
   // Nullable, no FK (see `connectionId` above for the same pattern): set when a post was created
   // via queue slotting (PRD F3.4). Used to compute slot occupancy for the next add-to-queue call.
   queueId: uuid('queue_id'),
