@@ -50,6 +50,13 @@
       "when": 1785257764869,
       "tag": "0006_fair_dexter_bennett",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789934186888,
+      "tag": "0008_sloppy_baron_strucker",
+      "breakpoints": true
     }
   ]
 }

@@ -7,6 +7,7 @@ import fastifyStatic from '@fastify/static';
 import {
   calendarPostsQuery,
   createApiKeyInput,
+  createHashtagGroupInput,
   createPostInput,
   createWorkspaceInput,
   createQueueInput,
@@ -20,6 +21,7 @@ import {
   switchWorkspaceInput,
   updatePostInput,
   updateQueueInput,
+  updateHashtagGroupInput,
   validateMediaInput,
 } from '@meegrow-social/contracts';
 import {
@@ -30,6 +32,7 @@ import {
   createApiKeyForWorkspace,
   createClientWorkspace,
   createConnectInvite,
+  createHashtagGroup,
   getConnectInvite,
   calendarPosts,
   cancelPost,
@@ -38,6 +41,7 @@ import {
   createSession,
   DEFAULT_MEDIA_DISK_DIR,
   deleteConnection,
+  deleteHashtagGroup,
   deleteQueue,
   finishConnect,
   getMedia,
@@ -49,6 +53,7 @@ import {
   handleCallback,
   listApiKeys,
   listConnections,
+  listHashtagGroups,
   overviewForUser,
   listPosts,
   listProviders,
@@ -66,6 +71,7 @@ import {
   startConnect,
   switchActiveWorkspace,
   updatePost,
+  updateHashtagGroup,
   updateQueue,
   uploadMedia,
   validateMediaAgainstPlatform,
@@ -413,6 +419,35 @@ export async function buildServer(): Promise<FastifyInstance> {
     const ok = await revokeApiKey(req.authContext!.workspaceId, req.params.id);
     if (!ok) return reply.code(404).send({ error: 'not found' });
     return { revoked: true };
+  });
+
+  app.post('/v1/hashtag-groups', async (req, reply) => {
+    const parsed = createHashtagGroupInput.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const hashtagGroup = await createHashtagGroup(req.authContext!.workspaceId, parsed.data);
+    return reply.code(201).send({ hashtagGroup });
+  });
+
+  app.get('/v1/hashtag-groups', async (req) => ({
+    hashtagGroups: await listHashtagGroups(req.authContext!.workspaceId),
+  }));
+
+  app.patch<{ Params: { id: string } }>('/v1/hashtag-groups/:id', async (req, reply) => {
+    const parsed = updateHashtagGroupInput.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const hashtagGroup = await updateHashtagGroup(
+      req.authContext!.workspaceId,
+      req.params.id,
+      parsed.data,
+    );
+    if (!hashtagGroup) return reply.code(404).send({ error: 'not found' });
+    return { hashtagGroup };
+  });
+
+  app.delete<{ Params: { id: string } }>('/v1/hashtag-groups/:id', async (req, reply) => {
+    const ok = await deleteHashtagGroup(req.authContext!.workspaceId, req.params.id);
+    if (!ok) return reply.code(404).send({ error: 'not found' });
+    return reply.code(204).send();
   });
 
   // Which platforms this environment can actually connect. Registration is env-gated, so dev/CI
