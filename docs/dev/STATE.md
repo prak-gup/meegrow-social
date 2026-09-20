@@ -4,6 +4,9 @@
 
 **Pipeline:** /e2e-dev (Grill → Research → Prototype → PRD → AX-PRD → Issues → Implement → QA)
 
+**Build spec for everything remaining (M2 → cutover): `docs/dev/BUILD-SPEC-V2.md`** — providers (GBP
+in full), content-ops parity, MCP 5→22, antidote cutover, approvals workstream, migrations, waves.
+
 ## 🎨 UI REDESIGN SHIPPED (2026-07-21, PR #55)
 
 **The dashboard was rebuilt on the Airbnb design system and is LIVE + QA'd in prod.** Replaced the

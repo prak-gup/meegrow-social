@@ -5,7 +5,8 @@ Zernio (rented) + self-hosted Postiz (heavy). Multi-tenant workspaces, per-works
 durable scheduled publishing, collect-everything analytics — Postgres + Redis only, no Temporal/ES.
 
 See `docs/dev/` for the full paper trail: `PRD.md` (what), `AX-PRD.md` (how / one-way doors),
-`RESEARCH.md` (platform + stack findings), `STATE.md` (where we are).
+`RESEARCH.md` (platform + stack findings), `STATE.md` (where we are),
+`BUILD-SPEC-V2.md` (what is still to be built, in full).
 
 ## Monorepo layout
 
