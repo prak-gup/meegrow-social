@@ -367,11 +367,15 @@ able to mint more (the existing comment in `mcp.ts` states the reasoning; keep i
 file per noun (`posts.ts`, `media.ts`, `connections.ts`, `tags.ts`, `reviews.ts`) + `index.ts`. Still
 zero logic — every handler is parse → `core` → JSON.
 
-### D2 · Idempotency (kills a whole bug class)
-`posts.idempotency_key` exists and is **dead**. Wire it:
-- `POST /v1/posts` reads an `Idempotency-Key` header; `createPost` stores it.
-- `UNIQUE (workspace_id, idempotency_key)` partial index where not null.
-- A replay returns the **original** `201` body instead of creating a second post.
+### D2 · Idempotency (kills a whole bug class) — ✅ SHIPPED (migration 0007)
+- `POST /v1/posts` reads an `Idempotency-Key` header (≤255 chars); MCP `create_post` /
+  `add_to_queue` take an `idempotencyKey` argument.
+- **The key lives on `post_groups`, not `posts`** — corrected during implementation: one create makes
+  one group and N per-platform children, so a unique key on `posts` collides with itself the moment a
+  post targets two platforms. `posts.idempotency_key` (dead since 0000) was dropped.
+- Partial `UNIQUE (workspace_id, idempotency_key)` + a 23505 rescue for the concurrent case; the
+  pre-check runs *before* queue slotting so a replay cannot consume a second slot.
+- A replay returns the **original** posts and writes nothing.
 
 Why this matters more than it looks: on 2026-04-13 antidote's autopost loop published the same
 creative to JEDH Instagram 8+ times in 6 minutes. Today the only guard is an **in-memory set** in
@@ -494,11 +498,11 @@ Overview. Renders whatever metric names came back — **no hardcoded metric list
 
 | # | Contents | Workstream |
 |---|---|---|
-| 0007 | `tags`, `post_group_tags` (+RLS, +TENANT_TABLES) | C1 |
-| 0008 | `post_templates`, `hashtag_groups` (+RLS) | C2, C4 |
-| 0009 | `posts.first_comment` | C3 |
-| 0010 | `posts.approval_state/approved_by/approved_at/approval_note`, `workspaces.requires_approval` | F2 |
-| 0011 | `UNIQUE (workspace_id, idempotency_key)` partial index | D2 |
+| 0008 | `tags`, `post_group_tags` (+RLS, +TENANT_TABLES) | C1 |
+| 0009 | `post_templates`, `hashtag_groups` (+RLS) | C2, C4 |
+| 0010 | `posts.first_comment` | C3 |
+| 0011 | `posts.approval_state/approved_by/approved_at/approval_note`, `workspaces.requires_approval` | F2 |
+| ~~0011~~ **0007** | `post_groups.idempotency_key` + partial unique index; drop dead `posts.idempotency_key` — **shipped** | D2 |
 | 0012 | `gbp_reviews` (+RLS) | B2 |
 
 Migrations are the #1 merge-collision surface (invariant 5) — **one open migration PR at a time.**
@@ -518,14 +522,14 @@ file **A4**. Nothing below B is blocked by these; everything in B and E is.
 ### Wave 1 — unblocked now, no approvals needed (~6 days)
 | Item | Days | Touches | Parallel-safe? |
 |---|---|---|---|
-| D2 idempotency | 0.5 | `posts.ts`, `server.ts`, migration | **no — serialize** |
+| ~~D2 idempotency~~ ✅ done | — | `posts.ts`, `server.ts`, migration 0007 | shipped 2026-09-21 |
 | D3 webhook drainer | 1.5 | worker, `server.ts` | no (server.ts) |
 | D1 MCP expansion | 2 | `mcp/` only | **yes** |
 | C1 tags | 1 | migration, `server.ts` | no |
 | F4 #57 epoch bug | 0.25 | web + `posts.ts` | yes |
 | F3 analytics UI | 1.5 | web only | **yes** |
 
-Order: D2 → C1 → D3 (the three that touch `server.ts`/migrations, serialized), with D1 + F3 + #57
+Order: ~~D2~~ → C1 → D3 (those touching `server.ts`/migrations, serialized), with D1 + F3 + #57
 running alongside in their own worktrees.
 
 ### Wave 2 — the moment A1+A2 land (~5 days)
