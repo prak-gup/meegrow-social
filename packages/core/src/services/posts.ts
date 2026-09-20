@@ -96,6 +96,43 @@ function assertPatchPublishable(row: PostRow, patch: UpdatePostInput): void {
   ]);
 }
 
+export interface CreatePostMeta {
+  /** User id to attribute the group to. */
+  createdBy?: string;
+  /**
+   * Caller-supplied idempotency key (D2). When present, a second create with the same key returns
+   * the FIRST call's posts and writes nothing. Scoped per workspace by a partial unique index on
+   * `post_groups`.
+   */
+  idempotencyKey?: string;
+}
+
+/** Postgres unique-violation. Drizzle surfaces the driver error unchanged. */
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: string }).code === '23505';
+}
+
+/** Every post of the group that owns `idempotencyKey`, or null when the key is unused. */
+async function findByIdempotencyKey(
+  workspaceId: string,
+  idempotencyKey: string,
+): Promise<PostView[] | null> {
+  return withWorkspace(workspaceId, async (tx) => {
+    const [group] = await tx
+      .select({ id: schema.postGroups.id })
+      .from(schema.postGroups)
+      .where(eq(schema.postGroups.idempotencyKey, idempotencyKey))
+      .limit(1);
+    if (!group) return null;
+    const rows = await tx
+      .select()
+      .from(schema.posts)
+      .where(eq(schema.posts.groupId, group.id))
+      .orderBy(asc(schema.posts.createdAt), asc(schema.posts.id));
+    return rows.map(toView);
+  });
+}
+
 /**
  * Create a post-group and one per-platform child post per variant (PRD F3.1). One call → N posts.
  * Queue mode (F3.4) computes the next free timezone-aware slot and applies it to every variant in
@@ -105,10 +142,19 @@ function assertPatchPublishable(row: PostRow, patch: UpdatePostInput): void {
 export async function createPost(
   workspaceId: string,
   rawInput: CreatePostInput,
-  createdBy?: string,
+  meta: CreatePostMeta = {},
 ): Promise<PostView[]> {
   const input = createPostInput.parse(rawInput);
   assertVariantsPublishable(input);
+  const { createdBy, idempotencyKey } = meta;
+
+  // Fast path: a key we have already served. Checked BEFORE the queue-slot computation below,
+  // because slotting is a side-effecting read (it consumes the next free slot) and a replay must
+  // not move the queue on.
+  if (idempotencyKey) {
+    const replay = await findByIdempotencyKey(workspaceId, idempotencyKey);
+    if (replay) return replay;
+  }
 
   let status: string;
   let publishAt: Date | null;
@@ -128,33 +174,48 @@ export async function createPost(
     else if (input.schedule.type === 'at') scheduleWhen = input.schedule.publishAt;
   }
 
-  const created = await withWorkspace(workspaceId, async (tx) => {
-    const [group] = await tx
-      .insert(schema.postGroups)
-      .values({
-        workspaceId,
-        caption: input.caption,
-        media: input.media,
-        createdBy: createdBy ?? null,
-      })
-      .returning();
-    if (!group) throw new Error('failed to create post group');
+  const insertGroupAndPosts = () =>
+    withWorkspace(workspaceId, async (tx) => {
+      const [group] = await tx
+        .insert(schema.postGroups)
+        .values({
+          workspaceId,
+          caption: input.caption,
+          media: input.media,
+          idempotencyKey: idempotencyKey ?? null,
+          createdBy: createdBy ?? null,
+        })
+        .returning();
+      if (!group) throw new Error('failed to create post group');
 
-    const rows = input.variants.map((v) => ({
-      workspaceId,
-      groupId: group.id,
-      connectionId: v.connectionId,
-      provider: v.provider,
-      status,
-      caption: v.caption ?? input.caption,
-      media: v.media ?? input.media,
-      // Options are per-platform by definition, so they never inherit from the group (#44).
-      options: v.options ?? null,
-      publishAt,
-      queueId,
-    }));
-    return tx.insert(schema.posts).values(rows).returning();
-  });
+      const rows = input.variants.map((v) => ({
+        workspaceId,
+        groupId: group.id,
+        connectionId: v.connectionId,
+        provider: v.provider,
+        status,
+        caption: v.caption ?? input.caption,
+        media: v.media ?? input.media,
+        // Options are per-platform by definition, so they never inherit from the group (#44).
+        options: v.options ?? null,
+        publishAt,
+        queueId,
+      }));
+      return tx.insert(schema.posts).values(rows).returning();
+    });
+
+  let created: Awaited<ReturnType<typeof insertGroupAndPosts>>;
+  try {
+    created = await insertGroupAndPosts();
+  } catch (err) {
+    // Concurrent create with the same key: the index picked a winner and we are not it. Serve the
+    // winner's posts rather than failing the caller — a retry storm is exactly what a key is for.
+    if (idempotencyKey && isUniqueViolation(err)) {
+      const replay = await findByIdempotencyKey(workspaceId, idempotencyKey);
+      if (replay) return replay;
+    }
+    throw err;
+  }
 
   if (scheduleWhen !== undefined) {
     const when = scheduleWhen;
