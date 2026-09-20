@@ -41,6 +41,22 @@ A. External approvals · B. Providers: GBP (+reviews), LinkedIn, YouTube, X · C
 (tags, templates, first comment, hashtag groups, variables) · D. Agent surface (MCP 5→22, idempotency,
 webhook delivery) · E. Antidote cutover · F. Dashboard completion + approval gate · G. Hardening.
 
+### Decisions taken 2026-09-21 (do not re-litigate without a reason)
+
+- **Operator-only. Clients never log in.** You, and whoever else is on the team, publish, approve and
+  reply. Clients see work through antidote and `/client-share` pages. Consequences, all binding on the
+  issues below: #20's roles matrix covers staff roles only (`owner|admin|member|viewer`, no client
+  role); **#68's approver is always an internal user**, so client review latency never becomes
+  publishing latency; white-label and client notifications stay out of scope; no second auth surface.
+- **The UI is locked** to the seven screens in the design canvas (Overview, Composer, Calendar,
+  Content, Analytics, Reviews, Connections). Build against them; iterate on real screens with real
+  client data, not on mockups.
+- **Ownership split:** Anshul takes #63, #15, #28, #69 — the four that teach the layers he has to own
+  (migrations+RLS, the core/MCP seam, read models, the options contract). An agent run takes the three
+  mechanical ones (#57, #36, #66) in isolated worktrees with cross-vendor review. #6 and the GBP work
+  (#21, #62) stay with Prakhar's session: they touch `server.ts`/the worker, or need a human holding
+  the Google account.
+
 **Out of scope, deliberately, with the reason:**
 
 | Not building | Why |
