@@ -48,6 +48,24 @@ async function setStatus(_ws: string, postId: string, status: string): Promise<v
   await db().update(schema.posts).set({ status }).where(eq(schema.posts.id, postId));
 }
 
+describe('post lifecycle — publish now', () => {
+  it('stores no scheduled time, enqueues immediately, and remains listable', async () => {
+    const { calls } = useRecordingScheduler();
+    const ws = await createWorkspace();
+    const conn = await createConnection(ws);
+
+    const [post] = await createPost(ws, {
+      caption: 'publish immediately',
+      variants: [{ connectionId: conn, provider: 'fake' }],
+      schedule: { type: 'now' },
+    });
+
+    expect(post?.publishAt).toBeNull();
+    expect(calls).toContainEqual({ postId: post!.id, when: 'now' });
+    expect((await listPosts(ws)).map((listed) => listed.id)).toContain(post!.id);
+  });
+});
+
 describe('post lifecycle — cancel', () => {
   it('cancels a scheduled post, sets status cancelled, and interrupts the job', async () => {
     const { cancels } = useRecordingScheduler();
