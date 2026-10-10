@@ -6,6 +6,10 @@ import { Button } from '../components/ui/Button';
 import { Card, CardContent } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
 import { Select } from '../components/ui/Select';
+import { PageHeader } from '../components/ui/PageHeader';
+import { EmptyState } from '../components/ui/EmptyState';
+import { Table } from '../components/ui/Table';
+import { Article } from '../lib/icons';
 
 type View = 'grid' | 'list' | 'calendar';
 
@@ -79,25 +83,29 @@ export function Posts() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-semibold">Posts</h1>
-        <div className="flex gap-1">
-          {(['grid', 'list', 'calendar'] as View[]).map((v) => (
-            <Button
-              key={v}
-              variant={view === v ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setView(v)}
-            >
-              {v[0]?.toUpperCase()}
-              {v.slice(1)}
-            </Button>
-          ))}
-        </div>
-      </div>
+      <PageHeader
+        title="Content"
+        subtitle="Every post for this client, across platforms."
+        className="mb-0"
+        actions={
+          <div className="flex gap-1">
+            {(['grid', 'list', 'calendar'] as View[]).map((v) => (
+              <Button
+                key={v}
+                variant={view === v ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setView(v)}
+              >
+                {v[0]?.toUpperCase()}
+                {v.slice(1)}
+              </Button>
+            ))}
+          </div>
+        }
+      />
 
       {view !== 'calendar' && (
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Select value={status} onChange={(e) => setStatus(e.target.value)} className="w-40">
             <option value="">All statuses</option>
             {(
@@ -150,11 +158,15 @@ export function Posts() {
       ) : view === 'calendar' ? (
         <CalendarGrid calendar={calendar} />
       ) : posts.length === 0 ? (
-        <p className="text-muted">No posts match.</p>
+        <EmptyState
+          title="No posts match"
+          description="Try a different status or provider."
+          icon={Article}
+        />
       ) : view === 'list' ? (
         <PostList posts={posts} onCancel={cancel} onEdit={editCaption} />
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
           {posts.map((p) => (
             <PostCard key={p.id} post={p} onCancel={cancel} onEdit={editCaption} />
           ))}
@@ -178,7 +190,7 @@ function PostCard({
   return (
     <Card className={receded ? 'opacity-60' : ''}>
       <CardContent className="space-y-2 p-4">
-        <p className="line-clamp-3 text-[15px] leading-snug">
+        <p className="line-clamp-3 text-body leading-snug">
           {post.caption || <span className="text-muted">(no caption)</span>}
         </p>
         <div className="flex items-center justify-between pt-1">
@@ -213,24 +225,50 @@ function PostList({
   onEdit: (post: PostView) => void;
 }) {
   return (
-    <Card>
-      <CardContent className="divide-y p-0">
-        {posts.map((p) => (
-          <div key={p.id} className="flex items-center gap-3 p-3 text-sm">
-            <Badge variant={STATUS_VARIANT[p.status]}>{p.status}</Badge>
-            <span className="font-medium">{p.provider}</span>
-            <span className="flex-1 truncate text-muted">{p.caption || '(no caption)'}</span>
-            {p.error && <span className="truncate text-error">{p.error}</span>}
-            <Button variant="outline" size="sm" onClick={() => onEdit(p)}>
-              Edit
-            </Button>
-            <Button variant="destructive" size="sm" onClick={() => onCancel(p.id)}>
-              Cancel
-            </Button>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
+    <Table
+      caption="Posts"
+      rows={posts}
+      rowKey={(p) => p.id}
+      columns={[
+        {
+          key: 'status',
+          header: 'Status',
+          cell: (p) => <Badge variant={STATUS_VARIANT[p.status]}>{p.status}</Badge>,
+        },
+        {
+          key: 'provider',
+          header: 'Platform',
+          cell: (p) => <span className="font-medium">{p.provider}</span>,
+        },
+        {
+          key: 'caption',
+          header: 'Caption',
+          className: 'w-full max-w-0 truncate',
+          cell: (p) => (
+            <>
+              <span className="text-muted">{p.caption || '(no caption)'}</span>
+              {p.error && <span className="ml-3 text-error">{p.error}</span>}
+            </>
+          ),
+        },
+        {
+          key: 'when',
+          header: 'When',
+          className: 'hidden whitespace-nowrap text-muted md:table-cell',
+          cell: (p) => (p.publishAt ? new Date(p.publishAt).toLocaleString() : '—'),
+        },
+      ]}
+      rowActions={(p) => (
+        <>
+          <Button variant="outline" size="sm" onClick={() => onEdit(p)}>
+            Edit
+          </Button>
+          <Button variant="destructive" size="sm" onClick={() => onCancel(p.id)}>
+            Cancel
+          </Button>
+        </>
+      )}
+    />
   );
 }
 

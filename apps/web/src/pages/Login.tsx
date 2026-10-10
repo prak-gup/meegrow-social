@@ -27,7 +27,7 @@ export function Login() {
 
   return (
     <div className="grid min-h-screen place-items-center">
-      <Card className="w-[360px]">
+      <Card className="w-card-sm">
         <CardHeader>
           <CardTitle>Sign in to Meegrow Social</CardTitle>
         </CardHeader>

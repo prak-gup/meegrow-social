@@ -5,7 +5,9 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { clientCover, clientHue, initial } from '../lib/clientHue';
 import { AddClientModal } from '../components/AddClientModal';
-import { Warning, WarningCircle, SquaresFour, Lightning, Plus, CaretRight } from '../lib/icons';
+import { PageHeader } from '../components/ui/PageHeader';
+import { Table } from '../components/ui/Table';
+import { Warning, WarningCircle, SquaresFour, Lightning, Plus } from '../lib/icons';
 
 function healthLabel(c: ClientOverview): { text: string; pip: string } {
   if (c.health === 'bad') return { text: 'Reconnect', pip: 'bg-status-bad' };
@@ -17,8 +19,10 @@ function healthLabel(c: ClientOverview): { text: string; pip: string } {
   return { text: 'Healthy', pip: 'bg-status-ok' };
 }
 
-function whenLabel(d: Date | null): string {
-  if (!d) return 'Nothing scheduled';
+// The API client returns JSON as-is, so dates arrive as ISO strings despite the contract's Date type.
+function whenLabel(value: Date | string | null): string {
+  if (!value) return 'Nothing scheduled';
+  const d = new Date(value);
   const now = new Date();
   const sameDay = d.toDateString() === now.toDateString();
   const tmr = new Date(now.getTime() + 86400_000);
@@ -85,15 +89,14 @@ export function Overview() {
 
   return (
     <div>
-      <h1 className="text-[26px] font-semibold tracking-tight">
-        {greeting}
-        {firstName ? `, ${firstName}` : ''}
-      </h1>
-      <p className="text-[15px] text-muted">
-        {ov
-          ? `${ov.clients.length} clients · ${ov.weekTotals.publishedThisWeek} posts published this week`
-          : 'Loading your clients…'}
-      </p>
+      <PageHeader
+        title={`${greeting}${firstName ? `, ${firstName}` : ''}`}
+        subtitle={
+          ov
+            ? `${ov.clients.length} clients · ${ov.weekTotals.publishedThisWeek} posts published this week`
+            : 'Loading your clients…'
+        }
+      />
 
       {/* attention */}
       {attn &&
@@ -102,7 +105,7 @@ export function Overview() {
           {attentionCards.map((a, i) => (
             <div
               key={i}
-              className="flex items-center gap-3.5 rounded-md border border-hairline bg-canvas p-[18px] hover:shadow-1"
+              className="flex items-center gap-3.5 rounded-md border border-hairline bg-canvas p-4.5 hover:shadow-1"
             >
               <span
                 className={
@@ -146,13 +149,13 @@ export function Overview() {
           Manage all
         </button>
       </div>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(238px,1fr))] gap-x-5 gap-y-6">
+      <div className="grid grid-cols-tiles gap-x-5 gap-y-6">
         {(ov?.clients ?? []).map((c) => {
           const h = healthLabel(c);
           return (
             <button key={c.workspaceId} className="text-left" onClick={() => void openClient(c)}>
               <div
-                className="relative grid aspect-[20/13] place-items-center overflow-hidden rounded-md text-white"
+                className="relative grid aspect-cover place-items-center overflow-hidden rounded-md text-white"
                 style={{ background: clientCover(c.name) }}
               >
                 <span className="text-4xl font-bold opacity-95">{initial(c.name)}</span>
@@ -161,7 +164,7 @@ export function Overview() {
                   {h.text}
                 </span>
                 {c.automationLive && (
-                  <span className="absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-semibold text-white">
+                  <span className="absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-scrim/60 px-2.5 py-1 text-micro font-semibold text-white">
                     <Lightning size={11} weight="fill" className="text-status-ok" />
                     Bot live
                   </span>
@@ -170,7 +173,7 @@ export function Overview() {
               <div className="pt-3">
                 <div className="flex items-center justify-between">
                   <span className="text-base font-semibold">{c.name}</span>
-                  <span className="tnum text-[15px] font-semibold">{c.publishedThisWeek}</span>
+                  <span className="tnum text-body font-semibold">{c.publishedThisWeek}</span>
                 </div>
                 <div className="mt-0.5 text-sm text-muted">
                   {c.connectionCount} {c.connectionCount === 1 ? 'account' : 'accounts'}
@@ -185,7 +188,7 @@ export function Overview() {
         {/* add tile */}
         <button
           onClick={() => setAdding(true)}
-          className="grid aspect-[20/13] place-items-center rounded-md border-[1.5px] border-dashed border-hairline-strong bg-surface-soft text-muted hover:border-ink hover:bg-canvas hover:text-ink"
+          className="grid aspect-cover place-items-center rounded-md border-1.5 border-dashed border-hairline-strong bg-surface-soft text-muted hover:border-ink hover:bg-canvas hover:text-ink"
         >
           <span className="flex flex-col items-center gap-2 text-sm font-semibold">
             <span className="grid h-11 w-11 place-items-center rounded-full border border-hairline bg-canvas">
@@ -202,24 +205,39 @@ export function Overview() {
           <div className="mb-3.5 mt-9 flex items-baseline justify-between">
             <h2 className="text-xl font-semibold tracking-tight">Publishing next</h2>
           </div>
-          <div className="overflow-hidden rounded-md border border-hairline">
-            {ov.upcoming.map((u, i) => (
-              <div
-                key={i}
-                className="grid grid-cols-[130px_1fr_auto] items-center gap-4 border-t border-hairline-soft px-5 py-3.5 first:border-t-0 hover:bg-surface-soft"
-              >
-                <div className="text-sm text-muted">{whenLabel(u.publishAt)}</div>
-                <div className="flex min-w-0 items-center gap-3">
-                  <span
-                    className="h-2.5 w-2.5 flex-none rounded-full"
-                    style={{ background: clientHue(u.workspaceName) }}
-                  />
-                  <span className="truncate text-[15px]">{u.caption || '(no caption)'}</span>
-                </div>
-                <CaretRight size={16} className="text-muted" />
-              </div>
-            ))}
-          </div>
+          <Table
+            caption="Publishing next"
+            rows={ov.upcoming}
+            rowKey={(u, i) => `${i}-${u.workspaceName}`}
+            columns={[
+              {
+                key: 'when',
+                header: 'When',
+                className: 'whitespace-nowrap text-muted',
+                cell: (u) => whenLabel(u.publishAt),
+              },
+              {
+                key: 'client',
+                header: 'Client',
+                className: 'hidden sm:table-cell',
+                cell: (u) => (
+                  <span className="flex items-center gap-2">
+                    <span
+                      className="h-2.5 w-2.5 flex-none rounded-full"
+                      style={{ background: clientHue(u.workspaceName) }}
+                    />
+                    {u.workspaceName}
+                  </span>
+                ),
+              },
+              {
+                key: 'caption',
+                header: 'Post',
+                className: 'max-w-0 w-full truncate',
+                cell: (u) => u.caption || '(no caption)',
+              },
+            ]}
+          />
         </>
       )}
 

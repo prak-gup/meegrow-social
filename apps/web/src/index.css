@@ -36,6 +36,37 @@
     --status-bad: 16 76% 42%; /* failed / reconnect */
     --status-idle: 0 0% 57%; /* draft / cancelled */
 
+    --scrim: 0 0% 0%;
+
+    /* third-party brand marks (Connections / Invite platform tiles) */
+    --brand-facebook: 214 89% 52%;
+    --brand-instagram: 349 75% 57%;
+    --brand-gmb: 217 89% 61%;
+    --brand-linkedin: 210 90% 40%;
+    --brand-x: 0 0% 0%;
+    --brand-youtube: 0 100% 50%;
+
+    /* client identity hues — the content axis, orthogonal to the Rausch accent (lib/clientHue.ts) */
+    --hue-1: 252 92% 66%; /* violet */
+    --hue-2: 190 93% 44%; /* cyan */
+    --hue-3: 89 63% 48%; /* leaf */
+    --hue-4: 37 87% 53%; /* gold */
+    --hue-5: 11 96% 64%; /* coral */
+    --hue-6: 330 81% 60%; /* pink */
+    --hue-7: 156 88% 35%; /* jade */
+    --hue-8: 217 91% 60%; /* blue */
+    --hue-9: 258 90% 66%; /* purple */
+    --hue-10: 173 80% 40%; /* teal */
+    --hue-11: 38 92% 50%; /* amber */
+    --hue-12: 0 84% 60%; /* red */
+
+    /* data-viz series: ink first, then the accent, then hues that stay distinct from each other */
+    --chart-1: 0 0% 13%;
+    --chart-2: 344 100% 61%;
+    --chart-3: 190 93% 44%;
+    --chart-4: 37 87% 53%;
+    --chart-5: 252 92% 66%;
+
     /* the single Airbnb elevation tier */
     --shadow-1:
       rgba(0, 0, 0, 0.02) 0 0 0 1px, rgba(0, 0, 0, 0.04) 0 2px 6px 0, rgba(0, 0, 0, 0.1) 0 4px 8px 0;

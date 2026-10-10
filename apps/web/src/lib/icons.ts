@@ -12,6 +12,10 @@ export {
   MagnifyingGlass,
   CaretDown,
   CaretRight,
+  ArrowUp,
+  ArrowDown,
+  List,
+  X as CloseIcon,
   DotsThree,
   Warning,
   WarningCircle,
@@ -44,3 +48,4 @@ export {
   ShareNetwork,
   CheckCircle as CheckIcon,
 } from '@phosphor-icons/react';
+export type { Icon as IconComponent } from '@phosphor-icons/react';
