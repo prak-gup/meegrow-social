@@ -11,6 +11,12 @@ on:
     types: [completed]
   workflow_dispatch:
 
+# One deploy at a time: two merges in quick succession otherwise race on recreating the containers
+# (seen 2026-10-10: "container name /mgs-worker is already in use"). Queue, never cancel mid-deploy.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     # Only deploy if the CI run succeeded (or when manually dispatched).
