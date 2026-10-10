@@ -35,7 +35,7 @@ function statusFor(mode: Exclude<CreatePostInput['schedule'], { type: 'queue' }>
     case 'draft':
       return { status: 'draft', publishAt: null };
     case 'now':
-      return { status: 'scheduled', publishAt: new Date(0) };
+      return { status: 'scheduled', publishAt: null };
     case 'at':
       return { status: 'scheduled', publishAt: mode.publishAt };
   }

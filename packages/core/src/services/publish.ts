@@ -63,6 +63,9 @@ export async function publishPost(workspaceId: string, postId: string): Promise<
         .set({
           status: 'published',
           releaseUrl: result.releaseUrl,
+          // For a publish-now post, publishAt records the moment it actually went out. Scheduled
+          // posts keep their intended time because the calendar depends on it.
+          publishAt: post.publishAt ?? new Date(),
           // The platform's own id — the analytics sweeper (#9) polls insights by it. Without this
           // it was discarded at publish time and unrecoverable except by parsing releaseUrl.
           externalPostId: result.externalPostId,
