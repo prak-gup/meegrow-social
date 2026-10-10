@@ -34,7 +34,13 @@ const longDate = (key: string) =>
     year: 'numeric',
   });
 
-/** A post on the calendar. Activating it runs the same "Edit" as Content. */
+/** The API only accepts edits to these (core/services/posts.ts EDITABLE_STATUSES). */
+const EDITABLE: ReadonlySet<PostView['status']> = new Set(['draft', 'scheduled']);
+
+/**
+ * A post on the calendar. A draft or scheduled post is a button that runs the same "Edit" as
+ * Content; anything already sent is read-only, so it is not offered as a control.
+ */
 function PostChip({
   post,
   roomy = false,
@@ -48,13 +54,8 @@ function PostChip({
   const platform = platformMeta({ identifier: post.provider, displayName: post.provider });
   const time = formatPublishTime(post.publishAt);
   const caption = post.caption || '(no caption)';
-  return (
-    <button
-      type="button"
-      onClick={() => onEdit(post)}
-      aria-label={`Edit caption: ${platform.label}, ${time}, ${post.status}, ${caption}`}
-      className="flex w-full min-w-0 flex-col gap-1 rounded-xs border border-hairline bg-canvas px-1.5 py-1 text-left hover:bg-surface-soft"
-    >
+  const body = (
+    <>
       <span className="flex w-full min-w-0 items-center gap-1.5">
         <span
           className={cn(
@@ -82,6 +83,26 @@ function PostChip({
       >
         {caption}
       </span>
+    </>
+  );
+  const box =
+    'flex w-full min-w-0 flex-col gap-1 rounded-xs border border-hairline bg-canvas px-1.5 py-1 text-left';
+  if (!EDITABLE.has(post.status)) {
+    return (
+      <div className={box}>
+        <span className="sr-only">{platform.label}, </span>
+        {body}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onEdit(post)}
+      aria-label={`Edit caption: ${platform.label}, ${time}, ${post.status}, ${caption}`}
+      className={cn(box, 'hover:bg-surface-soft')}
+    >
+      {body}
     </button>
   );
 }
