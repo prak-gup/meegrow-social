@@ -27,8 +27,8 @@ export interface ChartProps {
   series: ChartSeries[];
   /** Accessible title: shown above the chart and used as its aria-label. */
   title: string;
-  /** Plot height in px; width is always responsive. */
-  height?: number;
+  /** Tailwind height class for the plot area (default `h-64`); width is always responsive. */
+  plotClassName?: string;
   className?: string;
 }
 
@@ -41,30 +41,46 @@ const SERIES_TOKENS = [
 ];
 const GRID = 'hsl(var(--hairline-soft))';
 const AXIS = 'hsl(var(--muted))';
+// recharts takes numbers/inline styles for these (no className hook); mirrors the radius/type tokens.
+const TICK_FONT_SIZE = '0.75rem'; // = text-xs
+const TOOLTIP_FONT_SIZE = '0.8125rem'; // = text-caption
+const TOOLTIP_RADIUS = '0.5rem'; // = rounded-sm
+const Y_AXIS_WIDTH = 44; // px: fits 5-digit tick labels without clipping
+const PLOT_MARGIN = { top: 8, right: 8, bottom: 0, left: 0 }; // px: keeps edge ticks/strokes unclipped
+const BAR_RADIUS: [number, number, number, number] = [4, 4, 0, 0]; // px: = rounded-xs on the top corners
+const LINE_WIDTH = 2; // px
 const AXIS_PROPS = {
   stroke: AXIS,
   tickLine: false,
   axisLine: false,
-  fontSize: 12,
+  fontSize: TICK_FONT_SIZE,
 } as const;
 
 /** Responsive bar/line chart in token colours. Ships a screen-reader data table alongside. */
-export function Chart({ type, data, xKey, series, title, height = 260, className }: ChartProps) {
+export function Chart({
+  type,
+  data,
+  xKey,
+  series,
+  title,
+  plotClassName = 'h-64',
+  className,
+}: ChartProps) {
   const colorOf = (s: ChartSeries, i: number) =>
     s.color ?? SERIES_TOKENS[i % SERIES_TOKENS.length]!;
-  const common = { data, margin: { top: 8, right: 8, bottom: 0, left: 0 } };
+  const common = { data, margin: PLOT_MARGIN };
   const axes = (
     <>
       <CartesianGrid stroke={GRID} vertical={false} />
       <XAxis dataKey={xKey} {...AXIS_PROPS} />
-      <YAxis width={44} {...AXIS_PROPS} />
+      <YAxis width={Y_AXIS_WIDTH} {...AXIS_PROPS} />
       <Tooltip
         cursor={{ fill: 'hsl(var(--surface-soft))' }}
         contentStyle={{
           border: '1px solid hsl(var(--hairline))',
-          borderRadius: 8,
+          borderRadius: TOOLTIP_RADIUS,
           boxShadow: 'var(--shadow-1)',
-          fontSize: 13,
+          fontSize: TOOLTIP_FONT_SIZE,
         }}
       />
       {series.length > 1 && <Legend iconType="circle" />}
@@ -73,7 +89,7 @@ export function Chart({ type, data, xKey, series, title, height = 260, className
   return (
     <figure className={cn('rounded-md border border-hairline bg-canvas p-4', className)}>
       <figcaption className="mb-3 text-body font-semibold text-ink">{title}</figcaption>
-      <div role="img" aria-label={title} style={{ height }}>
+      <div role="img" aria-label={title} className={plotClassName}>
         <ResponsiveContainer width="100%" height="100%">
           {type === 'bar' ? (
             <BarChart {...common}>
@@ -84,7 +100,7 @@ export function Chart({ type, data, xKey, series, title, height = 260, className
                   dataKey={s.key}
                   name={s.label}
                   fill={colorOf(s, i)}
-                  radius={[4, 4, 0, 0]}
+                  radius={BAR_RADIUS}
                 />
               ))}
             </BarChart>
@@ -97,7 +113,7 @@ export function Chart({ type, data, xKey, series, title, height = 260, className
                   dataKey={s.key}
                   name={s.label}
                   stroke={colorOf(s, i)}
-                  strokeWidth={2}
+                  strokeWidth={LINE_WIDTH}
                   dot={false}
                   connectNulls
                 />

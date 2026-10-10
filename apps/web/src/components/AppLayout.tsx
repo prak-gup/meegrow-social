@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
+import { clientHue } from '../lib/clientHue';
 import { ClientSwitcher } from './ClientSwitcher';
 import { AddClientModal } from './AddClientModal';
 import { Logo } from './Logo';
@@ -33,6 +34,11 @@ function SidebarContent({
 }) {
   const { me, logout } = useAuth();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  // The composer holds an unsaved draft and the keyed <main> remounts on a scope change, so the
+  // client is read-only there: switch client, then compose.
+  const scopeLocked = pathname.startsWith('/composer');
+  const active = me?.user.memberships.find((m) => m.workspaceId === me.activeWorkspaceId);
   const displayName = me?.user.name ?? me?.user.email ?? 'Account';
   const initial = displayName.trim()[0]?.toUpperCase() ?? 'U';
 
@@ -40,7 +46,24 @@ function SidebarContent({
     <div className="flex h-full flex-col gap-4 p-4">
       <Logo className="py-1 pl-1 pr-8" />
 
-      <ClientSwitcher onAddClient={onAddClient} onNavigate={onNavigate} />
+      {scopeLocked ? (
+        <div className="flex h-12 w-full items-center gap-3 rounded-sm border border-hairline bg-surface-soft px-3">
+          <span
+            className="inline-block h-3 w-3 flex-none rounded-full"
+            style={{ background: active ? clientHue(active.name) : undefined }}
+          />
+          <span className="flex min-w-0 flex-1 flex-col leading-tight">
+            <span className="text-micro font-bold uppercase tracking-wide text-muted">
+              Posting as
+            </span>
+            <span className="truncate text-sm font-semibold text-ink">
+              {active?.name ?? 'No client'}
+            </span>
+          </span>
+        </div>
+      ) : (
+        <ClientSwitcher onAddClient={onAddClient} onNavigate={onNavigate} />
+      )}
 
       <button
         type="button"
@@ -109,55 +132,115 @@ export function AppLayout() {
   const [adding, setAdding] = useState(false);
   const [drawer, setDrawer] = useState(false);
 
-  // Close the drawer on any navigation (and on Escape while it is open).
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const drawerRef = useRef<HTMLElement>(null);
+  const backgroundRef = useRef<HTMLDivElement>(null);
+
+  // Close the drawer on any navigation.
   useEffect(() => setDrawer(false), [pathname]);
+
+  // Modal behaviour while the drawer is open: focus moves in and is trapped, Escape closes,
+  // the page behind is inert + aria-hidden, and focus returns to the menu button on close.
   useEffect(() => {
     if (!drawer) return;
+    const trigger = triggerRef.current;
+    const bg = backgroundRef.current;
+    bg?.setAttribute('inert', '');
+    bg?.setAttribute('aria-hidden', 'true');
+    const focusables = () =>
+      Array.from(
+        drawerRef.current?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+    focusables()[0]?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setDrawer(false);
+      if (e.key === 'Escape') {
+        setDrawer(false);
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const items = focusables();
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (!first || !last) return;
+      const current = document.activeElement;
+      if (!drawerRef.current?.contains(current)) {
+        e.preventDefault();
+        first.focus();
+      } else if (e.shiftKey && current === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && current === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      bg?.removeAttribute('inert');
+      bg?.removeAttribute('aria-hidden');
+      trigger?.focus();
+    };
   }, [drawer]);
 
   return (
     <div className="min-h-screen bg-canvas md:pl-sidebar">
-      {/* Desktop rail */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-sidebar overflow-y-auto border-r border-hairline bg-canvas md:block">
-        <SidebarContent onAddClient={() => setAdding(true)} />
-      </aside>
+      <div ref={backgroundRef}>
+        {/* Desktop rail */}
+        <aside className="fixed inset-y-0 left-0 z-30 hidden w-sidebar overflow-y-auto border-r border-hairline bg-canvas md:block">
+          <SidebarContent onAddClient={() => setAdding(true)} />
+        </aside>
 
-      {/* Mobile top bar */}
-      <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-hairline bg-canvas px-4 md:hidden">
-        <button
-          type="button"
-          onClick={() => setDrawer(true)}
-          className="grid h-10 w-10 place-items-center rounded-sm hover:bg-surface-soft"
-          aria-label="Open menu"
-          aria-expanded={drawer}
-        >
-          <List size={22} />
-        </button>
-        <Logo size={26} />
-        <NavLink
-          to="/composer"
-          className="grid h-10 w-10 place-items-center rounded-sm bg-rausch text-white hover:bg-rausch-active"
-          aria-label="Create post"
-        >
-          <Plus size={18} weight="bold" />
-        </NavLink>
-      </header>
+        {/* Mobile top bar */}
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-hairline bg-canvas px-4 md:hidden">
+          <button
+            type="button"
+            ref={triggerRef}
+            onClick={() => setDrawer(true)}
+            className="grid h-10 w-10 place-items-center rounded-sm hover:bg-surface-soft"
+            aria-label="Open menu"
+            aria-expanded={drawer}
+          >
+            <List size={22} />
+          </button>
+          <Logo size={26} />
+          <NavLink
+            to="/composer"
+            className="grid h-10 w-10 place-items-center rounded-sm bg-rausch text-white hover:bg-rausch-active"
+            aria-label="Create post"
+          >
+            <Plus size={18} weight="bold" />
+          </NavLink>
+        </header>
+
+        {/* Keyed on the active workspace so workspace-scoped pages (Content/Connections) remount and
+          refetch when the client switcher changes scope — otherwise a same-route switch is a no-op
+          and the page keeps showing the previous client's data. */}
+        <main key={me?.activeWorkspaceId ?? 'none'} className="px-4 py-6 md:px-8">
+          <Outlet />
+        </main>
+      </div>
 
       {/* Mobile drawer */}
       {drawer && (
-        <div className="fixed inset-0 z-40 md:hidden" role="dialog" aria-modal="true">
+        <div
+          className="fixed inset-0 z-40 md:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Main menu"
+        >
           <button
             type="button"
             className="absolute inset-0 bg-scrim/40"
             aria-label="Close menu"
             onClick={() => setDrawer(false)}
           />
-          <aside className="absolute inset-y-0 left-0 w-sidebar overflow-y-auto bg-canvas shadow-1">
+          <aside
+            ref={drawerRef}
+            className="absolute inset-y-0 left-0 w-sidebar overflow-y-auto bg-canvas shadow-1"
+          >
             <button
               type="button"
               onClick={() => setDrawer(false)}
@@ -168,18 +251,14 @@ export function AppLayout() {
             </button>
             <SidebarContent
               onNavigate={() => setDrawer(false)}
-              onAddClient={() => setAdding(true)}
+              onAddClient={() => {
+                setDrawer(false);
+                setAdding(true);
+              }}
             />
           </aside>
         </div>
       )}
-
-      {/* Keyed on the active workspace so workspace-scoped pages (Content/Connections) remount and
-          refetch when the client switcher changes scope — otherwise a same-route switch is a no-op
-          and the page keeps showing the previous client's data. */}
-      <main key={me?.activeWorkspaceId ?? 'none'} className="px-4 py-6 md:px-8">
-        <Outlet />
-      </main>
 
       {adding && <AddClientModal onClose={() => setAdding(false)} />}
     </div>

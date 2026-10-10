@@ -45,6 +45,7 @@ export function StatTile({
           )}
         >
           {!flat && <DeltaIcon size={12} weight="bold" aria-hidden="true" />}
+          {!flat && <span className="sr-only">{up ? 'Up ' : 'Down '}</span>}
           {Math.abs(delta).toLocaleString(undefined, { maximumFractionDigits: 1 })}%
           <span className="font-normal text-muted">{deltaLabel}</span>
         </div>
