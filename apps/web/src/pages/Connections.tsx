@@ -10,6 +10,8 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
+import { PageHeader } from '../components/ui/PageHeader';
+import { EmptyState } from '../components/ui/EmptyState';
 import {
   FacebookLogo,
   InstagramLogo,
@@ -30,6 +32,7 @@ type IconType = typeof FacebookLogo;
 interface PlatformMeta {
   label: string;
   Icon: IconType;
+  /** Tailwind bg class from the --brand-* tokens. */
   brand: string;
   blurb: string;
 }
@@ -37,42 +40,47 @@ const PLATFORM: Record<string, PlatformMeta> = {
   facebook: {
     label: 'Facebook Page',
     Icon: FacebookLogo,
-    brand: '#1877F2',
+    brand: 'bg-brand-facebook',
     blurb: 'Publish to a Facebook Page',
   },
   instagram: {
     label: 'Instagram',
     Icon: InstagramLogo,
-    brand: '#E4405F',
+    brand: 'bg-brand-instagram',
     blurb: 'Publish to an Instagram Business account',
   },
   gmb: {
     label: 'Google Business',
     Icon: GoogleLogo,
-    brand: '#4285F4',
+    brand: 'bg-brand-gmb',
     blurb: 'Post to a Business Profile',
   },
   linkedin: {
     label: 'LinkedIn',
     Icon: LinkedinLogo,
-    brand: '#0A66C2',
+    brand: 'bg-brand-linkedin',
     blurb: 'Post to a personal profile',
   },
   'linkedin-page': {
     label: 'LinkedIn Page',
     Icon: LinkedinLogo,
-    brand: '#0A66C2',
+    brand: 'bg-brand-linkedin',
     blurb: 'Post to a Company Page',
   },
-  x: { label: 'X', Icon: XLogo, brand: '#000000', blurb: 'Post to X (Twitter)' },
-  youtube: { label: 'YouTube', Icon: YoutubeLogo, brand: '#FF0000', blurb: 'Upload to a channel' },
+  x: { label: 'X', Icon: XLogo, brand: 'bg-brand-x', blurb: 'Post to X (Twitter)' },
+  youtube: {
+    label: 'YouTube',
+    Icon: YoutubeLogo,
+    brand: 'bg-brand-youtube',
+    blurb: 'Upload to a channel',
+  },
 };
 function meta(p: { identifier: string; displayName: string }): PlatformMeta {
   return (
     PLATFORM[p.identifier] ?? {
       label: p.displayName,
       Icon: Plugs,
-      brand: '#6a6a6a',
+      brand: 'bg-muted',
       blurb: 'Test provider (dev)',
     }
   );
@@ -179,19 +187,17 @@ export function Connections() {
 
   return (
     <div className="space-y-8">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-[26px] font-semibold tracking-tight">Connections</h1>
-          <p className="text-[15px] text-muted">The accounts you publish to for {activeName}.</p>
-        </div>
-        <button
-          onClick={() => void load()}
-          className="inline-flex h-10 items-center gap-2 rounded-full border border-hairline px-4 text-sm font-medium hover:border-ink"
-        >
-          <ArrowClockwise size={16} />
-          Refresh
-        </button>
-      </div>
+      <PageHeader
+        title="Connections"
+        subtitle={`The accounts you publish to for ${activeName}.`}
+        className="mb-0"
+        actions={
+          <Button variant="outline" size="sm" onClick={() => void load()}>
+            <ArrowClockwise size={16} />
+            Refresh
+          </Button>
+        }
+      />
 
       {msg && (
         <div className="rounded-md border border-hairline bg-surface-soft px-4 py-3 text-sm text-ink">
@@ -207,12 +213,11 @@ export function Connections() {
         {loading ? (
           <p className="text-muted">Loading…</p>
         ) : conns.length === 0 ? (
-          <div className="rounded-md border border-dashed border-hairline-strong bg-surface-soft px-5 py-8 text-center">
-            <p className="text-[15px] font-medium text-ink">No accounts connected yet</p>
-            <p className="mt-1 text-sm text-muted">
-              Connect one below, or send {activeName} an invite link.
-            </p>
-          </div>
+          <EmptyState
+            title="No accounts connected yet"
+            description={`Connect one below, or send ${activeName} an invite link.`}
+            icon={Plugs}
+          />
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
             {conns.map((c) => {
@@ -222,8 +227,7 @@ export function Connections() {
                 <div key={c.id} className="rounded-md border border-hairline bg-canvas p-5">
                   <div className="flex items-start gap-3.5">
                     <span
-                      className="grid h-11 w-11 flex-none place-items-center rounded-md text-white"
-                      style={{ background: m.brand }}
+                      className={`grid h-11 w-11 flex-none place-items-center rounded-md text-white ${m.brand}`}
                     >
                       <m.Icon size={24} weight="fill" />
                     </span>
@@ -237,8 +241,8 @@ export function Connections() {
                           {h.label}
                         </span>
                       </div>
-                      <p className="mt-0.5 text-[13px] text-muted">{m.label}</p>
-                      <p className="tnum mt-0.5 text-[13px] text-muted">
+                      <p className="mt-0.5 text-caption text-muted">{m.label}</p>
+                      <p className="tnum mt-0.5 text-caption text-muted">
                         {c.expiresInDays == null
                           ? 'Token never expires'
                           : `Renews in ${c.expiresInDays}d`}
@@ -269,14 +273,13 @@ export function Connections() {
               <div key={p.identifier} className="rounded-md border border-hairline bg-canvas p-5">
                 <div className="flex items-center gap-3.5">
                   <span
-                    className="grid h-11 w-11 flex-none place-items-center rounded-md text-white"
-                    style={{ background: m.brand }}
+                    className={`grid h-11 w-11 flex-none place-items-center rounded-md text-white ${m.brand}`}
                   >
                     <m.Icon size={24} weight="fill" />
                   </span>
                   <div>
                     <div className="text-base font-semibold">{m.label}</div>
-                    <div className="text-[13px] text-muted">{m.blurb}</div>
+                    <div className="text-caption text-muted">{m.blurb}</div>
                   </div>
                 </div>
                 <div className="mt-4 flex gap-2">
@@ -292,7 +295,7 @@ export function Connections() {
             );
           })}
         </div>
-        <p className="mt-3 text-[13px] text-muted">
+        <p className="mt-3 text-caption text-muted">
           <b className="text-ink">Connect</b> authorises the account yourself.{' '}
           <b className="text-ink">Invite client</b> makes a link {activeName} opens to connect their
           own account — no password shared.
@@ -344,7 +347,7 @@ export function Connections() {
                 >
                   <div className="min-w-0">
                     <p className="truncate font-medium">{a.displayName}</p>
-                    <p className="tnum truncate text-[13px] text-muted">{a.externalId}</p>
+                    <p className="tnum truncate text-caption text-muted">{a.externalId}</p>
                   </div>
                   <Button size="sm" onClick={() => void choose(a.externalId)}>
                     Connect

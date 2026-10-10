@@ -12,6 +12,7 @@ import { Input } from '../components/ui/Input';
 import { Label } from '../components/ui/Label';
 import { Select } from '../components/ui/Select';
 import { Textarea } from '../components/ui/Textarea';
+import { PageHeader } from '../components/ui/PageHeader';
 
 type ScheduleMode = 'draft' | 'now' | 'at' | 'queue';
 
@@ -94,8 +95,8 @@ export function Composer() {
   };
 
   return (
-    <div className="max-w-2xl space-y-4">
-      <h1 className="text-xl font-semibold">Composer</h1>
+    <div className="max-w-3xl">
+      <PageHeader title="Composer" subtitle="Write once, then save, schedule, or queue it." />
       <Card>
         <CardHeader>
           <CardTitle>New post</CardTitle>

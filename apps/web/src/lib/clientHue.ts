@@ -3,34 +3,22 @@
  * hue is stable across the whole app: same client, same colour on its cover, dot, and spine.
  *
  * Known clients get hand-picked hues that read well together; anything else is hashed onto the same
- * palette so a 7th, 20th, or 60th client still gets a consistent, distinct-ish colour with no config.
+ * --hue-N token palette (index.css) so a 7th, 20th, or 60th client still gets a consistent, distinct-ish colour with no config.
  */
-const PALETTE = [
-  '#7A5AF8', // violet
-  '#08B5D6', // cyan
-  '#7BC62D', // leaf
-  '#F0A020', // gold
-  '#FB6A4A', // coral
-  '#EC4899', // pink
-  '#0BA96B', // jade
-  '#3B82F6', // blue
-  '#8B5CF6', // purple
-  '#14B8A6', // teal
-  '#F59E0B', // amber
-  '#EF4444', // red
-];
+/** Number of --hue-N tokens defined in index.css. */
+const HUES = 12;
 
-const NAMED: Record<string, string> = {
-  antidote: '#7A5AF8',
-  mlearn: '#08B5D6',
-  'm-learn': '#08B5D6',
-  gls: '#F0A020',
-  ecolive: '#7BC62D',
-  'empower&shine': '#FB6A4A',
-  empowerandshine: '#FB6A4A',
-  'empower and shine': '#FB6A4A',
-  'blossom wellbeing': '#EC4899',
-  blossom: '#EC4899',
+const NAMED: Record<string, number> = {
+  antidote: 1,
+  mlearn: 2,
+  'm-learn': 2,
+  gls: 4,
+  ecolive: 3,
+  'empower&shine': 5,
+  empowerandshine: 5,
+  'empower and shine': 5,
+  'blossom wellbeing': 6,
+  blossom: 6,
 };
 
 function hash(s: string): number {
@@ -39,16 +27,26 @@ function hash(s: string): number {
   return Math.abs(h);
 }
 
-/** Resolve a workspace name (or id) to its stable hex hue. */
-export function clientHue(nameOrId: string): string {
+function hueVar(nameOrId: string): string {
   const key = nameOrId.trim().toLowerCase();
-  return NAMED[key] ?? PALETTE[hash(key) % PALETTE.length]!;
+  return `var(--hue-${NAMED[key] ?? (hash(key) % HUES) + 1})`;
 }
+
+/** Resolve a workspace name (or id) to its stable hue, as a CSS colour from the token palette. */
+export function clientHue(nameOrId: string): string {
+  return `hsl(${hueVar(nameOrId)})`;
+}
+
+/** The "all clients" conic swatch: every hue token in order. */
+export const ALL_CLIENTS_SWATCH = `conic-gradient(${Array.from(
+  { length: HUES + 1 },
+  (_, i) => `hsl(var(--hue-${(i % HUES) + 1}))`,
+).join(',')})`;
 
 /** A soft two-stop gradient for a client "cover", derived from its hue. */
 export function clientCover(nameOrId: string): string {
-  const base = clientHue(nameOrId);
-  return `linear-gradient(135deg, ${base}, ${base}cc)`;
+  const v = hueVar(nameOrId);
+  return `linear-gradient(135deg, hsl(${v}), hsl(${v} / 0.8))`;
 }
 
 /** First grapheme, uppercased — for the cover monogram. */

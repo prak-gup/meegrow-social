@@ -5,6 +5,8 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { clientHue, initial } from '../lib/clientHue';
 import { AddClientModal } from '../components/AddClientModal';
+import { Button } from '../components/ui/Button';
+import { PageHeader } from '../components/ui/PageHeader';
 import { Plus, LinkSimple, Copy, PlugsConnected } from '../lib/icons';
 
 function pip(c: ClientOverview): { text: string; cls: string } {
@@ -47,28 +49,22 @@ export function Clients() {
 
   return (
     <div>
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-[26px] font-semibold tracking-tight">Clients</h1>
-          <p className="text-[15px] text-muted">
-            {ov?.clients.length ?? '…'} clients · add one, or send a connect link a client opens to
-            grant you access to their accounts
-          </p>
-        </div>
-        <button
-          onClick={() => setAdding(true)}
-          className="inline-flex h-11 items-center gap-2 rounded-sm bg-rausch px-4 text-[15px] font-medium text-white hover:bg-rausch-active"
-        >
-          <Plus size={18} weight="bold" />
-          Add client
-        </button>
-      </div>
+      <PageHeader
+        title="Clients"
+        subtitle={`${ov?.clients.length ?? '…'} clients · add one, or send a connect link a client opens to grant you access to their accounts`}
+        actions={
+          <Button onClick={() => setAdding(true)}>
+            <Plus size={18} weight="bold" />
+            Add client
+          </Button>
+        }
+      />
 
-      <div className="mt-5 overflow-hidden rounded-md border border-hairline">
-        <div className="grid grid-cols-[2fr_1fr_1fr_auto] gap-4 bg-surface-soft px-6 py-3 text-xs font-bold text-muted">
+      <div className="overflow-hidden rounded-md border border-hairline">
+        <div className="grid grid-cols-[1fr_auto] sm:grid-cols-clients gap-4 bg-surface-soft px-6 py-3 text-xs font-bold text-muted">
           <span>Client</span>
           <span className="hidden sm:block">This week</span>
-          <span>Health</span>
+          <span className="hidden sm:block">Health</span>
           <span />
         </div>
         {(ov?.clients ?? []).map((c) => {
@@ -76,7 +72,7 @@ export function Clients() {
           const showing = openInvite === c.workspaceId;
           return (
             <div key={c.workspaceId} className="border-t border-hairline-soft">
-              <div className="grid grid-cols-[2fr_1fr_1fr_auto] items-center gap-4 px-6 py-4">
+              <div className="grid grid-cols-[1fr_auto] sm:grid-cols-clients items-center gap-4 px-6 py-4">
                 <div className="flex items-center gap-3.5">
                   <span
                     className="grid h-11 w-11 flex-none place-items-center rounded-md font-bold text-white"
@@ -86,16 +82,20 @@ export function Clients() {
                   </span>
                   <div>
                     <div className="text-base font-semibold">{c.name}</div>
-                    <div className="text-[13px] text-muted">
+                    <div className="text-caption text-muted">
                       {c.connectionCount} {c.connectionCount === 1 ? 'account' : 'accounts'}{' '}
                       connected
                     </div>
+                    <div className="mt-0.5 flex items-center gap-1.5 text-caption text-muted sm:hidden">
+                      <span className={'h-2 w-2 flex-none rounded-full ' + p.cls} />
+                      {p.text}
+                    </div>
                   </div>
                 </div>
-                <div className="tnum hidden text-[15px] sm:block">
+                <div className="tnum hidden text-body sm:block">
                   {c.publishedThisWeek} published
                 </div>
-                <div className="flex items-center gap-2 text-sm">
+                <div className="hidden items-center gap-2 text-sm sm:flex">
                   <span className={'h-2 w-2 flex-none rounded-full ' + p.cls} />
                   {p.text}
                 </div>
@@ -108,43 +108,41 @@ export function Clients() {
                     className="inline-flex h-9 items-center gap-2 rounded-full border border-hairline px-3.5 text-sm font-medium hover:border-ink"
                   >
                     <LinkSimple size={16} />
-                    Invite to connect
+                    <span className="sm:hidden">Invite</span>
+                    <span className="hidden sm:inline">Invite to connect</span>
                   </button>
                 </div>
               </div>
 
               {showing && (
                 <div className="mx-6 mb-4 rounded-md bg-surface-soft p-4">
-                  <div className="text-[13px] font-semibold text-ink">
+                  <div className="text-caption font-semibold text-ink">
                     Requesting Instagram · Facebook for {c.name}
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-3">
-                    <div className="flex min-w-[280px] flex-1 items-center gap-2.5 rounded-sm border border-hairline bg-canvas px-3.5 py-2.5">
+                    <div className="flex min-w-field flex-1 items-center gap-2.5 rounded-sm border border-hairline bg-canvas px-3.5 py-2.5">
                       <LinkSimple size={16} className="text-muted" />
                       <code className="truncate font-mono text-sm text-ink">
                         {origin}/connect/{inviteSlug(c)}
                       </code>
                     </div>
-                    <button
+                    <Button
+                      variant="outline"
                       onClick={() => {
                         void navigator.clipboard
                           ?.writeText(`${origin}/connect/${inviteSlug(c)}`)
                           .then(() => setCopied(true));
                       }}
-                      className="inline-flex h-11 items-center gap-2 rounded-sm border border-ink bg-canvas px-4 text-[15px] font-medium hover:bg-surface-soft"
                     >
                       <Copy size={16} />
                       {copied ? 'Copied' : 'Copy link'}
-                    </button>
-                    <button
-                      onClick={() => void connectNow(c)}
-                      className="inline-flex h-11 items-center gap-2 rounded-sm bg-rausch px-4 text-[15px] font-medium text-white hover:bg-rausch-active"
-                    >
+                    </Button>
+                    <Button onClick={() => void connectNow(c)}>
                       <PlugsConnected size={16} />
                       Connect now
-                    </button>
+                    </Button>
                   </div>
-                  <p className="mt-3 text-[13px] text-muted">
+                  <p className="mt-3 text-caption text-muted">
                     Send this to {c.name}. They open it, sign into the accounts they want you to
                     manage, and approve — the account connects here without their password ever
                     touching you. External self-serve grants unlock with Meta App Review (issue
