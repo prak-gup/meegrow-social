@@ -1,39 +1,28 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { CalendarView, PostStatus, PostView, ProviderView } from '@meegrow-social/contracts';
+import type { PostStatus, PostView, ProviderView } from '@meegrow-social/contracts';
 import { api } from '../lib/api';
 import { providerVisible } from '../lib/devProviders';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent } from '../components/ui/Card';
-import { Input } from '../components/ui/Input';
 import { Select } from '../components/ui/Select';
 import { PageHeader } from '../components/ui/PageHeader';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Table } from '../components/ui/Table';
 import { Article } from '../lib/icons';
+import { STATUS_VARIANT } from '../lib/postStatus';
+import { formatPublishAt } from '../lib/postDate';
+import { promptEditCaption } from '../lib/postActions';
 
-type View = 'grid' | 'list' | 'calendar';
-
-const STATUS_VARIANT: Record<PostStatus, 'neutral' | 'info' | 'success' | 'danger'> = {
-  draft: 'neutral',
-  scheduled: 'info',
-  publishing: 'info',
-  published: 'success',
-  failed: 'danger',
-  cancelled: 'neutral',
-};
+type View = 'grid' | 'list';
 
 export function Posts() {
   const [view, setView] = useState<View>('grid');
   const [posts, setPosts] = useState<PostView[]>([]);
-  const [calendar, setCalendar] = useState<CalendarView | null>(null);
   const [providers, setProviders] = useState<ProviderView[]>([]);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('');
   const [provider, setProvider] = useState('');
-  const now = new Date();
-  const [year, setYear] = useState(now.getFullYear());
-  const [month, setMonth] = useState(now.getMonth() + 1);
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -49,25 +38,9 @@ export function Posts() {
     }
   }, [status, provider]);
 
-  const loadCalendar = useCallback(async () => {
-    setLoading(true);
-    try {
-      const cal = await api.calendar(year, month, Intl.DateTimeFormat().resolvedOptions().timeZone);
-      setCalendar({
-        ...cal,
-        days: cal.days
-          .map((d) => ({ ...d, posts: d.posts.filter((p) => providerVisible(p.provider)) }))
-          .filter((d) => d.posts.length > 0),
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [year, month]);
-
   useEffect(() => {
-    if (view === 'calendar') void loadCalendar();
-    else void loadList();
-  }, [view, loadList, loadCalendar]);
+    void loadList();
+  }, [loadList]);
 
   // Platform filter options: the providers registered in this environment (fakes stay dev-only).
   useEffect(() => {
@@ -86,14 +59,7 @@ export function Posts() {
     void loadList();
   };
   const editCaption = async (post: PostView) => {
-    const caption = window.prompt('Edit caption', post.caption);
-    if (caption === null) return;
-    try {
-      await api.updatePost(post.id, { caption });
-    } catch {
-      /* ignore */
-    }
-    void loadList();
+    if (await promptEditCaption(post)) void loadList();
   };
 
   return (
@@ -104,7 +70,7 @@ export function Posts() {
         className="mb-0"
         actions={
           <div className="flex gap-1">
-            {(['grid', 'list', 'calendar'] as View[]).map((v) => (
+            {(['grid', 'list'] as View[]).map((v) => (
               <Button
                 key={v}
                 variant={view === v ? 'default' : 'outline'}
@@ -119,61 +85,32 @@ export function Posts() {
         }
       />
 
-      {view !== 'calendar' && (
-        <div className="flex flex-wrap gap-2">
-          <Select value={status} onChange={(e) => setStatus(e.target.value)} className="w-40">
-            <option value="">All statuses</option>
-            {(
-              [
-                'draft',
-                'scheduled',
-                'publishing',
-                'published',
-                'failed',
-                'cancelled',
-              ] as PostStatus[]
-            ).map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </Select>
-          <Select value={provider} onChange={(e) => setProvider(e.target.value)} className="w-40">
-            <option value="">All platforms</option>
-            {providers.map((p) => (
-              <option key={p.identifier} value={p.identifier}>
-                {p.displayName}
-              </option>
-            ))}
-          </Select>
-          <Button variant="outline" size="sm" onClick={() => void loadList()}>
-            Apply
-          </Button>
-        </div>
-      )}
-
-      {view === 'calendar' && (
-        <div className="flex items-center gap-2">
-          <Select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="w-28">
-            {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </Select>
-          <Input
-            type="number"
-            value={year}
-            onChange={(e) => setYear(Number(e.target.value))}
-            className="w-24"
-          />
-        </div>
-      )}
+      <div className="flex flex-wrap gap-2">
+        <Select value={status} onChange={(e) => setStatus(e.target.value)} className="w-40">
+          <option value="">All statuses</option>
+          {(
+            ['draft', 'scheduled', 'publishing', 'published', 'failed', 'cancelled'] as PostStatus[]
+          ).map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </Select>
+        <Select value={provider} onChange={(e) => setProvider(e.target.value)} className="w-40">
+          <option value="">All platforms</option>
+          {providers.map((p) => (
+            <option key={p.identifier} value={p.identifier}>
+              {p.displayName}
+            </option>
+          ))}
+        </Select>
+        <Button variant="outline" size="sm" onClick={() => void loadList()}>
+          Apply
+        </Button>
+      </div>
 
       {loading ? (
         <p className="text-muted">Loading…</p>
-      ) : view === 'calendar' ? (
-        <CalendarGrid calendar={calendar} />
       ) : posts.length === 0 ? (
         <EmptyState
           title="No posts match"
@@ -214,9 +151,7 @@ function PostCard({
           <span className="text-xs text-muted">{post.provider}</span>
           <Badge variant={STATUS_VARIANT[post.status]}>{post.status}</Badge>
         </div>
-        {post.publishAt && (
-          <p className="tnum text-xs text-muted">{new Date(post.publishAt).toLocaleString()}</p>
-        )}
+        <p className="tnum text-xs text-muted">{formatPublishAt(post.publishAt)}</p>
         {post.error && <p className="text-xs text-error">{post.error}</p>}
         <div className="flex gap-2 pt-1">
           <Button variant="outline" size="sm" onClick={() => onEdit(post)}>
@@ -272,7 +207,7 @@ function PostList({
           key: 'when',
           header: 'When',
           className: 'hidden whitespace-nowrap text-muted md:table-cell',
-          cell: (p) => (p.publishAt ? new Date(p.publishAt).toLocaleString() : '—'),
+          cell: (p) => formatPublishAt(p.publishAt),
         },
       ]}
       rowActions={(p) => (
@@ -286,31 +221,5 @@ function PostList({
         </>
       )}
     />
-  );
-}
-
-function CalendarGrid({ calendar }: { calendar: CalendarView | null }) {
-  if (!calendar || calendar.days.length === 0) {
-    return <p className="text-muted">No posts scheduled this month.</p>;
-  }
-  return (
-    <div className="space-y-2">
-      {calendar.days.map((day) => (
-        <Card key={day.date}>
-          <CardContent className="p-3">
-            <div className="mb-1 text-xs font-medium text-muted">{day.date}</div>
-            <div className="space-y-1">
-              {day.posts.map((p) => (
-                <div key={p.id} className="flex items-center gap-2 text-sm">
-                  <Badge variant={STATUS_VARIANT[p.status]}>{p.status}</Badge>
-                  <span className="flex-1 truncate">{p.caption || '(no caption)'}</span>
-                  <span className="text-xs text-muted">{p.provider}</span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
   );
 }
