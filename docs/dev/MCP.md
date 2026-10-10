@@ -82,7 +82,7 @@ not exist.
 
 ## 4. Tools
 
-**Read** changes nothing. **Write** changes data in the workspace. **Publish** can put content on a
+22 tools. **Read** changes nothing. **Write** changes data in the workspace. **Publish** can put content on a
 real social account.
 
 | Tool                      | What it does                                                                                          | Effect  |
