@@ -20,11 +20,15 @@ import { buildServer } from './server.js';
  */
 
 let app: FastifyInstance;
+let baseUrl: string;
 
 beforeAll(async () => {
   process.env.DATABASE_URL ??= 'postgres://mgs:mgs@localhost:5433/meegrow_social';
   process.env.TOKEN_ENCRYPTION_KEY ??= 'integration-test-key';
   app = await buildServer();
+  // A real socket, not `app.inject`: the MCP transport hijacks the raw response and later closes the
+  // underlying socket, which light-my-request's fake socket cannot do.
+  baseUrl = await app.listen({ port: 0, host: '127.0.0.1' });
 });
 beforeEach(async () => {
   await resetDb();
@@ -40,21 +44,27 @@ interface Outcome {
   body: unknown;
 }
 
-async function rpc(secret: string, method: string, params?: unknown): Promise<unknown> {
-  const res = await app.inject({
+/** POST a JSON-RPC message to the test server's own `/mcp`, over a real socket. */
+function post(headers: Record<string, string>, method: string, params?: unknown) {
+  // eslint-disable-next-line no-restricted-globals -- the test is the HTTP client of the server under test
+  return fetch(`${baseUrl}/mcp`, {
     method: 'POST',
-    url: '/mcp',
     headers: {
-      authorization: `Bearer ${secret}`,
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',
+      ...headers,
     },
-    payload: { jsonrpc: '2.0', id: 1, method, params },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   });
-  expect(res.statusCode).toBe(200);
+}
+
+async function rpc(secret: string, method: string, params?: unknown): Promise<unknown> {
+  const res = await post({ authorization: `Bearer ${secret}` }, method, params);
+  expect(res.status).toBe(200);
+  const body = await res.text();
   // Stateless streamable HTTP answers a POST with a one-message SSE stream.
-  const data = res.body.split('\n').find((line) => line.startsWith('data: '));
-  if (!data) throw new Error(`no SSE data line in: ${res.body}`);
+  const data = body.split('\n').find((line) => line.startsWith('data: '));
+  if (!data) throw new Error(`no SSE data line in: ${body}`);
   return (JSON.parse(data.slice('data: '.length)) as { result: unknown }).result;
 }
 
@@ -96,13 +106,8 @@ async function twoTenants() {
 
 describe('/mcp transport', () => {
   it('rejects a call with no API key', async () => {
-    const res = await app.inject({
-      method: 'POST',
-      url: '/mcp',
-      headers: { accept: 'application/json, text/event-stream' },
-      payload: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
-    });
-    expect(res.statusCode).toBe(401);
+    const res = await post({}, 'tools/list');
+    expect(res.status).toBe(401);
   });
 
   it('lists the tools without an initialize handshake, and none of them manages api keys', async () => {
