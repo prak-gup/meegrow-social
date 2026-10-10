@@ -10,6 +10,10 @@ social.meegrowlabs.com {
 	}
 	handle {
 		root * /opt/meegrow-social/web-dist
+		# index.html is served for every SPA route and must be revalidated, or browsers keep the
+		# previous build per-route after a deploy. Hashed files under /assets/ are left alone.
+		@html not path /assets/*
+		header @html Cache-Control "no-cache"
 		try_files {path} /index.html
 		file_server
 	}
