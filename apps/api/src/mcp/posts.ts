@@ -268,9 +268,10 @@ export function registerPostTools(server: McpServer, ctx: AuthContext): void {
     'delete_post',
     {
       description:
-        'Same as cancel_post, under the name agents look for. There is no hard delete: the post ' +
-        'is marked `cancelled`, IRREVERSIBLY, and its record is kept. Does not remove a post ' +
-        'from the social platform once it is published.',
+        'CANCELS a draft or scheduled post; it does NOT hard-delete it. The post is marked ' +
+        '`cancelled`, IRREVERSIBLY, and its record is kept. It removes nothing from the social ' +
+        'network: a publishing, published or failed post fails with invalid_state and stays ' +
+        'where it is. Identical to cancel_post.',
       inputSchema: { postId },
       annotations: { ...WRITE, destructiveHint: true },
     },

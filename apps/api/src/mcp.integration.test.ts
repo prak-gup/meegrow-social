@@ -133,6 +133,29 @@ describe('workspace isolation over /mcp', () => {
     ).body as { days: Array<{ posts: Array<{ id: string }> }> };
     expect(calendar.days.flatMap((d) => d.posts.map((p) => p.id))).toEqual([a.post.id]);
 
+    const [mediaA] = await db()
+      .insert(schema.media)
+      .values({ workspaceId: a.ws, kind: 'image', url: 'https://cdn.example/a.jpg' })
+      .returning();
+    const [mediaB] = await db()
+      .insert(schema.media)
+      .values({ workspaceId: b.ws, kind: 'image', url: 'https://cdn.example/b.jpg' })
+      .returning();
+    const media = (await call(a.key, 'list_media')).body as Array<{ id: string }>;
+    expect(media.map((m) => m.id)).toEqual([mediaA!.id]);
+    expect(await call(a.key, 'get_media', { mediaId: mediaB!.id })).toMatchObject({
+      isError: true,
+      body: { error: 'not_found' },
+    });
+
+    // The key decides the workspace; an id in the arguments is ignored.
+    expect((await call(a.key, 'get_workspace', { workspaceId: b.ws })).body).toMatchObject({
+      id: a.ws,
+      name: 'Tenant A',
+    });
+    const workspaces = (await call(a.key, 'list_workspaces')).body as Array<{ id: string }>;
+    expect(workspaces.map((w) => w.id)).toEqual([a.ws]);
+
     // Asking for B's rows by id is indistinguishable from asking for rows that do not exist.
     for (const [name, args] of [
       ['get_post', { postId: b.post.id }],

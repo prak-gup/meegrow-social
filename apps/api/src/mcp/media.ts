@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { registerMediaFromUrlInput } from '@meegrow-social/contracts';
-import { getMedia, registerMediaFromUrl } from '@meegrow-social/core';
+import { listMediaQuery, registerMediaFromUrlInput } from '@meegrow-social/contracts';
+import { getMedia, listMedia, registerMediaFromUrl } from '@meegrow-social/core';
 import type { AuthContext } from '@meegrow-social/core';
 import { notFound, READ, respond, WRITE } from './shared.js';
 
@@ -20,6 +20,19 @@ export function registerMediaTools(server: McpServer, ctx: AuthContext): void {
       annotations: { ...WRITE, openWorldHint: true },
     },
     (args) => respond(() => registerMediaFromUrl(ctx.workspaceId, args)),
+  );
+
+  server.registerTool(
+    'list_media',
+    {
+      description:
+        'List the media records of this workspace, newest first. Paginate with `limit` (max ' +
+        '100, default 50) and `offset`. Use it to find the `id` and `kind` of media registered ' +
+        'or uploaded earlier, for the media refs of create_post. Read-only.',
+      inputSchema: listMediaQuery.shape,
+      annotations: READ,
+    },
+    (args) => respond(() => listMedia(ctx.workspaceId, args)),
   );
 
   server.registerTool(

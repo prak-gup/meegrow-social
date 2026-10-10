@@ -85,27 +85,30 @@ not exist.
 **Read** changes nothing. **Write** changes data in the workspace. **Publish** can put content on a
 real social account.
 
-| Tool                      | What it does                                                                         | Effect  |
-| ------------------------- | ------------------------------------------------------------------------------------ | ------- |
-| `list_connections`        | Connected social accounts with `health` and `expiresInDays`                          | Read    |
-| `get_connection`          | One connected account by id, same fields                                             | Read    |
-| `list_posts`              | Posts, filtered by status / provider / connectionId / from / to, with limit + offset | Read    |
-| `get_post`                | One per-platform post: status, schedule, `releaseUrl` or `error`                     | Read    |
-| `get_post_group`          | Everything one `create_post` call made, with shared caption and media                | Read    |
-| `calendar`                | One month of posts bucketed by day in a given timezone                               | Read    |
-| `create_post`             | Create a post for one or more accounts; draft by default, or scheduled / now / queue | Publish |
-| `update_post`             | Edit caption / media / options / `publishAt` of a draft or scheduled post            | Publish |
-| `schedule_post`           | Schedule a draft, or move a scheduled post to a new time                             | Publish |
-| `unschedule_post`         | Return a scheduled post to draft and stop its pending publish                        | Write   |
-| `cancel_post`             | Cancel a draft or scheduled post for good (irreversible; record kept)                | Write   |
-| `delete_post`             | Alias of `cancel_post` — there is no hard delete                                     | Write   |
-| `duplicate_post`          | Copy one post into a new draft on the same account                                   | Write   |
-| `list_queues`             | Publishing queues with their weekly slots                                            | Read    |
-| `add_to_queue`            | Create a post in the next free slot of a queue                                       | Publish |
-| `register_media_from_url` | Register an image or video already hosted at a public URL                            | Write   |
-| `get_media`               | One media record: kind, URL, size, probed dimensions / duration / codec              | Read    |
-| `post_metrics`            | Collected metrics of one post: latest value per metric and the full series           | Read    |
-| `connection_followers`    | Follower-count history of one connected account, newest first                        | Read    |
+| Tool                      | What it does                                                                                          | Effect  |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- | ------- |
+| `get_workspace`           | The workspace this key belongs to: id, name, slug                                                     | Read    |
+| `list_workspaces`         | The same workspace as a one-item list; a key never sees another                                       | Read    |
+| `list_connections`        | Connected social accounts with `health` and `expiresInDays`                                           | Read    |
+| `get_connection`          | One connected account by id, same fields                                                              | Read    |
+| `list_posts`              | Posts, filtered by status / provider / connectionId / from / to, with limit + offset                  | Read    |
+| `get_post`                | One per-platform post: status, schedule, `releaseUrl` or `error`                                      | Read    |
+| `get_post_group`          | Everything one `create_post` call made, with shared caption and media                                 | Read    |
+| `calendar`                | One month of posts bucketed by day in a given timezone                                                | Read    |
+| `create_post`             | Create a post for one or more accounts; draft by default, or scheduled / now / queue                  | Publish |
+| `update_post`             | Edit caption / media / options / `publishAt` of a draft or scheduled post                             | Publish |
+| `schedule_post`           | Schedule a draft, or move a scheduled post to a new time                                              | Publish |
+| `unschedule_post`         | Return a scheduled post to draft and stop its pending publish                                         | Write   |
+| `cancel_post`             | Cancel a draft or scheduled post for good (irreversible; record kept)                                 | Write   |
+| `delete_post`             | Cancels the post, exactly like `cancel_post`. No hard delete; removes nothing from the social network | Write   |
+| `duplicate_post`          | Copy one post into a new draft on the same account                                                    | Write   |
+| `list_queues`             | Publishing queues with their weekly slots                                                             | Read    |
+| `add_to_queue`            | Create a post in the next free slot of a queue                                                        | Publish |
+| `register_media_from_url` | Register an image or video already hosted at a public URL                                             | Write   |
+| `list_media`              | Media records of the workspace, newest first, with limit + offset                                     | Read    |
+| `get_media`               | One media record: kind, URL, size, probed dimensions / duration / codec                               | Read    |
+| `post_metrics`            | Collected metrics of one post: latest value per metric and the full series                            | Read    |
+| `connection_followers`    | Follower-count history of one connected account, newest first                                         | Read    |
 
 Notes that are easy to get wrong:
 
@@ -123,6 +126,7 @@ Notes that are easy to get wrong:
 - `create_post` does not check that a `connectionId` exists in the workspace. A post created
   against an unknown id is accepted and fails when it tries to publish. Take ids from
   `list_connections`.
+- `list_media` exists only over MCP. REST has no `GET /v1/media`; that is a REST gap, not an MCP one.
 - `get_post` and `list_posts` do not return a post's media; `get_post_group` returns the group's.
 
 ## 5. REST modules with no MCP tool
@@ -132,11 +136,9 @@ Notes that are easy to get wrong:
 | `/v1/api-keys` (create, list, revoke)                                          | Deliberate — key management stays a human action                      |
 | `/v1/auth/*` (login, logout, me, session workspace, rotate)                    | Human sessions; an API key has no user                                |
 | `GET /v1/overview`, `POST /v1/workspaces`                                      | Session-only: they span every workspace a user belongs to             |
-| Workspace identity (`list_workspaces` / `get_workspace` in the spec)           | No `core` service returns the workspace of a key                      |
 | Connecting accounts: `auth-url`, `invite`, `/v1/invite/*`, `finish`, providers | OAuth needs a human in a browser                                      |
 | `DELETE /v1/connections/:id`                                                   | Not in the D1 tool list                                               |
 | `POST /v1/media` (multipart upload)                                            | Binary upload does not fit a tool call; use `register_media_from_url` |
-| Media listing (`list_media` in the spec)                                       | No `core` list service, and no REST route either                      |
 | `POST /v1/media/:id/validate`                                                  | Not in the D1 tool list                                               |
 | Queue management: create, get, update, delete                                  | Not in the D1 tool list (`list_queues` and `add_to_queue` exist)      |
 | `/v1/logs`, `/v1/logs/aggregate`                                               | Not in the D1 tool list                                               |

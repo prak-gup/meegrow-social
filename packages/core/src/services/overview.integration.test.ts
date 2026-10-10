@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { closeDb, schema, withWorkspace } from '@meegrow-social/db';
 import { createConnection, createUser, createWorkspace, resetDb } from '@meegrow-social/testing';
-import { createClientWorkspace, overviewForUser } from './overview.js';
+import { createClientWorkspace, getWorkspace, overviewForUser } from './overview.js';
 import type { Clock } from './queues.js';
 
 /**
@@ -148,5 +148,19 @@ describe('createClientWorkspace', () => {
     const b = await createClientWorkspace(uid, 'Acme');
     expect(a.slug).toBe('acme');
     expect(b.slug).toBe('acme-2');
+  });
+});
+
+describe('getWorkspace (D1)', () => {
+  it('returns id, name and slug of the workspace, and nothing else', async () => {
+    const id = await createWorkspace('Client A');
+    await createWorkspace('Client B');
+    const ws = await getWorkspace(id);
+    expect(ws).toEqual({ id, name: 'Client A', slug: expect.stringMatching(/^client-a-/) });
+  });
+
+  it('returns null for an unknown workspace id', async () => {
+    await createWorkspace();
+    expect(await getWorkspace('00000000-0000-0000-0000-000000000000')).toBeNull();
   });
 });

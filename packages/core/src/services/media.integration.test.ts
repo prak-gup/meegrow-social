@@ -4,6 +4,7 @@ import { closeDb, schema, withWorkspace } from '@meegrow-social/db';
 import { createWorkspace, resetDb, useTempDiskStorage } from '@meegrow-social/testing';
 import {
   getMedia,
+  listMedia,
   registerMediaFromUrl,
   resolveMediaRefs,
   uploadMedia,
@@ -148,5 +149,57 @@ describe('resolveMediaRefs (used by publish to fill in public urls)', () => {
         resolveMediaRefs(tx, [{ mediaId: '00000000-0000-0000-0000-000000000000', kind: 'image' }]),
       ),
     ).rejects.toThrow(/has no stored url/);
+  });
+});
+
+describe('listMedia (D1)', () => {
+  async function seed(ws: string, n: number): Promise<string[]> {
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const [row] = await withWorkspace(ws, (tx) =>
+        tx
+          .insert(schema.media)
+          .values({
+            workspaceId: ws,
+            kind: 'image',
+            url: `https://cdn.example/${i}.jpg`,
+            // Explicit, strictly increasing timestamps so "newest first" is not a timer race.
+            createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, i)),
+          })
+          .returning(),
+      );
+      ids.push(row!.id);
+    }
+    return ids;
+  }
+
+  it('returns the workspace media newest first', async () => {
+    const ws = await createWorkspace();
+    const ids = await seed(ws, 3);
+    const listed = await listMedia(ws);
+    expect(listed.map((m) => m.id)).toEqual([...ids].reverse());
+    expect(listed[0]).toMatchObject({ kind: 'image', url: 'https://cdn.example/2.jpg' });
+  });
+
+  it('paginates with limit and offset without overlap', async () => {
+    const ws = await createWorkspace();
+    const newestFirst = (await seed(ws, 5)).reverse();
+    const page1 = await listMedia(ws, { limit: 2, offset: 0 });
+    const page2 = await listMedia(ws, { limit: 2, offset: 2 });
+    const page3 = await listMedia(ws, { limit: 2, offset: 4 });
+    expect([...page1, ...page2, ...page3].map((m) => m.id)).toEqual(newestFirst);
+    expect(page3).toHaveLength(1);
+  });
+
+  it('is empty for a workspace with no media', async () => {
+    expect(await listMedia(await createWorkspace())).toEqual([]);
+  });
+
+  it("never returns another workspace's media", async () => {
+    const [a, b] = [await createWorkspace('A'), await createWorkspace('B')];
+    const [mine] = await seed(a, 1);
+    await seed(b, 2);
+    expect((await listMedia(a)).map((m) => m.id)).toEqual([mine]);
+    expect(await listMedia(b)).toHaveLength(2);
   });
 });

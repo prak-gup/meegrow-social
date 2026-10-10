@@ -19,6 +19,8 @@ vi.mock('@meegrow-social/core', async (importOriginal) => ({
   duplicatePost: vi.fn(),
   getConnectionFollowers: vi.fn(),
   getMedia: vi.fn(),
+  getWorkspace: vi.fn(),
+  listMedia: vi.fn(),
   getPost: vi.fn(),
   getPostGroup: vi.fn(),
   getPostMetrics: vi.fn(),
@@ -48,9 +50,12 @@ const EXPECTED_TOOLS = [
   'get_media',
   'get_post',
   'get_post_group',
+  'get_workspace',
   'list_connections',
+  'list_media',
   'list_posts',
   'list_queues',
+  'list_workspaces',
   'post_metrics',
   'register_media_from_url',
   'schedule_post',
@@ -65,9 +70,12 @@ const READ_ONLY_TOOLS = [
   'get_media',
   'get_post',
   'get_post_group',
+  'get_workspace',
   'list_connections',
+  'list_media',
   'list_posts',
   'list_queues',
+  'list_workspaces',
   'post_metrics',
 ];
 
@@ -137,6 +145,10 @@ describe('MCP tool surface', () => {
       expect(tool.description).toMatch(/PUBLISHES/);
       expect(tool.annotations?.openWorldHint).toBe(true);
     }
+    const del = tools.find((t) => t.name === 'delete_post')!;
+    expect(del.description).toMatch(/CANCELS/);
+    expect(del.description).toMatch(/does NOT hard-delete/);
+    expect(del.description).toMatch(/removes nothing from the social network/);
     for (const name of ['cancel_post', 'delete_post']) {
       const tool = tools.find((t) => t.name === name)!;
       expect(tool.description).toMatch(/IRREVERSIBL/);
@@ -156,6 +168,30 @@ describe('MCP tool surface', () => {
 });
 
 describe('every tool calls core with the workspace of the key', () => {
+  it('get_workspace and list_workspaces return the one workspace of the key', async () => {
+    const workspace = { id: WS, name: 'Client A', slug: 'client-a' };
+    vi.mocked(core.getWorkspace).mockResolvedValue(workspace);
+    expect((await call('get_workspace')).body).toEqual(workspace);
+    expect((await call('list_workspaces')).body).toEqual([workspace]);
+    expect(core.getWorkspace).toHaveBeenCalledTimes(2);
+    expect(core.getWorkspace).toHaveBeenCalledWith(WS);
+  });
+
+  it('the workspace tools ignore a workspace id smuggled into the arguments', async () => {
+    vi.mocked(core.getWorkspace).mockResolvedValue({ id: WS, name: 'Client A', slug: 'client-a' });
+    await call('get_workspace', { workspaceId: OTHER, id: OTHER });
+    await call('list_workspaces', { workspaceId: OTHER });
+    expect(vi.mocked(core.getWorkspace).mock.calls).toEqual([[WS], [WS]]);
+  });
+
+  it('list_media passes pagination through, with the contract defaults', async () => {
+    vi.mocked(core.listMedia).mockResolvedValue([]);
+    await call('list_media');
+    expect(core.listMedia).toHaveBeenLastCalledWith(WS, { limit: 50, offset: 0 });
+    await call('list_media', { limit: 5, offset: 10 });
+    expect(core.listMedia).toHaveBeenLastCalledWith(WS, { limit: 5, offset: 10 });
+  });
+
   it('list_connections', async () => {
     vi.mocked(core.listConnections).mockResolvedValue([]);
     expect((await call('list_connections')).body).toEqual([]);
@@ -428,6 +464,15 @@ describe('failures come back as tool errors, not thrown JSON-RPC errors', () => 
     // The existence check is what stops these two reading another workspace's series by id.
     expect(core.getPostMetrics).not.toHaveBeenCalled();
     expect(core.getConnectionFollowers).not.toHaveBeenCalled();
+  });
+
+  it('get_workspace is not_found if the workspace row is gone', async () => {
+    vi.mocked(core.getWorkspace).mockResolvedValue(null);
+    expect(await call('get_workspace')).toMatchObject({
+      isError: true,
+      body: { error: 'not_found' },
+    });
+    expect((await call('list_workspaces')).body).toEqual([]);
   });
 
   it('invalid state: editing or cancelling a published post (REST 409)', async () => {

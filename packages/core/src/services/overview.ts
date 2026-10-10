@@ -164,6 +164,27 @@ export async function overviewForUser(
 }
 
 /**
+ * The workspace an API key is bound to (D1 `get_workspace` / `list_workspaces`). A key has no user,
+ * so `overviewForUser` cannot answer "where am I" for an agent. Identity fields only. Runs on the
+ * admin handle — `workspaces` is a non-tenant table, so the id predicate is the only scoping:
+ * callers must pass the authenticated context's workspace id, never one supplied by a client.
+ */
+export async function getWorkspace(
+  workspaceId: string,
+): Promise<{ id: string; name: string; slug: string } | null> {
+  const [ws] = await db()
+    .select({
+      id: schema.workspaces.id,
+      name: schema.workspaces.name,
+      slug: schema.workspaces.slug,
+    })
+    .from(schema.workspaces)
+    .where(eq(schema.workspaces.id, workspaceId))
+    .limit(1);
+  return ws ?? null;
+}
+
+/**
  * Create a new client workspace and make the caller its owner (the "Add client" action). Runs on the
  * admin handle — workspaces/memberships are non-tenant identity tables. Slug is derived and made
  * unique with a short suffix so two clients can share a display name.

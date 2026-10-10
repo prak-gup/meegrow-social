@@ -6,6 +6,7 @@ import { registerConnectionTools } from './connections.js';
 import { registerMediaTools } from './media.js';
 import { registerPostTools } from './posts.js';
 import { registerQueueTools } from './queues.js';
+import { registerWorkspaceTools } from './workspaces.js';
 
 /**
  * Builds a stateless MCP server bound to one workspace (resolved from the API key). Tools are
@@ -21,6 +22,7 @@ import { registerQueueTools } from './queues.js';
  */
 export function buildMcpServer(ctx: AuthContext): McpServer {
   const server = new McpServer({ name: 'meegrow-social', version: '0.0.0' });
+  registerWorkspaceTools(server, ctx);
   registerConnectionTools(server, ctx);
   registerPostTools(server, ctx);
   registerQueueTools(server, ctx);
