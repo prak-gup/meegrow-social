@@ -74,7 +74,7 @@ import {
   PostStateError,
   ProviderBadRequestError,
 } from '@meegrow-social/core';
-import { buildMcpServer, newStatelessTransport } from './mcp.js';
+import { buildMcpServer, newStatelessTransport } from './mcp/index.js';
 
 function appUrl(): string {
   return process.env.APP_URL ?? `http://localhost:${process.env.API_PORT ?? 8990}`;
