@@ -8,6 +8,7 @@ import type {
 } from '@meegrow-social/contracts';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { providerVisible } from '../lib/devProviders';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -180,10 +181,10 @@ export function Connections() {
     void load();
   };
 
-  // Fakes are test-only; never front them in a real environment. Show them only when NO real
-  // provider is registered (i.e. local dev), so devs can still exercise the connect flow.
-  const real = providers.filter((p) => !p.identifier.startsWith('fake'));
-  const connectable = real.length > 0 ? real : providers;
+  // Fakes are test-only. Dev builds keep them (the connect flow can be exercised without platform
+  // secrets); production builds never front them — see lib/devProviders.
+  const connectable = providers.filter((p) => providerVisible(p.identifier));
+  const visibleConns = conns.filter((c) => providerVisible(c.provider));
 
   return (
     <div className="space-y-8">
@@ -212,7 +213,7 @@ export function Connections() {
         </h2>
         {loading ? (
           <p className="text-muted">Loading…</p>
-        ) : conns.length === 0 ? (
+        ) : visibleConns.length === 0 ? (
           <EmptyState
             title="No accounts connected yet"
             description={`Connect one below, or send ${activeName} an invite link.`}
@@ -220,7 +221,7 @@ export function Connections() {
           />
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
-            {conns.map((c) => {
+            {visibleConns.map((c) => {
               const m = meta({ identifier: c.provider, displayName: c.provider });
               const h = HEALTH[c.health];
               return (

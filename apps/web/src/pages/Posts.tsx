@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { CalendarView, PostStatus, PostView } from '@meegrow-social/contracts';
+import type { CalendarView, PostStatus, PostView, ProviderView } from '@meegrow-social/contracts';
 import { api } from '../lib/api';
+import { providerVisible } from '../lib/devProviders';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent } from '../components/ui/Card';
@@ -26,6 +27,7 @@ export function Posts() {
   const [view, setView] = useState<View>('grid');
   const [posts, setPosts] = useState<PostView[]>([]);
   const [calendar, setCalendar] = useState<CalendarView | null>(null);
+  const [providers, setProviders] = useState<ProviderView[]>([]);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('');
   const [provider, setProvider] = useState('');
@@ -40,7 +42,8 @@ export function Posts() {
         status: status || undefined,
         provider: provider || undefined,
       });
-      setPosts(res.posts);
+      // Dev/fake posts stay out of every view in production (lib/devProviders).
+      setPosts(res.posts.filter((p) => providerVisible(p.provider)));
     } finally {
       setLoading(false);
     }
@@ -49,9 +52,13 @@ export function Posts() {
   const loadCalendar = useCallback(async () => {
     setLoading(true);
     try {
-      setCalendar(
-        await api.calendar(year, month, Intl.DateTimeFormat().resolvedOptions().timeZone),
-      );
+      const cal = await api.calendar(year, month, Intl.DateTimeFormat().resolvedOptions().timeZone);
+      setCalendar({
+        ...cal,
+        days: cal.days
+          .map((d) => ({ ...d, posts: d.posts.filter((p) => providerVisible(p.provider)) }))
+          .filter((d) => d.posts.length > 0),
+      });
     } finally {
       setLoading(false);
     }
@@ -61,6 +68,14 @@ export function Posts() {
     if (view === 'calendar') void loadCalendar();
     else void loadList();
   }, [view, loadList, loadCalendar]);
+
+  // Platform filter options: the providers registered in this environment (fakes stay dev-only).
+  useEffect(() => {
+    void api
+      .listProviders()
+      .then((res) => setProviders(res.providers.filter((p) => providerVisible(p.identifier))))
+      .catch(() => setProviders([]));
+  }, []);
 
   const cancel = async (id: string) => {
     try {
@@ -123,12 +138,14 @@ export function Posts() {
               </option>
             ))}
           </Select>
-          <Input
-            placeholder="Provider filter (e.g. fake)"
-            value={provider}
-            onChange={(e) => setProvider(e.target.value)}
-            className="w-56"
-          />
+          <Select value={provider} onChange={(e) => setProvider(e.target.value)} className="w-40">
+            <option value="">All platforms</option>
+            {providers.map((p) => (
+              <option key={p.identifier} value={p.identifier}>
+                {p.displayName}
+              </option>
+            ))}
+          </Select>
           <Button variant="outline" size="sm" onClick={() => void loadList()}>
             Apply
           </Button>
