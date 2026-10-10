@@ -71,6 +71,7 @@ export default {
         tiles: 'repeat(auto-fill, minmax(14.875rem, 1fr))',
         clients: '2fr 1fr 1fr auto',
         upcoming: '8.125rem 1fr auto',
+        composer: 'minmax(0, 3fr) minmax(0, 2fr)',
       },
       borderRadius: {
         xs: '4px',
