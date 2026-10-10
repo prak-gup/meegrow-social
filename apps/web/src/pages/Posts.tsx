@@ -42,7 +42,8 @@ export function Posts() {
         status: status || undefined,
         provider: provider || undefined,
       });
-      setPosts(res.posts);
+      // Dev/fake posts stay out of every view in production (lib/devProviders).
+      setPosts(res.posts.filter((p) => providerVisible(p.provider)));
     } finally {
       setLoading(false);
     }
@@ -51,9 +52,13 @@ export function Posts() {
   const loadCalendar = useCallback(async () => {
     setLoading(true);
     try {
-      setCalendar(
-        await api.calendar(year, month, Intl.DateTimeFormat().resolvedOptions().timeZone),
-      );
+      const cal = await api.calendar(year, month, Intl.DateTimeFormat().resolvedOptions().timeZone);
+      setCalendar({
+        ...cal,
+        days: cal.days
+          .map((d) => ({ ...d, posts: d.posts.filter((p) => providerVisible(p.provider)) }))
+          .filter((d) => d.posts.length > 0),
+      });
     } finally {
       setLoading(false);
     }
