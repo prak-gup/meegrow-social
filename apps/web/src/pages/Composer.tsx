@@ -6,6 +6,7 @@ import type {
   QueueView,
 } from '@meegrow-social/contracts';
 import { api } from '../lib/api';
+import { providerVisible } from '../lib/devProviders';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
@@ -30,9 +31,11 @@ export function Composer() {
 
   useEffect(() => {
     void Promise.all([api.listConnections(), api.listQueues()]).then(([c, q]) => {
-      setConns(c.connections);
+      // Fakes stay dev-only (lib/devProviders), including for the default selection.
+      const visible = c.connections.filter((conn) => providerVisible(conn.provider));
+      setConns(visible);
       setQueues(q.queues);
-      if (c.connections[0]) setConnId(c.connections[0].id);
+      if (visible[0]) setConnId(visible[0].id);
       if (q.queues[0]) setQueueId(q.queues[0].id);
     });
   }, []);
