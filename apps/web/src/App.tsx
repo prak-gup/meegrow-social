@@ -6,6 +6,7 @@ import { Overview } from './pages/Overview';
 import { Clients } from './pages/Clients';
 import { Connections } from './pages/Connections';
 import { Composer } from './pages/Composer';
+import { Calendar } from './pages/Calendar';
 import { Posts } from './pages/Posts';
 import { Invite } from './pages/Invite';
 
@@ -29,6 +30,7 @@ export function App() {
       />
       <Route element={<Protected />}>
         <Route path="/overview" element={<Overview />} />
+        <Route path="/calendar" element={<Calendar />} />
         <Route path="/content" element={<Posts />} />
         <Route path="/clients" element={<Clients />} />
         <Route path="/connections" element={<Connections />} />

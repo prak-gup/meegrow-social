@@ -8,6 +8,7 @@ import { AddClientModal } from './AddClientModal';
 import { Logo } from './Logo';
 import {
   House,
+  CalendarBlank,
   SquaresFour,
   UsersThree,
   Plugs,
@@ -19,6 +20,7 @@ import {
 
 const TABS = [
   { to: '/overview', label: 'Overview', Icon: House },
+  { to: '/calendar', label: 'Calendar', Icon: CalendarBlank },
   { to: '/content', label: 'Content', Icon: SquaresFour },
   { to: '/clients', label: 'Clients', Icon: UsersThree },
   { to: '/connections', label: 'Connections', Icon: Plugs },
