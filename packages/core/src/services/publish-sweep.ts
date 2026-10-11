@@ -1,5 +1,5 @@
 import { db, schema, withWorkspace } from '@meegrow-social/db';
-import { and, asc, eq, isNotNull, isNull, lt, or } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, isNull, lt, ne, or } from 'drizzle-orm';
 import { PUBLISHABLE_STATUS } from './publish.js';
 import { PUBLISH_QUEUE } from './publish-queue.js';
 import { getScheduler, type PublishJobState } from './scheduler.js';
@@ -51,10 +51,12 @@ export type OverdueDecision =
  * A publish-now post has no `publishAt`; it was due when it was created.
  */
 export function decideOverduePublish(
-  post: { status: string; publishAt: Date | null; createdAt: Date },
+  post: { status: string; publishAt: Date | null; createdAt: Date; source?: string },
   job: PublishJobState,
   now: Date,
 ): OverdueDecision {
+  // An imported post is never queued and never failed by the sweep, whatever its row says.
+  if (post.source === 'imported') return { action: 'leave' };
   if (post.status !== PUBLISHABLE_STATUS) return { action: 'leave' };
   const overdueMs = now.getTime() - (post.publishAt ?? post.createdAt).getTime();
   if (overdueMs < PUBLISH_OVERDUE_GRACE_MS) return { action: 'leave' };
@@ -135,6 +137,7 @@ export async function sweepStrandedPublishesForWorkspace(
       .where(
         and(
           eq(schema.posts.status, PUBLISHABLE_STATUS),
+          ne(schema.posts.source, 'imported'),
           or(
             and(isNotNull(schema.posts.publishAt), lt(schema.posts.publishAt, cutoff)),
             and(isNull(schema.posts.publishAt), lt(schema.posts.createdAt, cutoff)),
@@ -169,6 +172,7 @@ async function resolveOverduePost(
     const [post] = await tx
       .select({
         status: schema.posts.status,
+        source: schema.posts.source,
         publishAt: schema.posts.publishAt,
         createdAt: schema.posts.createdAt,
         provider: schema.posts.provider,
@@ -212,7 +216,13 @@ async function resolveOverduePost(
     await tx
       .update(schema.posts)
       .set({ status: 'failed', error: message })
-      .where(and(eq(schema.posts.id, postId), eq(schema.posts.status, PUBLISHABLE_STATUS)));
+      .where(
+        and(
+          eq(schema.posts.id, postId),
+          eq(schema.posts.status, PUBLISHABLE_STATUS),
+          ne(schema.posts.source, 'imported'),
+        ),
+      );
     await tx.insert(schema.eventLogs).values({ ...log, status: 'failed', account, message });
     await tx.insert(schema.jobsDlq).values({
       workspaceId,

@@ -48,6 +48,24 @@ describe('toMediaViews', () => {
     expect(toMediaViews([{ mediaId: A, kind: 'video' }], new Map())[0]?.thumbnailUrl).toBeNull();
   });
 
+  it('shows an imported image by the still copied into our storage', () => {
+    const refs = [{ mediaId: A, kind: 'image' as const, url: 'https://media.test/ws/still.jpg' }];
+    expect(toMediaViews(refs, new Map())).toEqual([
+      { id: A, kind: 'image', url: 'https://media.test/ws/still.jpg', thumbnailUrl: null },
+    ]);
+  });
+
+  it('shows an imported video by its still, and never offers the still as the video', () => {
+    const refs = [
+      { mediaId: A, kind: 'video' as const, thumbnailUrl: 'https://media.test/ws/cover.jpg' },
+    ];
+    // Even if a lookup did answer for the id (it names the still's row), `url` stays empty.
+    const stored = new Map<string, string | null>([[A, 'https://media.test/ws/cover.jpg']]);
+    expect(toMediaViews(refs, stored)).toEqual([
+      { id: A, kind: 'video', url: null, thumbnailUrl: 'https://media.test/ws/cover.jpg' },
+    ]);
+  });
+
   it('carries nothing but id, kind and the two urls', () => {
     const [view] = toMediaViews(
       [{ mediaId: A, kind: 'image' }],

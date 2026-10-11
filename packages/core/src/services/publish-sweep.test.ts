@@ -53,6 +53,21 @@ describe('decideOverduePublish', () => {
     },
   );
 
+  it.each(['published', 'scheduled', 'publishing', 'failed'])(
+    'never queues or fails an imported post, even one that reads %s and long overdue',
+    (status) => {
+      const post = {
+        status,
+        source: 'imported',
+        publishAt: ago(20 * MIN),
+        createdAt: ago(60 * MIN),
+      };
+      for (const job of ['none', 'dead', 'live'] as const) {
+        expect(decideOverduePublish(post, job, NOW)).toEqual({ action: 'leave' });
+      }
+    },
+  );
+
   it('queues a post again when it has no job and is only slightly late', () => {
     expect(decideOverduePublish(scheduled(ago(PUBLISH_OVERDUE_GRACE_MS)), 'none', NOW)).toEqual({
       action: 'requeue',
