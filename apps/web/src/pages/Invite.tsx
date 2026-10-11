@@ -4,6 +4,7 @@ import type { InviteView } from '@meegrow-social/contracts';
 import { api } from '../lib/api';
 import { Logo } from '../components/Logo';
 import { PRODUCT_NAME, signInName } from '../lib/platforms';
+import { pickOnlyThisBusiness } from '../lib/connectHelp';
 import {
   FacebookLogo,
   InstagramLogo,
@@ -128,7 +129,8 @@ export function Invite() {
         <>
           <h1 className="text-xl font-semibold">This link isn’t valid</h1>
           <p className="mt-2 text-body text-muted">
-            It may have expired or already been used. Ask your agency for a fresh link.
+            It may have expired, been cancelled, or already been used to connect an account. Ask
+            your agency for a fresh link.
           </p>
         </>
       )}
@@ -142,6 +144,7 @@ export function Invite() {
           />
           <ul className="mb-6 space-y-2 text-sm text-body-ink">
             <li>• You’ll sign in with {signInName(invite)} and approve access.</li>
+            {pickOnlyThisBusiness(invite) && <li>• {pickOnlyThisBusiness(invite)}</li>}
             <li>
               • The team that manages social media for {invite.workspaceName} uses {PRODUCT_NAME} to
               publish posts and read insights for this account — nothing else.

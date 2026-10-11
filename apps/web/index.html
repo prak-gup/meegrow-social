@@ -4,9 +4,47 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Meegrow Social</title>
+    <!--
+      Shell for the public invite screens (/i/*). A client arrives here straight from the platform's
+      consent screen, and until the app's script has downloaded this document is all there is — so
+      the card is drawn here, in plain HTML, and React replaces it on its first render. Same card
+      and mark as pages/Invite.tsx and the API's connect callback page; keep the three in step.
+    -->
+    <style>
+      #invite-shell{display:none;min-height:100vh;place-items:center;background:#f7f7f7;color:#222;font:16px/1.5 "Inter Variable",Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
+      .invite-route #invite-shell{display:grid}
+      #invite-shell main{box-sizing:border-box;width:calc(100% - 32px);max-width:28rem;padding:32px;background:#fff;border:1px solid #ddd;border-radius:20px;box-shadow:rgba(0,0,0,.02) 0 0 0 1px,rgba(0,0,0,.04) 0 2px 6px 0,rgba(0,0,0,.1) 0 4px 8px 0}
+      #invite-shell .logo{display:flex;align-items:center;gap:10px;margin-bottom:24px;font-size:19px;font-weight:700;letter-spacing:-.02em;color:#ff385c}
+      #invite-shell .logo b{color:#222}
+      #invite-shell p{margin:0;color:#6a6a6a}
+    </style>
+    <script>
+      if (location.pathname.indexOf('/i/') === 0) {
+        document.documentElement.className += ' invite-route';
+      }
+    </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="invite-shell">
+        <main>
+          <div class="logo">
+            <svg width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+              <rect x=".5" y=".5" width="31" height="31" rx="9" fill="#fff" stroke="#ddd" />
+              <path d="M8 21 L14 14 L18 17 L24 9" stroke="#ff385c" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+              <circle cx="24" cy="9" r="2.6" fill="#222" />
+            </svg>
+            <span>meegrow<b>·social</b></span>
+          </div>
+          <p id="invite-shell-text">Loading…</p>
+        </main>
+      </div>
+    </div>
+    <script>
+      if (location.pathname.indexOf('/i/finish/') === 0) {
+        document.getElementById('invite-shell-text').textContent = 'Finishing up…';
+      }
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

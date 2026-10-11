@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   CallbackResult,
   ConnectionHealth,
@@ -10,6 +10,8 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { providerVisible } from '../lib/devProviders';
 import { platformMeta } from '../lib/platforms';
+import { missingAccountHelp } from '../lib/connectHelp';
+import { InviteLinkRow, useInviteLinks } from '../components/InviteLinks';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -37,6 +39,47 @@ type ConnectMessage = CallbackResult | { status: 'error'; error: string };
 interface PendingPick {
   flowId: string;
   accounts: ProviderAccountView[];
+  /** The platform the popup was opened for — the callback result does not carry it. */
+  provider: ProviderView | null;
+}
+
+/** The picker came back empty: say why that happens, the fix for each cause, and offer a retry. */
+function NoAccounts({
+  provider,
+  onRetry,
+}: {
+  provider: ProviderView | null;
+  onRetry: (p: ProviderView) => void;
+}) {
+  const help = missingAccountHelp(
+    {
+      provider: provider?.identifier ?? '',
+      providerDisplayName: provider ? platformMeta(provider).label : 'platform',
+    },
+    'operator',
+  );
+  return (
+    <div className="text-sm text-body-ink">
+      <p>Nothing was connected. {help.lead}</p>
+      {help.causes.length > 0 && (
+        <ol className="mt-3 list-decimal space-y-2.5 pl-5">
+          {help.causes.map((c) => (
+            <li key={c.cause}>
+              <b className="text-ink">{c.cause}</b> {c.fix}
+            </li>
+          ))}
+        </ol>
+      )}
+      {provider && (
+        <div className="mt-4 flex justify-end">
+          <Button size="sm" onClick={() => onRetry(provider)}>
+            <ArrowClockwise size={16} />
+            Try again
+          </Button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function Connections() {
@@ -50,6 +93,10 @@ export function Connections() {
     null,
   );
   const [copied, setCopied] = useState(false);
+  const links = useInviteLinks();
+  const reloadLinks = links.reload;
+  // Which platform the open popup belongs to, for the account picker's guidance and retry.
+  const connecting = useRef<ProviderView | null>(null);
 
   const activeName =
     me?.user.memberships.find((m) => m.workspaceId === me.activeWorkspaceId)?.name ?? 'this client';
@@ -76,7 +123,11 @@ export function Connections() {
       const payload = data.payload;
       if (payload.status === 'error') setMsg(`Connect failed: ${payload.error}`);
       else if (payload.status === 'choose_account')
-        setPick({ flowId: payload.flowId, accounts: payload.accounts });
+        setPick({
+          flowId: payload.flowId,
+          accounts: payload.accounts,
+          provider: connecting.current,
+        });
       else {
         setMsg('Account connected.');
         void load();
@@ -86,10 +137,11 @@ export function Connections() {
     return () => window.removeEventListener('message', onMessage);
   }, [load]);
 
-  const connect = async (provider: string) => {
+  const connect = async (p: ProviderView) => {
     setMsg(null);
+    connecting.current = p;
     try {
-      const { url } = await api.authUrl(provider);
+      const { url } = await api.authUrl(p.identifier);
       window.open(url, '_blank', 'width=600,height=700');
       setMsg('Approve in the popup…');
     } catch (e) {
@@ -101,6 +153,7 @@ export function Connections() {
     try {
       const res = await api.createInvite(p.identifier);
       setInvite({ provider: p.identifier, label: platformMeta(p).label, url: res.url });
+      void reloadLinks();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'Could not create the invite link.');
     }
@@ -224,7 +277,7 @@ export function Connections() {
                   </div>
                 </div>
                 <div className="mt-4 flex gap-2">
-                  <Button variant="secondary" size="sm" onClick={() => void connect(p.identifier)}>
+                  <Button variant="secondary" size="sm" onClick={() => void connect(p)}>
                     Connect
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => void makeInvite(p)}>
@@ -242,6 +295,30 @@ export function Connections() {
           own account — no password shared.
         </p>
       </section>
+
+      {/* invite links that still work */}
+      {links.invites && links.invites.length > 0 && (
+        <section>
+          <h2 className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">
+            Invite links that still work
+          </h2>
+          <ul className="space-y-3 rounded-md border border-hairline bg-canvas p-5">
+            {links.invites.map((i) => (
+              <li key={i.id}>
+                <p className="mb-1 text-sm font-medium">
+                  {platformMeta({ identifier: i.provider, displayName: i.provider }).label}
+                </p>
+                <InviteLinkRow invite={i} onCancel={links.cancel} />
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-caption text-muted">
+            Anyone holding one of these can connect an account for {activeName}. A link stops
+            working once it has connected an account; cancel any you no longer need.
+          </p>
+          {links.error && <p className="mt-2 text-caption text-error">{links.error}</p>}
+        </section>
+      )}
 
       {/* invite link panel */}
       {invite && (
@@ -275,10 +352,13 @@ export function Connections() {
       {pick && (
         <Modal title="Choose an account to connect" onClose={() => setPick(null)}>
           {pick.accounts.length === 0 ? (
-            <p className="text-sm text-muted">
-              That login didn&apos;t return any manageable accounts. Grant access to at least one,
-              then try again.
-            </p>
+            <NoAccounts
+              provider={pick.provider}
+              onRetry={(p) => {
+                setPick(null);
+                void connect(p);
+              }}
+            />
           ) : (
             <ul className="space-y-2">
               {pick.accounts.map((a) => (
