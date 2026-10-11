@@ -4,6 +4,8 @@ import {
   listConnectableProviders,
   listProviders,
   providerVisible,
+  registerConfiguredProviders,
+  tryGetProvider,
 } from './registry.js';
 
 afterEach(() => vi.unstubAllEnvs());
@@ -60,5 +62,41 @@ describe('listConnectableProviders', () => {
     expect(listConnectableProviders().some((p) => isTestOnlyProvider(p.identifier))).toBe(false);
     // Still registered: a stored row naming a fake must keep resolving.
     expect(listProviders().some((p) => p.identifier === 'fake')).toBe(true);
+  });
+});
+
+/**
+ * Runs last: registration is additive, so these leave `gmb` / `youtube` in this file's registry.
+ */
+describe('registerConfiguredProviders — Google', () => {
+  it('registers neither Google provider without the shared credentials', () => {
+    vi.stubEnv('GOOGLE_CLIENT_ID', '');
+    vi.stubEnv('GOOGLE_CLIENT_SECRET', '');
+    vi.stubEnv('YOUTUBE_ENABLED', 'true');
+    registerConfiguredProviders();
+    expect(tryGetProvider('gmb')).toBeUndefined();
+    expect(tryGetProvider('youtube')).toBeUndefined();
+  });
+
+  it('the credentials alone bring up GBP but not YouTube', () => {
+    vi.stubEnv('GOOGLE_CLIENT_ID', 'id.apps.googleusercontent.com');
+    vi.stubEnv('GOOGLE_CLIENT_SECRET', 'secret');
+    vi.stubEnv('YOUTUBE_ENABLED', '');
+    registerConfiguredProviders();
+    expect(tryGetProvider('gmb')?.identifier).toBe('gmb');
+    expect(tryGetProvider('youtube')).toBeUndefined();
+  });
+
+  it('YouTube needs the exact opt-in YOUTUBE_ENABLED=true on top of them', () => {
+    vi.stubEnv('GOOGLE_CLIENT_ID', 'id.apps.googleusercontent.com');
+    vi.stubEnv('GOOGLE_CLIENT_SECRET', 'secret');
+    vi.stubEnv('YOUTUBE_ENABLED', '1');
+    registerConfiguredProviders();
+    expect(tryGetProvider('youtube')).toBeUndefined();
+
+    vi.stubEnv('YOUTUBE_ENABLED', 'true');
+    registerConfiguredProviders();
+    expect(tryGetProvider('youtube')?.identifier).toBe('youtube');
+    expect(listConnectableProviders().some((p) => p.identifier === 'youtube')).toBe(true);
   });
 });
