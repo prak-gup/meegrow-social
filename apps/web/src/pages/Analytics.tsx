@@ -414,7 +414,7 @@ export function Analytics() {
           <FormatBreakdown report={report} />
           <PlatformTable report={report} concepts={concepts} absent={absent} />
           <TopPosts
-            // A new filter set starts again from the first rows with every row collapsed.
+            // A new filter set starts again from the first rows.
             key={params.toString()}
             report={report}
             concepts={concepts}

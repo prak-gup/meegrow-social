@@ -1,10 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { MetricConcept, ReportPost } from '@meegrow-social/contracts';
-import { api } from '../../lib/api';
 import {
   CONCEPT_LABEL,
   basisText,
-  formatNumber,
   formatRate,
   postsCsv,
   rateNote,
@@ -12,14 +10,13 @@ import {
   type PostSortKey,
   type Report,
 } from '../../lib/analyticsReport';
-import { ArrowSquareOut, CaretDown, CaretRight, DownloadSimple } from '../../lib/icons';
+import { ArrowSquareOut, DownloadSimple } from '../../lib/icons';
 import { compactNumber, shortDateTime } from '../../lib/postGroups';
 import { captionSnippet, safeExternalUrl } from '../../lib/postList';
 import { platformMeta } from '../../lib/platforms';
 import { PostThumb } from '../PostThumb';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
-import { Sparkline } from '../ui/Sparkline';
 import { Table, type TableColumn, type TableSort } from '../ui/Table';
 import { NoValue, PlatformName, Section, platformLabel } from './parts';
 
@@ -156,7 +153,6 @@ export function TopPosts({
 }) {
   const [sort, setSort] = useState<TableSort>({ key: 'engagements', dir: 'desc' });
   const [shown, setShown] = useState(PAGE);
-  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const sorted = useMemo(
     () => sortPosts(report.topPosts, sort.key as PostSortKey, sort.dir),
     [report.topPosts, sort],
@@ -166,37 +162,8 @@ export function TopPosts({
   const manyClients = new Set(report.accounts.map((a) => a.workspaceId)).size > 1;
   const onSort = (key: string) =>
     setSort((prev) => ({ key, dir: prev.key === key && prev.dir === 'desc' ? 'asc' : 'desc' }));
-  const toggle = (id: string) =>
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(id)) next.add(id);
-      return next;
-    });
 
   const columns: TableColumn<ReportPost>[] = [
-    {
-      key: 'expand',
-      header: <span className="sr-only">Platform metrics</span>,
-      cell: (post) => {
-        const isOpen = open.has(post.id);
-        const Caret = isOpen ? CaretDown : CaretRight;
-        return (
-          <button
-            type="button"
-            aria-expanded={isOpen}
-            aria-label={`Platform metrics and history: ${captionSnippet(post.caption)}`}
-            // The row click already toggles; without this the button would toggle twice.
-            onClick={(e) => {
-              e.stopPropagation();
-              toggle(post.id);
-            }}
-            className="grid h-7 w-7 place-items-center rounded-sm text-muted hover:bg-surface-strong hover:text-ink"
-          >
-            <Caret size={14} weight="bold" aria-hidden="true" />
-          </button>
-        );
-      },
-    },
     {
       key: 'post',
       header: 'Post',
@@ -224,7 +191,6 @@ export function TopPosts({
                   href={url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
                   className="inline-flex max-w-full items-baseline gap-1 text-body-ink underline"
                 >
                   <span className="line-clamp-1">{text}</span>
@@ -308,8 +274,8 @@ export function TopPosts({
       note={
         report.topPosts.length > 0 && (
           <>
-            “—” is “not reported for this post”, and sorts last either way. Open a row for the
-            platform’s own metric names and their capture history. {absentNote(absent)}
+            “—” is “not reported for this post”, and sorts last either way. See “Platform metrics,
+            as collected” below for the platform’s own metric names. {absentNote(absent)}
             {report.postsOmitted > 0 &&
               ` ${report.postsOmitted.toLocaleString()} more posts with fewer engagements are not listed.`}
           </>
@@ -324,8 +290,6 @@ export function TopPosts({
         columns={columns}
         sort={sort}
         onSort={onSort}
-        onRowClick={(post) => toggle(post.id)}
-        renderExpanded={(post) => (open.has(post.id) ? <PostHistory postId={post.id} /> : null)}
         empty={{
           title: 'No posts published in this period',
           description: 'A longer period may have some.',
@@ -351,92 +315,6 @@ export function TopPosts({
         </div>
       )}
     </Section>
-  );
-}
-
-type History =
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ok'; series: Array<{ name: string; points: Array<{ at: number; value: number }> }> };
-
-/**
- * The expanded row: every metric the platform returned for the post, under the platform's own
- * name, with its capture history. One read per post, made only when its row is opened.
- */
-function PostHistory({ postId }: { postId: string }) {
-  const [load, setLoad] = useState<History>({ status: 'loading' });
-  useEffect(() => {
-    let stale = false;
-    api
-      .postMetrics(postId)
-      .then((res) => {
-        if (stale) return;
-        const byName = new Map<string, Array<{ at: number; value: number }>>();
-        for (const p of res.series) {
-          const at = new Date(p.capturedAt).getTime();
-          if (Number.isNaN(at)) continue;
-          byName.set(p.metric, [...(byName.get(p.metric) ?? []), { at, value: p.value }]);
-        }
-        setLoad({
-          status: 'ok',
-          series: [...byName]
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([name, points]) => ({ name, points: points.sort((a, b) => a.at - b.at) })),
-        });
-      })
-      .catch((e: unknown) => {
-        if (!stale) {
-          setLoad({
-            status: 'error',
-            message: e instanceof Error ? e.message : 'Please try again.',
-          });
-        }
-      });
-    return () => {
-      stale = true;
-    };
-  }, [postId]);
-
-  if (load.status === 'loading') return <p className="text-caption text-muted">Loading history…</p>;
-  if (load.status === 'error') {
-    return (
-      <p className="text-caption text-status-bad">
-        Couldn’t load the history for this post: {load.message}
-      </p>
-    );
-  }
-  if (load.series.length === 0) {
-    return <p className="text-caption text-muted">No captures for this post yet.</p>;
-  }
-  return (
-    <ul className="grid gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-4">
-      {load.series.map(({ name, points }) => {
-        const first = points[0]!;
-        const latest = points[points.length - 1]!;
-        return (
-          <li key={name} className="min-w-0">
-            <div className="flex items-baseline justify-between gap-2">
-              <code className="truncate text-caption font-semibold text-muted" title={name}>
-                {name}
-              </code>
-              <span className="tnum text-sm font-semibold text-ink">
-                {formatNumber(latest.value)}
-              </span>
-            </div>
-            <Sparkline
-              points={points}
-              label={`${name}: ${formatNumber(first.value)} at first capture, ${formatNumber(latest.value)} at the latest`}
-            />
-            <p className="tnum text-micro text-muted">
-              {points.length.toLocaleString()} {points.length === 1 ? 'capture' : 'captures'}, last{' '}
-              <time dateTime={new Date(latest.at).toISOString()}>
-                {new Date(latest.at).toLocaleString()}
-              </time>
-            </p>
-          </li>
-        );
-      })}
-    </ul>
   );
 }
 
