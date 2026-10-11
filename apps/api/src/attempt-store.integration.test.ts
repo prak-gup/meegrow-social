@@ -35,13 +35,15 @@ const stores: Array<[string, () => AttemptStore]> = [
 
 describe.each(stores)('AttemptStore (%s)', (_name, store) => {
   it('counts hits on a key and reports the time left in its window', async () => {
+    // One instance for the whole test: the memory factory builds a fresh store on every call.
+    const s = store();
     const key = freshKey();
-    const first = await store().hit(key, WINDOW_MS);
+    const first = await s.hit(key, WINDOW_MS);
     expect(first.count).toBe(1);
     expect(first.resetInMs).toBeGreaterThan(WINDOW_MS - 5_000);
     expect(first.resetInMs).toBeLessThanOrEqual(WINDOW_MS);
-    expect((await store().hit(key, WINDOW_MS)).count).toBe(2);
-    expect((await store().hit(key, WINDOW_MS)).count).toBe(3);
+    expect((await s.hit(key, WINDOW_MS)).count).toBe(2);
+    expect((await s.hit(key, WINDOW_MS)).count).toBe(3);
   });
 
   it('keeps separate keys apart', async () => {
