@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import type { CalendarDay, PostView } from '@meegrow-social/contracts';
 import { api } from '../lib/api';
 import { providerVisible } from '../lib/devProviders';
@@ -457,6 +457,13 @@ export function Calendar() {
     };
   }, [year, month, attempt]);
 
+  // The composer panel sits over this page without unmounting it; when it closes after creating a
+  // post it says so in router state, and the month is read again.
+  const refreshed = (useLocation().state as { refreshed?: number } | null)?.refreshed;
+  useEffect(() => {
+    if (refreshed) setAttempt((a) => a + 1);
+  }, [refreshed]);
+
   // Account names for hover titles and dialogs. Without them the entries just show the platform.
   useEffect(() => {
     void api
@@ -593,7 +600,9 @@ export function Calendar() {
           icon={CalendarBlank}
           action={
             <Button asChild>
-              <Link to="/composer">Create post</Link>
+              <Link to="/composer" state={{ background: '/calendar' }}>
+                Create post
+              </Link>
             </Button>
           }
         />

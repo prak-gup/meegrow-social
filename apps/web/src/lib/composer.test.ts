@@ -4,7 +4,16 @@ import type { ConnectionView, MediaRef, QueueView } from '@meegrow-social/contra
 import {
   CAPTION_MAX,
   MEDIA_MAX,
+  accountWarnings,
   buildCreatePostInput,
+  buildValidationInput,
+  composerBackground,
+  contractRejected,
+  groupAccounts,
+  groupSelection,
+  isDirty,
+  matchAccounts,
+  setGroupSelected,
   hasErrors,
   nextSlotError,
   nextSlotFromView,
@@ -330,5 +339,155 @@ describe('next queue slot', () => {
     );
     expect(nextSlotText({ state: 'none' })).toBe('No free slot in the next 90 days.');
     expect(nextSlotText({ state: 'error', message: 'Nope.' })).toBe('Nope.');
+  });
+});
+
+describe('account picker', () => {
+  const accounts = [
+    conn(1, 'instagram'),
+    conn(2, 'facebook'),
+    conn(3, 'instagram'),
+    conn(4, 'gmb'),
+  ];
+  const label = (p: string) => ({ instagram: 'Instagram', facebook: 'Facebook Page' })[p] ?? p;
+
+  it('groups accounts under their platform, in first-seen order', () => {
+    expect(groupAccounts(accounts).map((g) => [g.provider, g.accounts.map((a) => a.id)])).toEqual([
+      ['instagram', [id(1), id(3)]],
+      ['facebook', [id(2)]],
+      ['gmb', [id(4)]],
+    ]);
+    expect(groupAccounts([])).toEqual([]);
+  });
+
+  it('searches the account name and the platform label, every word required', () => {
+    const ids = (q: string) => matchAccounts(accounts, q, label).map((a) => a.id);
+    expect(ids('')).toHaveLength(4);
+    expect(ids('  ')).toHaveLength(4);
+    expect(ids('account 3')).toEqual([id(3)]);
+    expect(ids('INSTA')).toEqual([id(1), id(3)]);
+    expect(ids('insta 3')).toEqual([id(3)]);
+    expect(ids('page')).toEqual([id(2)]);
+    expect(ids('nothing')).toEqual([]);
+  });
+
+  it('reads a group as all, some or none selected', () => {
+    const group = [id(1), id(3)];
+    expect(groupSelection(group, [])).toBe('none');
+    expect(groupSelection(group, [id(1), id(2)])).toBe('some');
+    expect(groupSelection(group, [id(3), id(1)])).toBe('all');
+  });
+
+  it('selects or clears a whole group without touching the rest', () => {
+    expect(setGroupSelected([id(2)], [id(1), id(3)], true)).toEqual([id(2), id(1), id(3)]);
+    expect(setGroupSelected([id(2), id(1)], [id(1), id(3)], true)).toEqual([id(2), id(1), id(3)]);
+    expect(setGroupSelected([id(2), id(1), id(3)], [id(1), id(3)], false)).toEqual([id(2)]);
+  });
+
+  it('asks the dry run about every account, as a draft, in a body the contract accepts', () => {
+    const body = buildValidationInput({ caption: 'hi', media: [] }, accounts);
+    expect(body.variants.map((v) => v.connectionId)).toEqual(accounts.map((a) => a.id));
+    expect(body.schedule).toEqual({ type: 'draft' });
+    expect(createPostInput.safeParse(body).success).toBe(true);
+  });
+});
+
+describe('account warnings', () => {
+  const ok = conn(1, 'instagram');
+  const broken = { ...conn(2, 'facebook'), needsReconnect: true };
+  const stale = { ...conn(3, 'gmb'), health: 'needs_reconnect' as const };
+
+  it('flags an account that needs reconnecting, by either field', () => {
+    const warnings = accountWarnings([ok, broken, stale], []);
+    expect([...warnings.keys()]).toEqual([id(2), id(3)]);
+    expect(warnings.get(id(2))).toEqual({
+      kind: 'reconnect',
+      reason: 'Needs reconnecting: posts to it will fail.',
+    });
+  });
+
+  it("carries the dry run's own reason for an account that cannot take the post", () => {
+    const warnings = accountWarnings(
+      [ok],
+      [
+        {
+          connectionId: id(1),
+          provider: 'instagram',
+          code: 'not_publishable',
+          message: 'Instagram posts need at least one image or video',
+        },
+        { connectionId: id(1), code: 'media_rejected', message: 'a second reason' },
+      ],
+    );
+    expect(warnings.get(id(1))).toEqual({
+      kind: 'post',
+      reason: 'Instagram posts need at least one image or video',
+    });
+  });
+
+  it('drops the field path from a contract issue, and ignores issues that name no account', () => {
+    const warnings = accountWarnings(
+      [ok],
+      [
+        { code: 'invalid_request', message: 'caption: too long' },
+        {
+          connectionId: id(1),
+          code: 'invalid_request',
+          message: 'variants.0.options: "youtube" posts require options',
+        },
+      ],
+    );
+    expect([...warnings]).toEqual([
+      [id(1), { kind: 'post', reason: '"youtube" posts require options' }],
+    ]);
+  });
+
+  it('lets the reconnect warning stand over a post issue: it is the first thing to fix', () => {
+    const warnings = accountWarnings(
+      [broken],
+      [{ connectionId: id(2), code: 'not_publishable', message: 'needs media' }],
+    );
+    expect(warnings.get(id(2))?.kind).toBe('reconnect');
+  });
+
+  it('names the accounts the contract rejected, so the rest can be asked about again', () => {
+    expect(
+      contractRejected([
+        { connectionId: id(1), code: 'invalid_request', message: 'x' },
+        { connectionId: id(1), code: 'invalid_request', message: 'y' },
+        { connectionId: id(2), code: 'not_publishable', message: 'z' },
+        { code: 'invalid_request', message: 'whole request' },
+      ]),
+    ).toEqual([id(1)]);
+  });
+});
+
+describe('isDirty', () => {
+  it('is dirty once there is a caption or media, not for whitespace or a selection alone', () => {
+    expect(isDirty({ caption: '', media: [] })).toBe(false);
+    expect(isDirty({ caption: '  \n', media: [] })).toBe(false);
+    expect(isDirty({ caption: 'a', media: [] })).toBe(true);
+    expect(isDirty({ caption: '', media: [{ mediaId: id(9), kind: 'image' }] })).toBe(true);
+  });
+});
+
+describe('composerBackground', () => {
+  it('returns to the page the composer was opened from', () => {
+    expect(composerBackground({ background: '/calendar' })).toBe('/calendar');
+    expect(composerBackground({ background: '/analytics?days=7' })).toBe('/analytics?days=7');
+  });
+
+  it('falls back to Content for a direct link, junk, an outside address, or itself', () => {
+    for (const state of [
+      null,
+      undefined,
+      {},
+      { background: 42 },
+      { background: 'https://evil.test/' },
+      { background: '//evil.test/' },
+      { background: '/composer' },
+    ]) {
+      expect(composerBackground(state)).toBe('/content');
+    }
   });
 });

@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
-import type { ConnectionView, MediaRef, PostView, QueueView } from '@meegrow-social/contracts';
+import { Link, useNavigate } from 'react-router-dom';
+import type {
+  ConnectionView,
+  MediaRef,
+  PostValidationIssue,
+  PostView,
+  QueueView,
+} from '@meegrow-social/contracts';
 import { ApiError, api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
@@ -10,9 +16,13 @@ import {
   CAPTION_MAX,
   MEDIA_MAX,
   SCHEDULE_MODES,
+  accountWarnings,
   buildCreatePostInput,
+  buildValidationInput,
   busyLabel,
+  contractRejected,
   hasErrors,
+  isDirty,
   nextSlotError,
   nextSlotFromView,
   nextSlotText,
@@ -28,6 +38,7 @@ import {
   type NextSlot,
   type ScheduleMode,
 } from '../lib/composer';
+import { AccountPicker } from '../components/AccountPicker';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -35,13 +46,11 @@ import { ErrorState } from '../components/ui/ErrorState';
 import { Input } from '../components/ui/Input';
 import { Label } from '../components/ui/Label';
 import { Modal } from '../components/ui/Modal';
-import { PageHeader } from '../components/ui/PageHeader';
 import { PlatformBadge } from '../components/ui/PlatformBadge';
 import { Select } from '../components/ui/Select';
 import { Textarea } from '../components/ui/Textarea';
 import {
   CalendarBlank,
-  Check,
   CheckCircle,
   Clock,
   CloseIcon,
@@ -118,61 +127,6 @@ function FieldError({ id, children }: { id: string; children: ReactNode }) {
       <WarningCircle size={16} className="mt-0.5 flex-none" aria-hidden="true" />
       <span>{children}</span>
     </p>
-  );
-}
-
-/** An account as a compact selectable row. Selected is never colour alone: darker frame + a check. */
-function AccountRow({
-  conn,
-  selected,
-  onToggle,
-  describedBy,
-}: {
-  conn: ConnectionView;
-  selected: boolean;
-  onToggle: () => void;
-  describedBy?: string;
-}) {
-  const platform = platformMeta({ identifier: conn.provider, displayName: conn.provider });
-  return (
-    <label className="relative block">
-      <input
-        type="checkbox"
-        className="peer sr-only"
-        checked={selected}
-        onChange={onToggle}
-        aria-describedby={describedBy}
-      />
-      <span
-        className={cn(
-          'flex h-11 w-full min-w-0 cursor-pointer items-center gap-2.5 rounded-sm border bg-canvas px-2 text-left transition-colors peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ink md:h-10',
-          selected ? 'border-ink bg-surface-soft' : 'border-hairline hover:bg-surface-soft',
-        )}
-      >
-        <PlatformBadge provider={conn.provider} name={conn.displayName} size="sm" />
-        <span className="flex min-w-0 flex-1 flex-col leading-tight">
-          <span className="truncate text-sm font-medium text-ink">{conn.displayName}</span>
-          <span
-            className={cn(
-              'truncate text-micro',
-              conn.needsReconnect ? 'text-status-bad' : 'text-muted',
-            )}
-          >
-            {platform.label}
-            {conn.needsReconnect && ' · needs reconnect'}
-          </span>
-        </span>
-        <span
-          aria-hidden="true"
-          className={cn(
-            'grid h-4 w-4 flex-none place-items-center rounded-xs border',
-            selected ? 'border-ink bg-ink text-white' : 'border-hairline-strong',
-          )}
-        >
-          {selected && <Check size={10} weight="bold" />}
-        </span>
-      </span>
-    </label>
   );
 }
 
@@ -378,8 +332,23 @@ function Preview({
   );
 }
 
-export function Composer() {
+/** How long typing pauses before the accounts are re-checked against the post. */
+const VALIDATE_DELAY_MS = 600;
+
+/**
+ * Create a post, as a wide panel over the page it was opened from. The address is still
+ * `/composer` (App.tsx keeps the page beneath on screen), so it deep-links and Back closes it. It
+ * behaves as a dialog: focus moves in and is kept in, the page behind is inert, focus returns to
+ * what opened it, and Escape — like Cancel and the backdrop — asks before throwing typed work away.
+ */
+export function Composer({
+  background = '/content',
+}: {
+  /** The page the panel sits over and returns to (lib/composer `composerBackground`). */
+  background?: string;
+}) {
   const { me } = useAuth();
+  const navigate = useNavigate();
   const [conns, setConns] = useState<ConnectionView[]>([]);
   const [queues, setQueues] = useState<QueueView[]>([]);
   const [load, setLoad] = useState<{ state: 'loading' | 'ready' | 'error'; message?: string }>({
@@ -393,6 +362,7 @@ export function Composer() {
   const [at, setAt] = useState('');
   const [queueId, setQueueId] = useState('');
   const [nextSlot, setNextSlot] = useState<NextSlot | null>(null);
+  const [issues, setIssues] = useState<PostValidationIssue[]>([]);
 
   const [uploading, setUploading] = useState(0);
   const [mediaError, setMediaError] = useState<string | null>(null);
@@ -401,10 +371,13 @@ export function Composer() {
 
   const [attempted, setAttempted] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const outcomeHeading = useRef<HTMLHeadingElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const captionField = useRef<HTMLTextAreaElement>(null);
 
   const client = me?.user.memberships.find((m) => m.workspaceId === me.activeWorkspaceId);
 
@@ -431,6 +404,28 @@ export function Composer() {
     void fetchAccounts();
   }, [fetchAccounts]);
 
+  // Dialog housekeeping: the page behind does not scroll, and focus goes back to whatever opened
+  // the panel. The opener is noted once (an effect can run twice in development) and focused a
+  // tick after the panel is really gone, because the page behind is still inert while it unmounts.
+  const opener = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    opener.current ??= document.activeElement as HTMLElement | null;
+    const node = panel.current;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    node?.focus();
+    return () => {
+      document.body.style.overflow = overflow;
+      window.setTimeout(() => {
+        if (!node?.isConnected) opener.current?.focus?.();
+      }, 0);
+    };
+  }, []);
+  // The caption is where the work starts, so it takes focus once the form is there.
+  useEffect(() => {
+    if (load.state === 'ready') captionField.current?.focus();
+  }, [load.state]);
+
   // Preview of when a queued post would go out. It only informs: a failed or empty preview never
   // blocks the submit. A slow answer for a queue the operator already left must not be shown.
   useEffect(() => {
@@ -455,6 +450,39 @@ export function Composer() {
     };
   }, [mode, queueId]);
 
+  // Which accounts can take this post as written: a dry run (`POST /v1/posts/validate`) over EVERY
+  // account, so one that cannot is marked before it is picked. The rules are the server's — each
+  // provider's own — and none is restated here. The validator stops at a contract failure, so the
+  // accounts it rejected there are set aside and the rest are asked about once more. Advisory only:
+  // a failed dry run costs the warnings, never the form, and the server still decides on submit.
+  const mediaKey = media.map((m) => m.ref.mediaId).join(',');
+  useEffect(() => {
+    if (conns.length === 0) return;
+    let stale = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const draft = { caption, media: media.map((m) => m.ref) };
+        try {
+          let found = (await api.validatePost(buildValidationInput(draft, conns))).issues;
+          const rejected = new Set(contractRejected(found));
+          const rest = conns.filter((c) => !rejected.has(c.id));
+          if (rejected.size > 0 && rest.length > 0) {
+            const again = await api.validatePost(buildValidationInput(draft, rest));
+            found = [...found, ...again.issues];
+          }
+          if (!stale) setIssues(found);
+        } catch {
+          if (!stale) setIssues([]);
+        }
+      })();
+    }, VALIDATE_DELAY_MS);
+    return () => {
+      stale = true;
+      window.clearTimeout(timer);
+    };
+    // `mediaKey` stands for `media`: the refs matter, not the array's identity.
+  }, [caption, mediaKey, conns]);
+
   useEffect(() => {
     if (outcome) outcomeHeading.current?.focus();
   }, [outcome]);
@@ -469,14 +497,13 @@ export function Composer() {
   };
   const errors = validateForm(form, queues, new Date());
   const targets = selectedConnections(conns, connectionIds);
+  const warnings = accountWarnings(conns, issues);
+  const flagged = targets.filter((c) => warnings.has(c.id)).length;
   const queueName = queues.find((q) => q.id === queueId)?.name;
   const atError = errors.at && (attempted || at !== '') ? errors.at : undefined;
   const accountsError = attempted ? errors.accounts : undefined;
   const queueError = attempted ? errors.queue : undefined;
   const mediaFull = media.length + uploading >= MEDIA_MAX;
-
-  const toggleAccount = (id: string) =>
-    setConnectionIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   const addFiles = async (list: Iterable<File> | null) => {
     const files = Array.from(list ?? []);
@@ -539,6 +566,49 @@ export function Composer() {
   };
 
   const closeConfirm = useCallback(() => setConfirming(false), []);
+  const keepEditing = useCallback(() => setDiscarding(false), []);
+
+  // Leave for `to` (the page beneath by default). After a post was created the page is told to
+  // reload its list, since it stayed mounted under the panel the whole time.
+  const leave = (to: string = background) =>
+    navigate(to, outcome ? { state: { refreshed: Date.now() } } : undefined);
+  // Cancel, the close button, the backdrop and Escape all come here: typed work is never thrown
+  // away without asking, and nothing closes mid-request.
+  const requestClose = () => {
+    if (busy) return;
+    if (!outcome && isDirty(form)) setDiscarding(true);
+    else leave();
+  };
+
+  const onPanelKey = (e: React.KeyboardEvent) => {
+    // A dialog on top (publish-now, discard) handles its own keys.
+    if (confirming || discarding) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      // Stopped here: the "Discard?" dialog this may open listens for Escape on the document, and
+      // would otherwise be closed by the very key press that opened it.
+      e.stopPropagation();
+      requestClose();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    const focusables = Array.from(
+      panel.current?.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]):not([hidden]), select:not([disabled]), textarea:not([disabled])',
+      ) ?? [],
+    ).filter((el) => el.tabIndex !== -1);
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (!first || !last) return;
+    const current = document.activeElement;
+    if (e.shiftKey && (current === first || current === panel.current)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && current === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
 
   const reset = () => {
     setCaption('');
@@ -553,31 +623,26 @@ export function Composer() {
     setOutcome(null);
   };
 
-  const header = (
-    <PageHeader
-      title="Composer"
-      subtitle={
-        client
-          ? `Posting as ${client.name}. Write once, then save, schedule, or queue it.`
-          : 'Write once, then save, schedule, or queue it.'
-      }
-    />
-  );
+  const over = caption.length > CAPTION_MAX;
+  const accountsErrorId = 'accounts-error';
+  const captionErrorId = 'caption-error';
+  const atErrorId = 'at-error';
+  const queueErrorId = 'queue-error';
+  const mediaErrorId = 'media-error';
+  const queueSlotId = 'queue-slot';
+  const editing = load.state === 'ready' && conns.length > 0 && !outcome;
+  const when = scheduleSummary(mode, at, queueName, nextSlot);
 
+  let content: ReactNode;
   if (load.state === 'loading') {
-    return (
-      <div>
-        {header}
-        <p className="text-body text-muted" role="status">
-          Loading accounts…
-        </p>
-      </div>
+    content = (
+      <p className="p-5 text-body text-muted" role="status">
+        Loading accounts…
+      </p>
     );
-  }
-  if (load.state === 'error') {
-    return (
-      <div>
-        {header}
+  } else if (load.state === 'error') {
+    content = (
+      <div className="p-5">
         <ErrorState
           title="Could not load the composer"
           message={load.message}
@@ -585,11 +650,9 @@ export function Composer() {
         />
       </div>
     );
-  }
-  if (conns.length === 0) {
-    return (
-      <div>
-        {header}
+  } else if (conns.length === 0) {
+    content = (
+      <div className="p-5">
         <EmptyState
           icon={Plugs}
           title="No connected accounts"
@@ -602,73 +665,46 @@ export function Composer() {
         />
       </div>
     );
-  }
-  if (outcome) {
-    return (
-      <div>
-        {header}
-        <Card className="p-4">
-          <CheckCircle size={28} weight="fill" className="text-status-ok" aria-hidden="true" />
-          <h2
-            ref={outcomeHeading}
-            tabIndex={-1}
-            className="mt-3 text-base font-semibold text-ink focus:outline-none"
-          >
-            {outcome.message}
-          </h2>
-          {outcome.statuses && (
-            <p className="mt-1 flex items-center gap-1.5 text-body text-muted">
-              {outcome.failed && (
-                <WarningCircle size={18} className="text-status-bad" aria-hidden="true" />
-              )}
-              Status: {outcome.statuses}
-            </p>
-          )}
-          <div className="mt-5 flex flex-wrap gap-2">
-            <Button asChild variant="outline">
-              <Link to="/calendar">
-                <CalendarBlank size={18} />
-                View calendar
-              </Link>
-            </Button>
-            <Button asChild variant="outline">
-              <Link to="/content">View content</Link>
-            </Button>
-            <Button onClick={reset}>Create another</Button>
-          </div>
-        </Card>
+  } else if (outcome) {
+    content = (
+      <div className="p-5">
+        <CheckCircle size={28} weight="fill" className="text-status-ok" aria-hidden="true" />
+        <h3
+          ref={outcomeHeading}
+          tabIndex={-1}
+          className="mt-3 text-base font-semibold text-ink focus:outline-none"
+        >
+          {outcome.message}
+        </h3>
+        {outcome.statuses && (
+          <p className="mt-1 flex items-center gap-1.5 text-body text-muted">
+            {outcome.failed && (
+              <WarningCircle size={18} className="text-status-bad" aria-hidden="true" />
+            )}
+            Status: {outcome.statuses}
+          </p>
+        )}
+        <div className="mt-5 flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => leave('/calendar')}>
+            <CalendarBlank size={18} />
+            View calendar
+          </Button>
+          <Button variant="outline" onClick={() => leave('/content')}>
+            View content
+          </Button>
+          <Button variant="outline" onClick={reset}>
+            Create another
+          </Button>
+          <Button onClick={() => leave()}>Done</Button>
+        </div>
       </div>
     );
-  }
-
-  const over = caption.length > CAPTION_MAX;
-  const accountsErrorId = 'accounts-error';
-  const captionErrorId = 'caption-error';
-  const atErrorId = 'at-error';
-  const queueErrorId = 'queue-error';
-  const mediaErrorId = 'media-error';
-  const queueSlotId = 'queue-slot';
-
-  return (
-    <div>
-      {header}
-      <div className="grid gap-4 lg:grid-cols-composer lg:items-start">
-        <Card className="min-w-0">
-          <Section title="Post to" fieldset hint={`${targets.length} of ${conns.length} selected`}>
-            <div className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
-              {conns.map((c) => (
-                <AccountRow
-                  key={c.id}
-                  conn={c}
-                  selected={connectionIds.includes(c.id)}
-                  onToggle={() => toggleAccount(c.id)}
-                  describedBy={accountsError ? accountsErrorId : undefined}
-                />
-              ))}
-            </div>
-            {accountsError && <FieldError id={accountsErrorId}>{accountsError}</FieldError>}
-          </Section>
-
+  } else {
+    content = (
+      // lg: content over preview on the left, accounts down the right. xl: three columns.
+      <div className="grid lg:min-h-full lg:grid-cols-composer lg:grid-rows-head-fill xl:grid-cols-composer-wide xl:grid-rows-1">
+        {/* Content first: what is being said, then with what, then when. */}
+        <div className="min-w-0 lg:col-start-1 lg:row-start-1 lg:border-r lg:border-hairline-soft">
           <Section
             title="Caption"
             hint={
@@ -682,6 +718,7 @@ export function Composer() {
             </Label>
             <Textarea
               id="caption"
+              ref={captionField}
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
               placeholder="Write something…"
@@ -812,29 +849,98 @@ export function Composer() {
               </div>
             )}
           </Section>
-
-          <div className="space-y-3 p-4">
-            {error && (
-              <ErrorState title="Could not create the post" message={error} className="py-5" />
-            )}
-            <Button
-              className="w-full sm:w-auto"
-              disabled={busy || uploading > 0}
-              onClick={onSubmit}
-            >
-              {busy ? busyLabel(mode) : submitLabel(mode, targets.length)}
-            </Button>
-          </div>
-        </Card>
-
-        <div className="min-w-0 lg:sticky lg:top-5">
-          <Preview
-            accounts={targets}
-            caption={caption}
-            media={media}
-            when={scheduleSummary(mode, at, queueName, nextSlot)}
-          />
         </div>
+
+        <div className="min-w-0 border-t border-hairline-soft lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:border-t-0 xl:row-span-1 xl:border-r xl:border-hairline-soft">
+          <Section
+            title="Post to"
+            hint={
+              <>
+                {targets.length} of {conns.length} selected
+                {flagged > 0 && (
+                  <span className="text-status-warn"> · {flagged} with a warning</span>
+                )}
+              </>
+            }
+          >
+            <AccountPicker
+              connections={conns}
+              selectedIds={connectionIds}
+              onChange={setConnectionIds}
+              warnings={warnings}
+              describedBy={accountsError ? accountsErrorId : undefined}
+            />
+            {accountsError && <FieldError id={accountsErrorId}>{accountsError}</FieldError>}
+          </Section>
+        </div>
+
+        <div className="min-w-0 border-t border-hairline-soft p-4 lg:col-start-1 lg:row-start-2 lg:border-r lg:border-hairline-soft xl:col-start-3 xl:row-start-1 xl:border-r-0 xl:border-t-0">
+          <div className="xl:sticky xl:top-4">
+            <Preview accounts={targets} caption={caption} media={media} when={when} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-40">
+      <div className="absolute inset-0 bg-scrim/40" aria-hidden="true" onClick={requestClose} />
+      <div
+        ref={panel}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="composer-title"
+        tabIndex={-1}
+        onKeyDown={onPanelKey}
+        className="absolute inset-y-0 right-0 flex w-full max-w-sheet flex-col bg-canvas shadow-1 focus:outline-none"
+      >
+        <header className="flex flex-none items-center justify-between gap-3 border-b border-hairline px-4 py-3">
+          <div className="min-w-0">
+            <h2 id="composer-title" className="text-title font-semibold text-ink">
+              Create post
+            </h2>
+            <p className="truncate text-sm text-muted">
+              {client
+                ? `Posting as ${client.name}.`
+                : 'Write once, then save, schedule, or queue it.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={requestClose}
+            aria-label="Close composer"
+            className="-mr-1.5 grid h-11 w-11 flex-none place-items-center rounded-sm text-muted hover:bg-surface-strong hover:text-ink md:h-8 md:w-8"
+          >
+            <CloseIcon size={16} />
+          </button>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto">{content}</div>
+
+        {editing && (
+          <footer className="flex-none border-t border-hairline bg-canvas px-4 py-3">
+            {error && (
+              <p role="alert" className="mb-2 flex items-start gap-1.5 text-sm text-error">
+                <WarningCircle size={16} className="mt-0.5 flex-none" aria-hidden="true" />
+                <span>Could not create the post: {error}</span>
+              </p>
+            )}
+            <div className="flex items-center justify-end gap-2">
+              <p className="mr-auto hidden min-w-0 items-center gap-1.5 truncate text-caption text-muted sm:flex">
+                <Clock size={14} className="flex-none" aria-hidden="true" />
+                <span className="truncate">{when}</span>
+              </p>
+              <Button variant="outline" onClick={requestClose} disabled={busy}>
+                Cancel
+              </Button>
+              {/* The label says what pressing it does: Save draft / Publish now / Schedule / Add to queue. */}
+              <Button disabled={busy || uploading > 0} onClick={onSubmit}>
+                {busy ? busyLabel(mode) : submitLabel(mode, targets.length)}
+              </Button>
+            </div>
+          </footer>
+        )}
       </div>
 
       {confirming && (
@@ -866,6 +972,23 @@ export function Composer() {
               }}
             >
               {submitLabel('now', targets.length)}
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {discarding && (
+        <Modal title="Discard this post?" onClose={keepEditing}>
+          <p className="text-sm text-body-ink">
+            What you have written and attached has not been saved and will be lost. To keep it, save
+            it as a draft instead.
+          </p>
+          <div className="mt-6 flex justify-end gap-2">
+            <Button variant="ghost" onClick={keepEditing}>
+              Keep editing
+            </Button>
+            <Button variant="destructive" onClick={() => leave()}>
+              Discard
             </Button>
           </div>
         </Modal>

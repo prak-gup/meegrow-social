@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
-import { clientHue } from '../lib/clientHue';
+import { Composer } from '../pages/Composer';
 import { ClientSwitcher } from './ClientSwitcher';
 import { AddClientModal } from './AddClientModal';
 import { Logo } from './Logo';
@@ -46,11 +46,7 @@ function SidebarContent({
 }) {
   const { me, logout } = useAuth();
   const navigate = useNavigate();
-  const { pathname } = useLocation();
-  // The composer holds an unsaved draft and the keyed <main> remounts on a scope change, so the
-  // client is read-only there: switch client, then compose.
-  const scopeLocked = pathname.startsWith('/composer');
-  const active = me?.user.memberships.find((m) => m.workspaceId === me.activeWorkspaceId);
+  const { pathname, search } = useLocation();
   const displayName = me?.user.name ?? me?.user.email ?? 'Account';
   const initial = displayName.trim()[0]?.toUpperCase() ?? 'U';
 
@@ -58,27 +54,17 @@ function SidebarContent({
     <div className="flex h-full flex-col gap-3 p-3">
       <Logo className="py-1 pl-1 pr-10 md:pr-1" size={24} />
 
-      {scopeLocked ? (
-        <div className="flex h-11 w-full items-center gap-2 rounded-sm border border-hairline bg-surface-soft px-2.5 md:h-8">
-          <span
-            className="inline-block h-2.5 w-2.5 flex-none rounded-full"
-            style={{ background: active ? clientHue(active.name) : undefined }}
-          />
-          <span className="truncate text-base font-medium text-ink md:text-sm">
-            <span className="sr-only">Posting as </span>
-            {active?.name ?? 'No client'}
-          </span>
-        </div>
-      ) : (
-        <ClientSwitcher onAddClient={onAddClient} onNavigate={onNavigate} />
-      )}
+      {/* No lock needed while composing: the composer is a modal panel and this whole sidebar is
+          inert behind it, so the client cannot change under an unsaved post. */}
+      <ClientSwitcher onAddClient={onAddClient} onNavigate={onNavigate} />
 
       <Button
         variant="accent"
         className="w-full"
         onClick={() => {
           onNavigate?.();
-          navigate('/composer');
+          // The composer opens as a panel over this page and returns here when closed.
+          navigate('/composer', { state: { background: pathname + search } });
         }}
       >
         <Plus size={16} weight="bold" />
@@ -152,9 +138,18 @@ const navClass = ({ isActive }: { isActive: boolean }) =>
  * a top bar + slide-in drawer below that. Content is full width; pages own their header via
  * <PageHeader>.
  */
-export function AppLayout() {
+export function AppLayout({
+  composerOver = null,
+}: {
+  /**
+   * Set while the address is /composer: the page the composer panel sits over, which is also what
+   * `useLocation()` reports in here (App.tsx matches the routes against it).
+   */
+  composerOver?: string | null;
+}) {
   const { me } = useAuth();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
+  const composing = composerOver !== null;
   const [adding, setAdding] = useState(false);
   const [drawer, setDrawer] = useState(false);
 
@@ -211,6 +206,15 @@ export function AppLayout() {
     };
   }, [drawer]);
 
+  // The composer panel is a modal dialog: everything behind it is inert while it is open. Declared
+  // after the drawer's effect and re-run with it, so a closing drawer cannot switch this back off.
+  useEffect(() => {
+    if (!composing) return;
+    const bg = backgroundRef.current;
+    bg?.setAttribute('inert', '');
+    return () => bg?.removeAttribute('inert');
+  }, [composing, drawer]);
+
   return (
     <div className="min-h-screen bg-canvas md:pl-sidebar">
       <div ref={backgroundRef}>
@@ -234,6 +238,7 @@ export function AppLayout() {
           <Logo size={24} />
           <NavLink
             to="/composer"
+            state={{ background: pathname + search }}
             className="-mr-2 grid h-11 w-11 place-items-center rounded-sm bg-rausch text-white hover:bg-rausch-active"
             aria-label="Create post"
           >
@@ -284,6 +289,11 @@ export function AppLayout() {
             />
           </aside>
         </div>
+      )}
+
+      {/* Keyed like <main>: a change of client starts a fresh post rather than carrying one over. */}
+      {composerOver !== null && (
+        <Composer key={me?.activeWorkspaceId ?? 'none'} background={composerOver} />
       )}
 
       {adding && <AddClientModal onClose={() => setAdding(false)} />}
