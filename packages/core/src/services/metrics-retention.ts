@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, isNull, lt, notInArray, or } from 'drizzle-orm';
+import { and, eq, inArray, lt, or } from 'drizzle-orm';
 import { db, schema, withWorkspace } from '@meegrow-social/db';
 import type { ProviderIdentifier } from '@meegrow-social/contracts';
 import { YOUTUBE_DATA_RETENTION_DAYS } from '../providers/google/youtube.js';
@@ -14,10 +14,11 @@ import { YOUTUBE_DATA_RETENTION_DAYS } from '../providers/google/youtube.js';
  * registered only while its env switch is on, and rows must keep expiring after it is turned off.
  *
  * Rows are matched by where they came from (`posts.provider` / `connections.provider`), never by
- * metric name (BUILD-SPEC-V2 invariant 7). `metrics` has no foreign keys, so a row whose post or
- * connection has since been deleted can no longer be attributed to any platform; no read API can
- * reach such a row either, so past the shortest limit it is deleted too rather than kept as data
- * that might be YouTube's.
+ * metric name (BUILD-SPEC-V2 invariant 7). Only rows that can be attributed to a limited platform
+ * are deleted. `metrics` has no foreign keys, so a row whose post or connection has since been
+ * deleted cannot be attributed and is LEFT ALONE: sweeping those up would delete other platforms'
+ * history too. The YouTube case that leaves behind (rows of a removed YouTube connection, which
+ * III.E.4.g wants gone within 7 days) belongs in `deleteConnection`, not here.
  */
 export const METRIC_RETENTION_DAYS: Partial<Record<ProviderIdentifier, number>> = {
   youtube: YOUTUBE_DATA_RETENTION_DAYS,
@@ -46,8 +47,6 @@ export function metricRetentionCutoff(now: Date, retentionDays: number): Date {
 export interface MetricsPruneResult {
   /** Rows deleted because their platform's limit passed, by provider. */
   expired: Partial<Record<ProviderIdentifier, number>>;
-  /** Rows deleted because their post or connection no longer exists. */
-  orphaned: number;
 }
 
 /**
@@ -55,10 +54,9 @@ export interface MetricsPruneResult {
  * `pruneEventLogs` — `metrics` is RLS-forced tenant data. Meant for a repeatable job (apps/worker).
  */
 export async function pruneExpiredMetrics(now: Date = new Date()): Promise<MetricsPruneResult> {
-  const result: MetricsPruneResult = { expired: {}, orphaned: 0 };
+  const result: MetricsPruneResult = { expired: {} };
   const limits = Object.entries(METRIC_RETENTION_DAYS) as Array<[ProviderIdentifier, number]>;
   if (limits.length === 0) return result;
-  const shortest = Math.min(...limits.map(([, days]) => days));
 
   const workspaces = await db().select({ id: schema.workspaces.id }).from(schema.workspaces);
   for (const ws of workspaces) {
@@ -90,28 +88,6 @@ export async function pruneExpiredMetrics(now: Date = new Date()): Promise<Metri
           .returning({ id: schema.metrics.id });
         result.expired[provider] = (result.expired[provider] ?? 0) + removed.length;
       }
-
-      const postIds = tx.select({ id: schema.posts.id }).from(schema.posts);
-      const connectionIds = tx.select({ id: schema.connections.id }).from(schema.connections);
-      const orphans = await tx
-        .delete(schema.metrics)
-        .where(
-          and(
-            lt(schema.metrics.createdAt, metricRetentionCutoff(now, shortest)),
-            or(
-              // A per-post row whose post is gone.
-              and(isNotNull(schema.metrics.postId), notInArray(schema.metrics.postId, postIds)),
-              // An account-level row whose connection is gone.
-              and(
-                isNull(schema.metrics.postId),
-                isNotNull(schema.metrics.connectionId),
-                notInArray(schema.metrics.connectionId, connectionIds),
-              ),
-            ),
-          ),
-        )
-        .returning({ id: schema.metrics.id });
-      result.orphaned += orphans.length;
     });
   }
   return result;

@@ -83,7 +83,6 @@ describe('pruneExpiredMetrics', () => {
     const result = await pruneExpiredMetrics(NOW);
 
     expect(result.expired.youtube).toBe(3);
-    expect(result.orphaned).toBe(0);
     // The read APIs need no special case: they simply see fewer rows.
     expect((await getPostMetrics(ws, post)).series).toHaveLength(1);
     expect(await getConnectionFollowers(ws, conn)).toHaveLength(1);
@@ -121,7 +120,7 @@ describe('pruneExpiredMetrics', () => {
     expect(await countMetrics(ws)).toBe(1);
   });
 
-  it('deletes old rows whose connection or post is gone — they can no longer be attributed', async () => {
+  it('leaves rows whose connection or post is gone — they can no longer be attributed to a platform', async () => {
     const ws = await createWorkspace();
     const conn = await createConnection(ws, 'youtube', 'Channel');
     const post = await createPost(ws, conn, 'youtube');
@@ -135,9 +134,8 @@ describe('pruneExpiredMetrics', () => {
 
     const result = await pruneExpiredMetrics(NOW);
 
-    expect(result.orphaned).toBe(2);
-    // The recent orphan is inside every limit and is left for a later sweep.
-    expect(await countMetrics(ws)).toBe(1);
+    expect(result.expired.youtube).toBe(0);
+    expect(await countMetrics(ws)).toBe(3);
   });
 
   it('stays inside each workspace', async () => {
