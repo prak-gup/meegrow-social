@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { connectInputKind, connectionHealth, providerIdentifier, tokenModel } from './providers.js';
+import { connectionImportView } from './imports.js';
 
 export const connectionView = z.object({
   id: z.string().uuid(),
@@ -12,6 +13,8 @@ export const connectionView = z.object({
   expiresInDays: z.number().int().nullable(),
   health: connectionHealth,
   createdAt: z.coerce.date(),
+  /** Past-post import state. Optional only so a consumer holding an older payload still parses. */
+  import: connectionImportView.optional(),
 });
 export type ConnectionView = z.infer<typeof connectionView>;
 
