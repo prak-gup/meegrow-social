@@ -225,6 +225,7 @@ describe('beginAuthAttempt — scopes and defaults', () => {
     expect(AUTH_ATTEMPT_LIMITS).toEqual({
       login: { windowMs: 15 * MINUTE, perAccount: 10, perIp: 30 },
       password: { windowMs: 15 * MINUTE, perAccount: 5, perIp: 30 },
+      connect: { windowMs: 15 * MINUTE, perAccount: 10, perIp: 30 },
     });
     for (let i = 0; i < 5; i++) {
       const gate = await beginAuthAttempt('password', { ip: `10.0.0.${i}`, account: 'user-1' });

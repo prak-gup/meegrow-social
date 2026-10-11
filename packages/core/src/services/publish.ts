@@ -156,13 +156,13 @@ export async function publishPost(
         .update(schema.posts)
         .set({
           status: 'published',
-          releaseUrl: result.releaseUrl,
+          releaseUrl: result.releaseUrl ?? null,
           // For a publish-now post, publishAt records the moment it actually went out. Scheduled
           // posts keep their intended time because the calendar depends on it.
           publishAt: post.publishAt ?? new Date(),
           // The platform's own id — the analytics sweeper (#9) polls insights by it. Without this
           // it was discarded at publish time and unrecoverable except by parsing releaseUrl.
-          externalPostId: result.externalPostId,
+          externalPostId: result.externalPostId ?? null,
           error: null,
         })
         .where(eq(schema.posts.id, postId));
@@ -172,8 +172,9 @@ export async function publishPost(
         status: 'published',
         platform: post.provider,
         account: conn.displayName,
-        // A provider notice ("YouTube set this to private") rides along with the link.
-        message: result.notice ? `${result.releaseUrl} — ${result.notice}` : result.releaseUrl,
+        // A provider notice ("YouTube set this to private") rides along with the link. A platform
+        // that reports no link (PostResult) leaves the notice, or the plain fact, on its own.
+        message: [result.releaseUrl, result.notice].filter(Boolean).join(' — ') || 'Published.',
       });
       return { postId, status: 'published', releaseUrl: result.releaseUrl };
     } catch (err) {

@@ -15,6 +15,10 @@
     "./article-markdown": {
       "types": "./dist/article-markdown.d.ts",
       "default": "./dist/article-markdown.js"
+    },
+    "./platform-text": {
+      "types": "./dist/platform-text.d.ts",
+      "default": "./dist/platform-text.js"
     }
   },
   "main": "./dist/index.js",

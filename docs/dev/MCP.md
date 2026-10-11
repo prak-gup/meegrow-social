@@ -155,6 +155,37 @@ Notes that are easy to get wrong:
     WordPress: WordPress core has no analytics API.
   - Once published, an article cannot be edited or deleted from here (`update_post` and
     `cancel_post` only act before publishing, as for every platform).
+- **Bluesky, Telegram, Discord and Slack** connections (`provider: "bluesky"` / `"telegram"` /
+  `"discord"` / `"slack"`, each present only when the server runs with its own switch —
+  `BLUESKY_ENABLED`, `TELEGRAM_ENABLED`, `DISCORD_ENABLED`, `SLACK_ENABLED` `=true`) post through
+  the same tools. No tool was added for them:
+  - They take **no `options`**; passing any is rejected. `caption` is plain text and is sent as
+    plain text: Markdown, HTML and mention syntax in it are escaped, not rendered, and nobody is
+    pinged (Discord's `@everyone`, Slack's `<!channel>`). The one exception is Slack, which still
+    shows `*bold*` / `_italic_` if typed — it has no way to switch that off.
+  - Each has its own length limit, measured its own way. Run `validate_post` first; it answers
+    per account in the platform's words:
+    - `bluesky` — 300 characters counted as a reader sees them (an emoji is one), and 3000 bytes.
+      Links, `#tags` and resolvable `@handle.example` mentions are made clickable. Up to 4
+      images of 2 MB each; **no video**.
+    - `telegram` — 4096 characters, or 1024 when there is media. Up to 10 photos and videos
+      (5 MB per photo, 20 MB per video).
+    - `discord` — 2000 characters **after escaping** (each `*`, `_`, `~`, `` ` ``, `|`, `<`, `[`
+      and `\` costs one more). Up to 10 images or videos of 20 MB each.
+    - `slack` — 3000 characters after escaping (`&`, `<`, `>` and each link cost a few more).
+      Images only, shown from their public URL; **no video**.
+  - A published `slack` post has **no `releaseUrl`** — an incoming webhook reports no link — and
+    a `telegram` post into a basic group has none either. `get_post` then returns
+    `releaseUrl: null` on a post whose `status` is `published`; that is success, not a failure.
+  - `post_metrics` and `connection_followers` return data for `bluesky` only (public counts under
+    Bluesky's own names: `likeCount`, `repostCount`, `replyCount`, `quoteCount`, `bookmarkCount`;
+    account `followers`, `followsCount`, `postsCount`). The other three have no numbers to give.
+  - A post that fails with "may or may not have been published — check … before retrying" was
+    sent and never answered. **Do not `retry_post` it blindly**: look at the channel or profile
+    first, or it may go out twice.
+  - Connecting one is a human action in the dashboard (pasting an app password, a bot token or a
+    webhook address). No tool starts it and no tool accepts a credential. `import_past_posts`
+    is not available for these four.
 - `analytics_report` is the dashboard's Analytics screen as data (`GET /v1/analytics/report`), for
   the key's workspace. Give `days` (default 30, ending now) or `from` + `to`; optional `provider`,
   `connectionId`, `source` (`app` / `imported`), `timezone` (IANA, default `UTC` — weeks, days and

@@ -7,6 +7,7 @@ import type {
   QueueSlotsView,
   QueueView,
 } from '@meegrow-social/contracts';
+import { platformTextLimit } from '@meegrow-social/contracts/platform-text';
 import { formatPublishAt, parsePublishAt } from './postDate';
 import {
   ARTICLE_BODY_MAX,
@@ -97,6 +98,59 @@ export function captionRole(targets: readonly Pick<ConnectionView, 'provider'>[]
     hint: 'This text is the caption on the social accounts and the body of the WordPress article. To write them separately, create two posts.',
     max: CAPTION_MAX,
   };
+}
+
+/**
+ * Platforms where a post is a message dropped into a channel rather than a post on a profile. The
+ * preview draws them as a message, and what they cannot do (no link back, no video) is said there.
+ */
+const MESSAGE_PROVIDERS: ReadonlySet<string> = new Set(['telegram', 'discord', 'slack']);
+
+export const isMessageProvider = (provider: string): boolean => MESSAGE_PROVIDERS.has(provider);
+
+export interface PlatformCount {
+  provider: string;
+  /** The caption's length as this platform counts it, of the text as it is sent. */
+  length: number;
+  max: number;
+  over: boolean;
+}
+
+/**
+ * The caption measured the way each selected platform measures it — one entry per platform that
+ * has a rule of its own (Bluesky counts graphemes; Discord and Slack count the escaped text;
+ * Telegram allows a quarter as much beside media). The same function the providers enforce with
+ * (`platformTextLimit`), so the count shown and the limit applied cannot drift apart. Informative
+ * only: the per-account warnings (`accountWarnings`) are what say a post will be refused.
+ */
+export function platformCounts(
+  targets: readonly Pick<ConnectionView, 'provider'>[],
+  caption: string,
+  mediaCount: number,
+): PlatformCount[] {
+  const counts: PlatformCount[] = [];
+  for (const provider of new Set(targets.map((t) => t.provider))) {
+    const limit = platformTextLimit(provider, caption, mediaCount > 0);
+    if (!limit) continue;
+    counts.push({ provider, length: limit.length, max: limit.max, over: limit.length > limit.max });
+  }
+  return counts;
+}
+
+/** What a reader of the preview should know about how this platform shows the post, or null. */
+export function previewNote(provider: string): string | null {
+  switch (provider) {
+    case 'bluesky':
+      return 'Links, #tags and @handles become clickable. Bluesky counts characters as a reader sees them, so an emoji is one.';
+    case 'telegram':
+      return 'Sent as plain text: nothing you type turns into formatting. Telegram links addresses itself.';
+    case 'discord':
+      return 'Sent as plain text: Markdown characters are escaped and nobody is pinged, including by @everyone.';
+    case 'slack':
+      return 'Sent as a plain message. Slack still shows *bold* and _italic_ if you type them, and gives back no link to the message after posting.';
+    default:
+      return null;
+  }
 }
 
 /**

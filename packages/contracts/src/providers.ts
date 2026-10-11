@@ -16,6 +16,13 @@ export const providerIdentifier = z.enum([
   // A self-hosted WordPress site (blog articles, not social posts). Registered only when
   // WORDPRESS_ENABLED=true; see docs/dev/research/wordpress.md.
   'wordpress',
+  // Connected with a pasted credential, no OAuth (docs/dev/research/quick-platforms.md). Each is
+  // registered only behind its own switch: BLUESKY_ENABLED=true, TELEGRAM_ENABLED=true,
+  // DISCORD_ENABLED=true, SLACK_ENABLED=true.
+  'bluesky',
+  'telegram',
+  'discord',
+  'slack',
   'fake',
   'fake_2step',
   // Test-only (issue #12): exercise the token-health matrix + sweeper failure path.
@@ -39,7 +46,12 @@ export type ConnectionHealth = z.infer<typeof connectionHealth>;
  * What a provider needs from the person BEFORE it can send them anywhere. OAuth platforms need
  * nothing (absent); WordPress has no central login, so the site's address has to come first.
  */
-export const connectInputKind = z.enum(['site_url']);
+export const connectInputKind = z.enum([
+  'site_url',
+  // The platform issues a credential the person pastes into a form here (an app password, a bot
+  // token, a webhook address) — there is no redirect at all. `POST …/:provider/credentials`.
+  'credentials',
+]);
 export type ConnectInputKind = z.infer<typeof connectInputKind>;
 
 /**

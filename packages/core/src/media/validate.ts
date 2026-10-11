@@ -56,6 +56,35 @@ export const PLATFORM_MEDIA_SPECS: Partial<Record<ProviderIdentifier, PlatformMe
       maxBytes: 1 * GB,
     },
   },
+  // `app.bsky.embed.images`: any image type, any shape, at most 2,000,000 bytes each.
+  bluesky: {
+    image: {
+      allowedContainers: ['jpeg', 'png', 'webp', 'gif'],
+      minAspect: 0,
+      maxAspect: Number.POSITIVE_INFINITY,
+      maxBytes: 2_000_000,
+    },
+  },
+  // Telegram downloads media from our URL itself, and takes at most 5 MB for a photo sent that
+  // way. (Video by URL is capped at 20 MB; `VideoSpec` cannot say only that, so Telegram's own
+  // refusal is what reports it.)
+  telegram: {
+    image: {
+      allowedContainers: ['jpeg', 'png', 'webp'],
+      minAspect: 0,
+      maxAspect: Number.POSITIVE_INFINITY,
+      maxBytes: 5 * MB,
+    },
+  },
+  // Discord: 20 MiB per uploaded file, of any kind this app stores.
+  discord: {
+    image: {
+      allowedContainers: ['jpeg', 'png', 'gif', 'webp'],
+      minAspect: 0,
+      maxAspect: Number.POSITIVE_INFINITY,
+      maxBytes: 20 * MB,
+    },
+  },
 };
 
 function fail(reason: string): MediaValidationResult {

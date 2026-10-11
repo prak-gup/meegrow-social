@@ -118,3 +118,29 @@ describe('registerConfiguredProviders — WordPress', () => {
     expect(listConnectableProviders().some((p) => p.identifier === 'wordpress')).toBe(true);
   });
 });
+
+describe('registerConfiguredProviders — platforms connected with a pasted credential', () => {
+  it.each([
+    ['BLUESKY_ENABLED', 'bluesky'],
+    ['TELEGRAM_ENABLED', 'telegram'],
+    ['DISCORD_ENABLED', 'discord'],
+    ['SLACK_ENABLED', 'slack'],
+  ] as const)('%s must be exactly "true" for %s to be offered', (flag, identifier) => {
+    for (const value of ['', '1', 'TRUE', 'yes', 'false']) {
+      vi.stubEnv(flag, value);
+      registerConfiguredProviders();
+      expect(tryGetProvider(identifier)).toBeUndefined();
+    }
+    vi.stubEnv(flag, 'true');
+    registerConfiguredProviders();
+    const provider = tryGetProvider(identifier);
+    expect(provider?.identifier).toBe(identifier);
+    // No OAuth: connected by a form, never by a redirect, and nothing to refresh.
+    expect(provider?.connectInput).toBe('credentials');
+    expect(provider?.connectWithCredentials).toBeTypeOf('function');
+    expect(provider?.tokenModel).toBe('one-time');
+    expect(isTestOnlyProvider(identifier)).toBe(false);
+    vi.stubEnv('NODE_ENV', 'production');
+    expect(listConnectableProviders().some((p) => p.identifier === identifier)).toBe(true);
+  });
+});

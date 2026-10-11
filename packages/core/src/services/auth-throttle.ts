@@ -73,7 +73,7 @@ export class MemoryAttemptStore implements AttemptStore {
   }
 }
 
-export type AuthAttemptScope = 'login' | 'password';
+export type AuthAttemptScope = 'login' | 'password' | 'connect';
 
 export interface AttemptLimit {
   /** Length of the fixed window, opened by a key's first counted attempt. */
@@ -103,6 +103,9 @@ export interface AttemptLimit {
 export const AUTH_ATTEMPT_LIMITS: Record<AuthAttemptScope, AttemptLimit> = {
   login: { windowMs: 15 * 60 * 1000, perAccount: 10, perIp: 30 },
   password: { windowMs: 15 * 60 * 1000, perAccount: 5, perIp: 30 },
+  // Credential connects (services/credential-connect.ts): each one makes this server present a
+  // token to a platform, so it is a guess like any other. "Account" is a workspace + platform.
+  connect: { windowMs: 15 * 60 * 1000, perAccount: 10, perIp: 30 },
 };
 
 /**

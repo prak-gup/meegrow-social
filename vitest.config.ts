@@ -19,6 +19,7 @@ export default defineConfig({
       '@meegrow-social/contracts/article-markdown': src(
         './packages/contracts/src/article-markdown.ts',
       ),
+      '@meegrow-social/contracts/platform-text': src('./packages/contracts/src/platform-text.ts'),
       '@meegrow-social/contracts': src('./packages/contracts/src/index.ts'),
       '@meegrow-social/core': src('./packages/core/src/index.ts'),
       '@meegrow-social/db': src('./packages/db/src/index.ts'),

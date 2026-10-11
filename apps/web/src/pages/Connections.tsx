@@ -8,10 +8,12 @@ import type {
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { providerVisible } from '../lib/devProviders';
-import { platformMeta } from '../lib/platforms';
+import { groupProviders, platformMeta } from '../lib/platforms';
 import { missingAccountHelp } from '../lib/connectHelp';
 import { InviteLinkRow, useInviteLinks } from '../components/InviteLinks';
 import { ConnectSiteDialog } from '../components/ConnectSiteDialog';
+import { ConnectCredentialDialog } from '../components/ConnectCredentialDialog';
+import { credentialGuide, type CredentialGuide } from '../lib/credentialConnect';
 import { ImportPostsModal } from '../components/ImportPostsModal';
 import { IMPORT_POLL_MS, canImport, importMoving, importRowNote } from '../lib/postImport';
 import { connectionChip, type ChipStatus } from '../lib/statusChip';
@@ -90,6 +92,12 @@ export function Connections() {
   const [copied, setCopied] = useState(false);
   /** The provider whose connect starts with a question (a site address), and any known answer. */
   const [asking, setAsking] = useState<{ provider: ProviderView; address?: string } | null>(null);
+  /** The provider being connected with a pasted credential, and the connection if reconnecting. */
+  const [pasting, setPasting] = useState<{
+    provider: ProviderView;
+    guide: CredentialGuide;
+    reconnecting?: ConnectionView;
+  } | null>(null);
   // The connection whose "Import past posts" dialog is open.
   const [importing, setImporting] = useState<string | null>(null);
   const [q, setQ] = useState('');
@@ -153,9 +161,17 @@ export function Connections() {
     return () => window.removeEventListener('message', onMessage);
   }, [load]);
 
-  const connect = async (p: ProviderView, address?: string) => {
+  const connect = async (p: ProviderView, address?: string, reconnecting?: ConnectionView) => {
     setMsg(null);
     connecting.current = p;
+    if (p.connectInput === 'credentials') {
+      // Nothing to redirect to at all: the platform issued a credential, and it is pasted here.
+      const guide = credentialGuide(p.identifier);
+      if (guide) setPasting({ provider: p, guide, reconnecting });
+      else
+        setMsg(`${platformMeta(p).label} cannot be connected from this version of the dashboard.`);
+      return;
+    }
     if (p.connectInput === 'site_url') {
       // No login to redirect to until we know which site: ask for its address first.
       setAsking({ provider: p, address });
@@ -213,6 +229,10 @@ export function Connections() {
     })),
   ];
   const filtering = q.trim() !== '' || statusFilter !== '' || platformFilter !== '';
+  const providerGroups = groupProviders(connectable);
+  const pastedOnly = connectable
+    .filter((p) => p.connectInput === 'credentials')
+    .map((p) => platformMeta(p).label);
   const activeHue = clientHue(activeName);
 
   const goToAdd = () => {
@@ -426,7 +446,7 @@ export function Connections() {
                             {
                               label: 'Reconnect',
                               icon: <ArrowClockwise size={14} />,
-                              onSelect: () => void connect(provider, c.externalId),
+                              onSelect: () => void connect(provider, c.externalId, c),
                             },
                           ]
                         : []),
@@ -459,39 +479,51 @@ export function Connections() {
         <h2 id="add-account-h" className="mb-2 text-sm font-semibold text-ink">
           Add an account
         </h2>
-        <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-          {connectable.map((p) => {
-            const m = platformMeta(p);
-            return (
-              <li
-                key={p.identifier}
-                className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-hairline bg-canvas px-2.5 py-2"
-              >
-                <span
-                  aria-hidden="true"
-                  className={`grid h-6 w-6 flex-none place-items-center rounded-sm text-white ${m.brand}`}
-                >
-                  <m.Icon size={14} weight="fill" />
-                </span>
-                <div className="min-w-0 flex-1 leading-tight">
-                  <div className="truncate font-medium text-ink">{m.label}</div>
-                  <div className="truncate text-caption text-muted">{m.blurb}</div>
-                </div>
-                <Button variant="outline" size="sm" onClick={() => void connect(p)}>
-                  Connect
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => void makeInvite(p)}>
-                  <LinkSimple size={14} />
-                  Invite client
-                </Button>
-              </li>
-            );
-          })}
-        </ul>
+        {providerGroups.map((group) => (
+          <div key={group.id} className="mb-3 last:mb-0">
+            {providerGroups.length > 1 && (
+              <h3 className="mb-1.5 text-caption font-medium text-muted">{group.label}</h3>
+            )}
+            <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {group.providers.map((p) => {
+                const m = platformMeta(p);
+                return (
+                  <li
+                    key={p.identifier}
+                    className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-hairline bg-canvas px-2.5 py-2"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`grid h-6 w-6 flex-none place-items-center rounded-sm text-white ${m.brand}`}
+                    >
+                      <m.Icon size={14} weight="fill" />
+                    </span>
+                    <div className="min-w-0 flex-1 leading-tight">
+                      <div className="truncate font-medium text-ink">{m.label}</div>
+                      <div className="truncate text-caption text-muted">{m.blurb}</div>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => void connect(p)}>
+                      Connect
+                    </Button>
+                    {/* A pasted credential is entered here only; there is no link to send. */}
+                    {p.connectInput !== 'credentials' && (
+                      <Button variant="ghost" size="sm" onClick={() => void makeInvite(p)}>
+                        <LinkSimple size={14} />
+                        Invite client
+                      </Button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
         <p className="mt-2 text-caption text-muted">
           <b className="font-semibold text-ink">Connect</b> authorises the account yourself.{' '}
           <b className="font-semibold text-ink">Invite client</b> makes a link {activeName} opens to
           connect their own account — no password shared.
+          {pastedOnly.length > 0 &&
+            ` ${pastedOnly.join(', ')} ${pastedOnly.length === 1 ? 'connects' : 'connect'} with a token or address you paste here, so ${pastedOnly.length === 1 ? 'it has' : 'they have'} no invite link.`}
         </p>
       </section>
 
@@ -566,6 +598,26 @@ export function Connections() {
             void load();
           }}
           onClose={() => setAsking(null)}
+        />
+      )}
+
+      {/* a platform that issues a credential to paste: no window to approve in */}
+      {pasting && (
+        <ConnectCredentialDialog
+          provider={pasting.provider}
+          guide={pasting.guide}
+          clientName={activeName}
+          reconnecting={pasting.reconnecting}
+          onConnected={(result) => {
+            setPasting(null);
+            setMsg(
+              result.reconnected
+                ? `${result.displayName} reconnected.`
+                : `${result.displayName} connected.`,
+            );
+            void load();
+          }}
+          onClose={() => setPasting(null)}
         />
       )}
 
