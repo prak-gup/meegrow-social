@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { connectionHealth, providerIdentifier } from './providers.js';
+import { connectionHealth, providerIdentifier, tokenModel } from './providers.js';
 
 export const connectionView = z.object({
   id: z.string().uuid(),
@@ -14,6 +14,51 @@ export const connectionView = z.object({
   createdAt: z.coerce.date(),
 });
 export type ConnectionView = z.infer<typeof connectionView>;
+
+/**
+ * `connectionHealth` plus `expired`: the badge folds an expired token into `expiring`, but "will
+ * lapse soon" and "has lapsed" call for different actions, so the health report tells them apart.
+ */
+export const connectionHealthStatus = z.enum(['healthy', 'expiring', 'expired', 'needs_reconnect']);
+export type ConnectionHealthStatus = z.infer<typeof connectionHealthStatus>;
+
+/**
+ * Account health report (`GET /v1/connections/health`, MCP `connection_health`). Derived ONLY from
+ * what is stored — `source` says so. The platform is not called, so a token revoked on the
+ * platform's side still reads `healthy` here until a publish or a token refresh trips over it.
+ */
+export const connectionHealthView = z.object({
+  connectionId: z.string().uuid(),
+  provider: providerIdentifier,
+  displayName: z.string(),
+  status: connectionHealthStatus,
+  /** One human-readable sentence: why the account has this status. */
+  reason: z.string(),
+  /** One human-readable sentence: what to do about it. */
+  recommendedAction: z.string(),
+  needsReconnect: z.boolean(),
+  tokenModel,
+  /** True when the token sweeper can renew this token without a human. */
+  autoRefresh: z.boolean(),
+  expiresAt: z.coerce.date().nullable(),
+  expiresInDays: z.number().int().nullable(),
+  /** Last time the analytics sweeper polled this account. Null = never. */
+  lastAnalyticsAt: z.coerce.date().nullable(),
+  /**
+   * The most recently created post on this account that is currently `failed`, with its reason.
+   * Informational: a post can fail for its own content, so this never changes `status`.
+   */
+  lastFailedPost: z
+    .object({
+      postId: z.string().uuid(),
+      error: z.string().nullable(),
+      publishAt: z.coerce.date().nullable(),
+    })
+    .nullable(),
+  source: z.literal('stored'),
+  checkedAt: z.coerce.date(),
+});
+export type ConnectionHealthView = z.infer<typeof connectionHealthView>;
 
 export const providerAccount = z.object({
   externalId: z.string(),

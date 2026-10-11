@@ -3,6 +3,7 @@ import {
   EXPIRING_WINDOW_MS,
   ONE_TIME_EXPIRING_WINDOW_MS,
   computeHealth,
+  describeConnectionHealth,
   expiresInDaysFrom,
 } from './connections.js';
 
@@ -58,4 +59,89 @@ describe('expiresInDaysFrom', () => {
   it('is negative for past expiry (floors toward negative infinity)', () => {
     expect(expiresInDaysFrom(at(-1.5 * DAY))).toBe(-2);
   });
+});
+
+describe('describeConnectionHealth — status, reason and next step from stored state', () => {
+  const base = {
+    tokenModel: 'auto-refresh',
+    needsReconnect: false,
+    hasRefreshToken: true,
+  } as const;
+
+  it('needs_reconnect wins over everything, and asks for a human', () => {
+    const report = describeConnectionHealth({ ...base, needsReconnect: true, expiresAt: at(-DAY) });
+    expect(report.status).toBe('needs_reconnect');
+    expect(report.recommendedAction).toMatch(/Reconnect/);
+  });
+
+  it('healthy: no expiry, or expiry beyond the window', () => {
+    expect(describeConnectionHealth({ ...base, expiresAt: null })).toMatchObject({
+      status: 'healthy',
+      reason: 'The stored token has no expiry.',
+      recommendedAction: 'None.',
+    });
+    const far = describeConnectionHealth({ ...base, expiresAt: at(30 * DAY + 1000) });
+    expect(far.status).toBe('healthy');
+    expect(far.reason).toMatch(/another 30 days/);
+  });
+
+  it('expiring + auto-refreshable needs no action', () => {
+    const report = describeConnectionHealth({ ...base, expiresAt: at(3 * DAY + 1000) });
+    expect(report).toMatchObject({ status: 'expiring', autoRefresh: true });
+    expect(report.reason).toMatch(/expires in 3 day/);
+    expect(report.recommendedAction).toMatch(/^None/);
+  });
+
+  it('expiring + one-time token asks for a reconnect before it lapses', () => {
+    const report = describeConnectionHealth({
+      ...base,
+      tokenModel: 'one-time',
+      expiresAt: at(10 * DAY),
+    });
+    expect(report).toMatchObject({ status: 'expiring', autoRefresh: false });
+    expect(report.recommendedAction).toMatch(/Reconnect/);
+  });
+
+  it('a refreshable model with no stored refresh token cannot auto-refresh', () => {
+    const report = describeConnectionHealth({
+      ...base,
+      hasRefreshToken: false,
+      expiresAt: at(2 * DAY),
+    });
+    expect(report.autoRefresh).toBe(false);
+    expect(report.recommendedAction).toMatch(/Reconnect/);
+  });
+
+  it('expired is split out of expiring, which the badge folds together', () => {
+    const expiresAt = at(-1.5 * DAY);
+    expect(computeHealth('one-time', false, expiresAt)).toBe('expiring');
+    const report = describeConnectionHealth({ ...base, tokenModel: 'one-time', expiresAt });
+    expect(report.status).toBe('expired');
+    expect(report.reason).toMatch(/expired 2 day/);
+    expect(report.recommendedAction).toMatch(/^Reconnect/);
+  });
+
+  it('expired + auto-refreshable points at the sweeper first', () => {
+    const report = describeConnectionHealth({ ...base, expiresAt: at(-DAY) });
+    expect(report).toMatchObject({ status: 'expired', autoRefresh: true });
+    expect(report.recommendedAction).toMatch(/refreshes automatically/);
+  });
+
+  it.each(['auto-refresh', 'refresh-cron', 'one-time'] as const)(
+    '%s: never disagrees with computeHealth, except to refine expiring into expired',
+    (tokenModel) => {
+      for (const needsReconnect of [true, false]) {
+        for (const expiresAt of [null, at(-DAY), at(DAY), at(10 * DAY), at(60 * DAY)]) {
+          const { status } = describeConnectionHealth({
+            ...base,
+            tokenModel,
+            needsReconnect,
+            expiresAt,
+          });
+          const badge = computeHealth(tokenModel, needsReconnect, expiresAt);
+          expect(status === 'expired' ? 'expiring' : status).toBe(badge);
+        }
+      }
+    },
+  );
 });
