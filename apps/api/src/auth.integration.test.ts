@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { closeDb, db, schema } from '@meegrow-social/db';
+import { AUTH_ATTEMPT_LIMITS } from '@meegrow-social/core';
 import {
   createConnection,
   createMembership,
@@ -247,5 +248,106 @@ describe('human auth (sessions, invite-only)', () => {
       headers: sessionHeaders(sid), // origin = app origin
     });
     expect(res.statusCode).toBe(200);
+  });
+});
+
+/**
+ * Brute-force limits on POST /v1/auth/login. `resetDb` (beforeEach) also clears the attempt
+ * counters, so every test starts with a full budget. `inject` has no reverse proxy in front of it,
+ * so `remoteAddress` plays the client address here; how the address is taken from
+ * X-Forwarded-For behind the proxy is covered in server.test.ts.
+ */
+describe('login attempt limiting', () => {
+  const { perAccount, perIp } = AUTH_ATTEMPT_LIMITS.login;
+
+  const loginFrom = (remoteAddress: string, email: string, password: string) =>
+    app.inject({
+      method: 'POST',
+      url: '/v1/auth/login',
+      remoteAddress,
+      payload: { email, password },
+    });
+
+  async function seedUser(email = 'owner@test.local', password = 's3cret') {
+    const ws = await createWorkspace();
+    const u = await createUser(email, password);
+    await createMembership(u.id, ws, 'owner');
+  }
+
+  it('429s with Retry-After once an account has had too many wrong passwords', async () => {
+    await seedUser();
+    for (let i = 0; i < perAccount; i++) {
+      // A different address each time: this is the distributed-guessing case.
+      const res = await loginFrom(`198.51.100.${i + 1}`, 'owner@test.local', 'wrong-password');
+      expect(res.statusCode).toBe(401);
+    }
+
+    const res = await loginFrom('198.51.100.200', 'owner@test.local', 'wrong-password');
+    expect(res.statusCode).toBe(429);
+    expect(res.json()).toEqual({ error: 'too many attempts, try again later' });
+    const retryAfter = Number(res.headers['retry-after']);
+    expect(retryAfter).toBeGreaterThan(0);
+    expect(retryAfter).toBeLessThanOrEqual(15 * 60);
+    expect(extractSid(res)).toBeNull();
+
+    // Even the right password is refused until the window closes, and no session is created.
+    const right = await loginFrom('198.51.100.201', 'owner@test.local', 's3cret');
+    expect(right.statusCode).toBe(429);
+    expect(extractSid(right)).toBeNull();
+    expect(await db().select().from(schema.sessions)).toHaveLength(0);
+  });
+
+  it('one locked account locks out nobody else', async () => {
+    await seedUser('owner@test.local');
+    await seedUser('other@test.local', 'other-pass');
+    for (let i = 0; i < perAccount; i++) {
+      await loginFrom(`198.51.100.${i + 1}`, 'owner@test.local', 'wrong-password');
+    }
+    expect((await loginFrom('203.0.113.5', 'owner@test.local', 's3cret')).statusCode).toBe(429);
+    expect((await loginFrom('203.0.113.5', 'other@test.local', 'other-pass')).statusCode).toBe(200);
+  });
+
+  it('a successful login clears the count, so earlier mistakes are not held against the user', async () => {
+    await seedUser();
+    for (let i = 0; i < perAccount - 1; i++) {
+      expect((await login('owner@test.local', 'wrong-password')).statusCode).toBe(401);
+    }
+    expect((await login('owner@test.local', 's3cret')).statusCode).toBe(200);
+    // A full budget again: perAccount more mistakes are 401s, not 429s.
+    for (let i = 0; i < perAccount; i++) {
+      expect((await login('owner@test.local', 'wrong-password')).statusCode).toBe(401);
+    }
+    expect((await login('owner@test.local', 'wrong-password')).statusCode).toBe(429);
+  });
+
+  it('throttles an unknown email exactly like a real one', async () => {
+    for (let i = 0; i < perAccount; i++) {
+      const res = await loginFrom(`198.51.100.${i + 1}`, 'nobody@test.local', 'guess');
+      expect(res.statusCode).toBe(401);
+    }
+    expect((await loginFrom('198.51.100.200', 'nobody@test.local', 'guess')).statusCode).toBe(429);
+  });
+
+  it('429s one address spraying many accounts, without touching other addresses', async () => {
+    await seedUser();
+    for (let i = 0; i < perIp; i++) {
+      const res = await loginFrom('203.0.113.66', `victim${i}@test.local`, 'Summer2026!');
+      expect(res.statusCode).toBe(401);
+    }
+    expect((await loginFrom('203.0.113.66', 'owner@test.local', 's3cret')).statusCode).toBe(429);
+    expect((await loginFrom('203.0.113.67', 'owner@test.local', 's3cret')).statusCode).toBe(200);
+  });
+
+  it('a malformed body is a 400 and uses up no attempt', async () => {
+    await seedUser();
+    for (let i = 0; i < perAccount + 5; i++) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/auth/login',
+        payload: { email: 'owner@test.local' },
+      });
+      expect(res.statusCode).toBe(400);
+    }
+    expect((await login('owner@test.local', 's3cret')).statusCode).toBe(200);
   });
 });

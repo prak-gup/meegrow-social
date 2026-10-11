@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
@@ -35,7 +35,7 @@ import {
   getConnectInvite,
   calendarPosts,
   cancelPost,
-  changePassword,
+  changePasswordWithLimit,
   ConnectionNotFoundError,
   createPost,
   createQueue,
@@ -57,8 +57,9 @@ import {
   listConnections,
   overviewForUser,
   listPosts,
+  loginWithPassword,
   previewQueueSlots,
-  listProviders,
+  listConnectableProviders,
   listQueues,
   queryEventLogs,
   QueueInactiveError,
@@ -78,7 +79,6 @@ import {
   uploadMedia,
   validateMediaAgainstPlatform,
   validatePost,
-  verifyUserCredentials,
   type AuthContext,
   PostStateError,
   ProviderBadRequestError,
@@ -186,8 +186,41 @@ function logRequest(
   );
 }
 
+/**
+ * Which peers may tell us the client's address in `X-Forwarded-For` (Fastify's `trustProxy`).
+ *
+ * The API is only ever reached through a reverse proxy (Caddy → 127.0.0.1:8990 → the container),
+ * so the socket's peer is always the proxy or the Docker gateway — `req.ip` without this is the
+ * same private address for every client, which made per-IP anything impossible. The default
+ * trusts the header only when the peer is itself loopback/link-local/private, so `req.ip` becomes
+ * the right-most address a trusted hop vouches for: the real client. A caller reaching the port
+ * directly from a public address is NOT trusted, so it cannot pick its own `req.ip`.
+ *
+ * `TRUST_PROXY` overrides: `false` (use the socket peer), `true` (trust every hop — only behind a
+ * proxy that overwrites the header), or a comma-separated list of addresses/CIDRs — which is what
+ * a second proxy on a public address (a CDN in front of Caddy) needs.
+ */
+export function trustProxySetting(raw = process.env.TRUST_PROXY): boolean | string[] {
+  const value = raw?.trim();
+  if (!value) return ['loopback', 'linklocal', 'uniquelocal'];
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return value
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+/** 429 for a rate-limited password check, in the `{ error }` shape every route here uses. */
+function tooManyAttempts(reply: FastifyReply, retryAfterSeconds: number): FastifyReply {
+  return reply
+    .code(429)
+    .header('retry-after', String(retryAfterSeconds))
+    .send({ error: 'too many attempts, try again later' });
+}
+
 export async function buildServer(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
+  const app = Fastify({ logger: false, trustProxy: trustProxySetting() });
   await app.register(cors, { origin: true });
   await app.register(cookie);
   await app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES } });
@@ -249,8 +282,13 @@ export async function buildServer(): Promise<FastifyInstance> {
   app.post('/v1/auth/login', async (req, reply) => {
     const parsed = loginInput.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
-    const creds = await verifyUserCredentials(parsed.data.email, parsed.data.password);
-    if (!creds) return reply.code(401).send({ error: 'invalid credentials' });
+    // Brute-force limited in core, per client address and per submitted email.
+    const login = await loginWithPassword(parsed.data.email, parsed.data.password, req.ip);
+    if (!login.ok) {
+      if (login.reason === 'rate_limited') return tooManyAttempts(reply, login.retryAfterSeconds);
+      return reply.code(401).send({ error: 'invalid credentials' });
+    }
+    const creds = login.user;
     const session = await createSession(creds.id);
     const user = await buildUserView(creds.id);
     if (!user) return reply.code(500).send({ error: 'user not found' });
@@ -316,6 +354,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   // Change your own password. Session-only: an API key has no user, so a key-authed call is
   // refused before the body is even looked at. Signs the user out everywhere else and re-issues
   // this session's cookie. The body is never logged (the onResponse hook records route/status only).
+  // Wrong current passwords are brute-force limited in core, per client address and per user.
   app.post('/v1/auth/password', async (req, reply) => {
     const ctx = req.authContext!;
     if (!ctx.sessionId || !ctx.userId) {
@@ -323,14 +362,17 @@ export async function buildServer(): Promise<FastifyInstance> {
     }
     const parsed = changePasswordInput.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
-    const result = await changePassword(
+    const result = await changePasswordWithLimit(
       ctx.userId,
       ctx.sessionId,
       parsed.data.currentPassword,
       parsed.data.newPassword,
+      req.ip,
     );
     if (!result.ok) {
       switch (result.reason) {
+        case 'rate_limited':
+          return tooManyAttempts(reply, result.retryAfterSeconds);
         case 'invalid_current_password':
           // 422, not 401: the session is fine, and a client must not read this as "signed out".
           return reply.code(422).send({ error: 'current password is incorrect' });
@@ -459,11 +501,12 @@ export async function buildServer(): Promise<FastifyInstance> {
     return { revoked: true };
   });
 
-  // Which platforms this environment can actually connect. Registration is env-gated, so dev/CI
-  // return the fakes and production returns the real providers — the dashboard renders a button per
-  // entry rather than hardcoding one (#45).
+  // Which platforms this environment can actually connect. Real providers are registered only when
+  // their credentials are set, and core hides the test-only fakes in production, so dev/CI return
+  // the fakes and production returns the real providers — the dashboard renders a button per entry
+  // rather than hardcoding one (#45).
   app.get('/v1/providers', async () => ({
-    providers: listProviders().map((p) => ({
+    providers: listConnectableProviders().map((p) => ({
       identifier: p.identifier,
       displayName: p.displayName,
       isBetweenSteps: p.isBetweenSteps,

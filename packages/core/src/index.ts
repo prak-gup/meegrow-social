@@ -14,6 +14,7 @@ export * from './media/storage/index.js';
 export * from './services/apikeys.js';
 export * from './services/auth.js';
 export * from './services/password.js';
+export * from './services/auth-throttle.js';
 export * from './services/users.js';
 export * from './services/sessions.js';
 export * from './services/connections.js';

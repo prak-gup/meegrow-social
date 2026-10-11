@@ -42,6 +42,34 @@ export function listProviders(): SocialProvider[] {
   return [...providers.values()];
 }
 
+/**
+ * The `fake*` family (contracts/providers.ts) exists for tests and the no-secrets scaffold. The
+ * fakes are registered in every environment, production included, so that a row naming one never
+ * fails a `getProvider` lookup — which means "is it registered" cannot answer "is it real".
+ */
+export function isTestOnlyProvider(identifier: string): boolean {
+  return identifier.startsWith('fake');
+}
+
+/**
+ * May this provider — or a connection or post on it — be offered or counted? Test-only providers
+ * are hidden in production (`NODE_ENV=production`, which the deployed image sets) unless
+ * `SHOW_FAKE_PROVIDERS=true`; dev and CI keep them. The server-side twin of the dashboard's
+ * `providerVisible` (`VITE_SHOW_FAKE_PROVIDERS`). Read per call, so it follows the environment.
+ *
+ * This governs what is advertised and aggregated, never what is stored or listed: a hidden
+ * provider's connections and posts stay readable and deletable by id.
+ */
+export function providerVisible(identifier: string): boolean {
+  if (!isTestOnlyProvider(identifier)) return true;
+  return process.env.NODE_ENV !== 'production' || process.env.SHOW_FAKE_PROVIDERS === 'true';
+}
+
+/** The providers this environment offers for connecting (`GET /v1/providers`). */
+export function listConnectableProviders(): SocialProvider[] {
+  return listProviders().filter((p) => providerVisible(p.identifier));
+}
+
 // Scaffold defaults: fake providers (single-step + two-step + #12 health fixtures) are always
 // available for tests.
 registerProvider(new FakeProvider());

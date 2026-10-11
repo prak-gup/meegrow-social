@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { closeDb, schema, withWorkspace } from '@meegrow-social/db';
 import { createConnection, createUser, createWorkspace, resetDb } from '@meegrow-social/testing';
@@ -120,6 +120,75 @@ describe('overviewForUser', () => {
     const ov = await overviewForUser(uid, clock);
     expect(ov.clients[0]!.health).toBe('bad');
     expect(ov.attention.needsReconnect).toBe(1);
+  });
+});
+
+/**
+ * The live defect: a workspace with 3 real accounts read "4 accounts · 134 followers" because a
+ * connection on the test-only `fake` provider — and its follower series, dated 1970 — was counted.
+ */
+describe('overviewForUser — test-only providers', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  async function followers(wsId: string, connectionId: string, value: number, capturedAt: Date) {
+    await withWorkspace(wsId, (tx) =>
+      tx.insert(schema.metrics).values({
+        workspaceId: wsId,
+        connectionId,
+        metric: 'followers',
+        value: String(value),
+        capturedAt,
+      }),
+    );
+  }
+
+  async function seed() {
+    const { id: uid } = await createUser();
+    const ws = await createWorkspace('Acme');
+    await member(uid, ws);
+    const fb = await createConnection(ws, 'facebook', 'Acme Page', { externalId: 'fb-1' });
+    const ig = await createConnection(ws, 'instagram', 'Acme IG', { externalId: 'ig-1' });
+    const gmb = await createConnection(ws, 'gmb', 'Acme Listing', { externalId: 'gmb-1' });
+    const fake = await createConnection(ws, 'fake', 'Fake Account', { needsReconnect: true });
+    await followers(ws, fb, 20, now);
+    await followers(ws, ig, 10, now);
+    await followers(ws, gmb, 4, now);
+    await followers(ws, fake, 100, new Date(0));
+    await publishedPost(ws, fake, { status: 'failed' });
+    await publishedPost(ws, fake, {
+      status: 'scheduled',
+      publishAt: new Date(now.getTime() + 2 * HOUR),
+    });
+    return uid;
+  }
+
+  it('in production leaves the fake account out of every number', async () => {
+    const uid = await seed();
+    vi.stubEnv('NODE_ENV', 'production');
+
+    const ov = await overviewForUser(uid, clock);
+    const c = ov.clients[0]!;
+    expect(c.connectionCount).toBe(3);
+    expect(c.followers).toBe(34);
+    expect(c.failedThisWeek).toBe(0);
+    expect(c.nextPublishAt).toBeNull();
+    expect(ov.upcoming).toEqual([]);
+    expect(ov.attention).toEqual({
+      failedPublishes: 0,
+      needsReconnect: 0,
+      tokensExpiring: 0,
+      emptyQueues: 1,
+    });
+  });
+
+  it('outside production still counts it, and the data is untouched either way', async () => {
+    const uid = await seed();
+
+    const ov = await overviewForUser(uid, clock);
+    expect(ov.clients[0]!.connectionCount).toBe(4);
+    expect(ov.clients[0]!.followers).toBe(134);
+    expect(ov.attention.needsReconnect).toBe(1);
+    expect(ov.upcoming).toHaveLength(1);
   });
 });
 

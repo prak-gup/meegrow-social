@@ -2,6 +2,7 @@ import { db, schema } from '@meegrow-social/db';
 import { and, eq } from 'drizzle-orm';
 import { hashPassword, newPasswordProblem, verifyPassword } from './password.js';
 import { keepOnlySession } from './sessions.js';
+import { beginAuthAttempt, type AttemptResult } from './auth-throttle.js';
 
 export interface UserView {
   id: string;
@@ -62,6 +63,51 @@ export async function verifyUserCredentials(
   const ok = await verifyPassword(user.passwordHash, password);
   if (!ok) return null;
   return { id: user.id, email: user.email, name: user.name };
+}
+
+/** A password check refused because too many wrong ones came before it (→ 429 + Retry-After). */
+export interface RateLimited {
+  ok: false;
+  reason: 'rate_limited';
+  retryAfterSeconds: number;
+}
+
+export type LoginResult =
+  | { ok: true; user: { id: string; email: string; name: string | null } }
+  /** Unknown user, wrong password, or a user with no password — deliberately indistinguishable. */
+  | { ok: false; reason: 'invalid_credentials' }
+  | RateLimited;
+
+/**
+ * `verifyUserCredentials` behind the brute-force limits (see auth-throttle.ts) — what the login
+ * route calls. Limited per client IP and per submitted email; the email is folded to lower case
+ * for counting only, so case variants of one address share a budget.
+ *
+ * A rate-limited attempt is refused before the password is looked at, and reads the same for a
+ * real account as for an unknown one. A successful login clears that account's count.
+ */
+export async function loginWithPassword(
+  email: string,
+  password: string,
+  clientIp: string,
+): Promise<LoginResult> {
+  const gate = await beginAuthAttempt('login', {
+    ip: clientIp,
+    account: email.trim().toLowerCase(),
+  });
+  if (!gate.allowed) {
+    return { ok: false, reason: 'rate_limited', retryAfterSeconds: gate.retryAfterSeconds };
+  }
+  let user: Awaited<ReturnType<typeof verifyUserCredentials>>;
+  try {
+    user = await verifyUserCredentials(email, password);
+  } catch (err) {
+    // A lookup that blew up was not a wrong guess; an outage must not use up anyone's attempts.
+    await gate.settle('not_a_guess');
+    throw err;
+  }
+  await gate.settle(user ? 'succeeded' : 'failed');
+  return user ? { ok: true, user } : { ok: false, reason: 'invalid_credentials' };
 }
 
 export type ChangePasswordFailure =
@@ -135,4 +181,47 @@ export async function changePassword(
     if (err instanceof ChangePasswordAbort) return { ok: false, reason: err.reason };
     throw err;
   }
+}
+
+/** How each `changePassword` outcome counts against the brute-force limits. */
+function changePasswordAttemptResult(result: ChangePasswordResult): AttemptResult {
+  if (result.ok) return 'succeeded';
+  switch (result.reason) {
+    case 'invalid_current_password':
+      return 'failed';
+    // Refused before the current password was looked at, so nothing was guessed.
+    case 'invalid_new_password':
+      return 'not_a_guess';
+    // Both are only reported once the current password has been proven.
+    case 'same_password':
+    case 'session_not_found':
+      return 'succeeded';
+  }
+}
+
+/**
+ * `changePassword` behind the brute-force limits (see auth-throttle.ts) — what the route calls.
+ * Limited per client IP and per user: a stolen session cookie must not be a free oracle for the
+ * account's password. A rate-limited attempt is refused before any password is looked at.
+ */
+export async function changePasswordWithLimit(
+  userId: string,
+  sessionId: string,
+  currentPassword: string,
+  newPassword: string,
+  clientIp: string,
+): Promise<ChangePasswordResult | RateLimited> {
+  const gate = await beginAuthAttempt('password', { ip: clientIp, account: userId });
+  if (!gate.allowed) {
+    return { ok: false, reason: 'rate_limited', retryAfterSeconds: gate.retryAfterSeconds };
+  }
+  let result: ChangePasswordResult;
+  try {
+    result = await changePassword(userId, sessionId, currentPassword, newPassword);
+  } catch (err) {
+    await gate.settle('not_a_guess');
+    throw err;
+  }
+  await gate.settle(changePasswordAttemptResult(result));
+  return result;
 }

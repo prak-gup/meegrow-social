@@ -1,7 +1,7 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as core from '@meegrow-social/core';
 import type { FastifyInstance } from 'fastify';
-import { buildServer } from './server.js';
+import { buildServer, trustProxySetting } from './server.js';
 
 /**
  * The REST layer in isolation, for the routes that need no database to prove: `core` is replaced by
@@ -12,6 +12,11 @@ import { buildServer } from './server.js';
 vi.mock('@meegrow-social/core', async (importOriginal) => ({
   ...(await importOriginal<typeof core>()),
   authenticateApiKey: vi.fn(),
+  authenticateSession: vi.fn(),
+  buildUserView: vi.fn(),
+  changePasswordWithLimit: vi.fn(),
+  createSession: vi.fn(),
+  loginWithPassword: vi.fn(),
   recordApiRequestLog: vi.fn(),
   createPost: vi.fn(),
   getConnectionHealth: vi.fn(),
@@ -75,6 +80,208 @@ describe('GET /mcp', () => {
     const res = await app.inject({ method: 'DELETE', url: '/mcp', headers: auth });
     expect(res.statusCode).toBe(405);
     expect(res.headers.allow).toBe('POST');
+  });
+});
+
+describe('POST /v1/auth/login', () => {
+  const USER = { id: 'user-1', email: 'ann@x.test', name: 'Ann' };
+  const login = (opts: { remoteAddress?: string; headers?: Record<string, string> } = {}) =>
+    app.inject({
+      method: 'POST',
+      url: '/v1/auth/login',
+      payload: { email: 'ann@x.test', password: 'hunter2' },
+      ...opts,
+    });
+
+  beforeEach(() => {
+    vi.mocked(core.loginWithPassword).mockResolvedValue({ ok: true, user: USER });
+    vi.mocked(core.createSession).mockResolvedValue({
+      token: 'tok',
+      id: 'session-1',
+      userId: USER.id,
+      activeWorkspaceId: WS,
+      expiresAt: new Date('2026-11-01T00:00:00.000Z'),
+    });
+    vi.mocked(core.buildUserView).mockResolvedValue({ ...USER, memberships: [] });
+  });
+
+  it('signs in and sets the session cookie', async () => {
+    const res = await login();
+    expect(res.statusCode).toBe(200);
+    expect(String(res.headers['set-cookie'])).toContain('mg_sid=tok');
+  });
+
+  it('401s on wrong credentials, as before', async () => {
+    vi.mocked(core.loginWithPassword).mockResolvedValue({
+      ok: false,
+      reason: 'invalid_credentials',
+    });
+    const res = await login();
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toEqual({ error: 'invalid credentials' });
+    expect(res.headers['retry-after']).toBeUndefined();
+  });
+
+  it('429s with Retry-After and the { error } shape when rate-limited; no session is made', async () => {
+    vi.mocked(core.loginWithPassword).mockResolvedValue({
+      ok: false,
+      reason: 'rate_limited',
+      retryAfterSeconds: 412,
+    });
+    const res = await login();
+    expect(res.statusCode).toBe(429);
+    expect(res.headers['retry-after']).toBe('412');
+    expect(res.json()).toEqual({ error: 'too many attempts, try again later' });
+    expect(res.headers['set-cookie']).toBeUndefined();
+    expect(core.createSession).not.toHaveBeenCalled();
+  });
+
+  it('never reaches core with a malformed body, so it cannot use up attempts', async () => {
+    const res = await app.inject({ method: 'POST', url: '/v1/auth/login', payload: { email: 1 } });
+    expect(res.statusCode).toBe(400);
+    expect(core.loginWithPassword).not.toHaveBeenCalled();
+  });
+
+  describe('the client address handed to core', () => {
+    const ipSeenByCore = () => vi.mocked(core.loginWithPassword).mock.calls[0]![2];
+
+    it('is the forwarded client, not the proxy, when the peer is the reverse proxy', async () => {
+      // What production looks like: Caddy → 127.0.0.1:8990 → the container sees the Docker gateway.
+      await login({
+        remoteAddress: '172.18.0.1',
+        headers: { 'x-forwarded-for': '203.0.113.9' },
+      });
+      expect(ipSeenByCore()).toBe('203.0.113.9');
+    });
+
+    it('is the address the proxy vouches for, not one the client prepended', async () => {
+      await login({
+        remoteAddress: '172.18.0.1',
+        headers: { 'x-forwarded-for': '1.2.3.4, 203.0.113.9' },
+      });
+      expect(ipSeenByCore()).toBe('203.0.113.9');
+    });
+
+    it('ignores the header from a peer that is not a trusted proxy', async () => {
+      await login({
+        remoteAddress: '198.51.100.20',
+        headers: { 'x-forwarded-for': '1.2.3.4' },
+      });
+      expect(ipSeenByCore()).toBe('198.51.100.20');
+    });
+
+    it('is the socket peer when nothing was forwarded', async () => {
+      await login({ remoteAddress: '127.0.0.1' });
+      expect(ipSeenByCore()).toBe('127.0.0.1');
+    });
+  });
+});
+
+describe('trustProxySetting', () => {
+  it('by default trusts only loopback, link-local and private peers', () => {
+    expect(trustProxySetting(undefined)).toEqual(['loopback', 'linklocal', 'uniquelocal']);
+    expect(trustProxySetting('  ')).toEqual(['loopback', 'linklocal', 'uniquelocal']);
+  });
+
+  it('takes true, false, or a comma-separated list from TRUST_PROXY', () => {
+    expect(trustProxySetting('true')).toBe(true);
+    expect(trustProxySetting('false')).toBe(false);
+    expect(trustProxySetting('loopback, 173.245.48.0/20 ,10.0.0.1')).toEqual([
+      'loopback',
+      '173.245.48.0/20',
+      '10.0.0.1',
+    ]);
+  });
+});
+
+describe('POST /v1/auth/password', () => {
+  const session = { cookie: 'mg_sid=good', origin: 'http://localhost:8990' };
+  const change = (headers: Record<string, string> = session, remoteAddress = '172.18.0.1') =>
+    app.inject({
+      method: 'POST',
+      url: '/v1/auth/password',
+      headers: { 'x-forwarded-for': '203.0.113.9', ...headers },
+      remoteAddress,
+      payload: { currentPassword: 'old-password-123', newPassword: 'a-brand-new-password' },
+    });
+
+  beforeEach(() => {
+    vi.mocked(core.authenticateSession).mockImplementation(async (token) =>
+      token === 'good' ? { workspaceId: WS, userId: 'user-1', sessionId: 'session-1' } : null,
+    );
+  });
+
+  it('hands core the user, the session and the real client address', async () => {
+    vi.mocked(core.changePasswordWithLimit).mockResolvedValue({
+      ok: true,
+      token: 'rotated',
+      expiresAt: new Date('2026-11-01T00:00:00.000Z'),
+    });
+    const res = await change();
+    expect(res.statusCode).toBe(200);
+    expect(core.changePasswordWithLimit).toHaveBeenCalledWith(
+      'user-1',
+      'session-1',
+      'old-password-123',
+      'a-brand-new-password',
+      '203.0.113.9',
+    );
+    expect(String(res.headers['set-cookie'])).toContain('mg_sid=rotated');
+  });
+
+  it('429s with Retry-After when rate-limited, and leaves the session cookie alone', async () => {
+    vi.mocked(core.changePasswordWithLimit).mockResolvedValue({
+      ok: false,
+      reason: 'rate_limited',
+      retryAfterSeconds: 60,
+    });
+    const res = await change();
+    expect(res.statusCode).toBe(429);
+    expect(res.headers['retry-after']).toBe('60');
+    expect(res.json()).toEqual({ error: 'too many attempts, try again later' });
+    expect(res.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('still 422s on a wrong current password', async () => {
+    vi.mocked(core.changePasswordWithLimit).mockResolvedValue({
+      ok: false,
+      reason: 'invalid_current_password',
+    });
+    const res = await change();
+    expect(res.statusCode).toBe(422);
+    expect(res.json()).toEqual({ error: 'current password is incorrect' });
+  });
+
+  it("refuses an API key before core is asked — a key cannot use up a user's attempts", async () => {
+    const res = await change(auth);
+    expect(res.statusCode).toBe(401);
+    expect(core.changePasswordWithLimit).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /v1/providers', () => {
+  afterEach(() => vi.unstubAllEnvs());
+  const identifiers = async () => {
+    const res = await app.inject({ method: 'GET', url: '/v1/providers', headers: auth });
+    expect(res.statusCode).toBe(200);
+    return (res.json() as { providers: Array<{ identifier: string }> }).providers.map(
+      (p) => p.identifier,
+    );
+  };
+
+  it('offers the fakes outside production, where dev and CI connect through them', async () => {
+    expect(await identifiers()).toContain('fake');
+  });
+
+  it('offers no test-only provider in production', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    expect((await identifiers()).filter((id) => id.startsWith('fake'))).toEqual([]);
+  });
+
+  it('offers them in production again with SHOW_FAKE_PROVIDERS=true', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('SHOW_FAKE_PROVIDERS', 'true');
+    expect(await identifiers()).toContain('fake');
   });
 });
 
