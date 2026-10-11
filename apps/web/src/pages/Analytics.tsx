@@ -5,7 +5,8 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { providerVisible } from '../lib/devProviders';
 import { platformMeta } from '../lib/platforms';
-import { appendPage } from '../lib/postList';
+import { formatPublishAt } from '../lib/postDate';
+import { appendPage, captionSnippet, safeExternalUrl } from '../lib/postList';
 import {
   FOLLOWERS,
   LIST_MAX_PAGES,
@@ -13,6 +14,7 @@ import {
   METRICS_CHUNK,
   POST_CAP,
   RANGE_DAYS,
+  TABLE_PAGE,
   buildTiles,
   capPosts,
   chunk,
@@ -27,23 +29,28 @@ import {
   lastCaptureByConnection,
   latestCapture,
   loadProgress,
+  metricCell,
+  metricHistories,
   needsReconnect,
   parseFilters,
   parsePoints,
   platformsOf,
   resolveFilters,
   selectedConnections,
+  tableMetricColumns,
   uniqueLabels,
   windowPosts,
   windowsFor,
   type AnalyticsFilters,
   type CappedPosts,
   type FollowersByConnection,
+  type MetricCell,
   type MetricPoint,
   type MetricsByPost,
   type PostMetrics,
   type RangeDays,
   type Tile,
+  type WindowedPost,
   type Windows,
 } from '../lib/analytics';
 import { Badge } from '../components/ui/Badge';
@@ -56,8 +63,10 @@ import { Label } from '../components/ui/Label';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Select } from '../components/ui/Select';
 import { Skeleton } from '../components/ui/Skeleton';
+import { Sparkline } from '../components/ui/Sparkline';
 import { StatTile } from '../components/ui/StatTile';
-import { ChartLineUp, Plugs } from '../lib/icons';
+import { Table, type TableColumn } from '../components/ui/Table';
+import { ArrowSquareOut, Article, CaretDown, CaretRight, ChartLineUp, Plugs } from '../lib/icons';
 
 // Until the numbers are checked against the platforms (docs/dev/ANALYTICS-UI-BRIEF.md §7) the page is
 // reachable by URL only and says so. The other read of this flag is the nav entry in AppLayout.
@@ -479,6 +488,27 @@ export function Analytics() {
               />
             )}
           </section>
+
+          <section aria-label="Posts" className="space-y-2">
+            <h2 className="text-body font-semibold text-ink">Posts published in this period</h2>
+            {posts.status === 'error' ? (
+              <ErrorState
+                title="Couldn't load posts"
+                message={posts.message}
+                onRetry={data.retry}
+              />
+            ) : !capped ? (
+              <PostsTableSkeleton />
+            ) : (
+              <PostsTable
+                // A new filter set starts again from the first page with every row collapsed.
+                key={`${filters.platform}|${filters.connection}|${filters.days}`}
+                capped={capped}
+                metrics={metrics}
+                connections={all}
+              />
+            )}
+          </section>
         </>
       )}
     </div>
@@ -882,5 +912,240 @@ function FollowersChart({
         />
       }
     />
+  );
+}
+
+const POST_COLUMNS = ['Published', 'Platform', 'Profile', 'Post'];
+
+/** Same header and row geometry as the loaded table. */
+function PostsTableSkeleton() {
+  return (
+    <Table
+      caption="Posts published in this period (loading)"
+      dense
+      rows={[0, 1, 2, 3, 4]}
+      rowKey={(n) => String(n)}
+      columns={POST_COLUMNS.map((header) => ({
+        key: header,
+        header,
+        cell: () => <Skeleton className="h-5 w-24" />,
+      }))}
+    />
+  );
+}
+
+function MetricValue({ cell }: { cell: MetricCell }) {
+  switch (cell.kind) {
+    case 'value':
+      return <>{formatValue(cell.value)}</>;
+    case 'pending':
+      // Still loading: a dash, never a 0 that could be read as a number.
+      return (
+        <span className="animate-pulse text-muted-soft">
+          <span aria-hidden="true">—</span>
+          <span className="sr-only">Loading</span>
+        </span>
+      );
+    case 'error':
+      return (
+        <span className="text-status-bad" title={`Couldn't load metrics: ${cell.message}`}>
+          <span aria-hidden="true">—</span>
+          <span className="sr-only">Couldn’t load</span>
+        </span>
+      );
+    case 'missing':
+      return noValue('Not reported for this post');
+  }
+}
+
+/** The expanded row: each metric's capture history as a sparkline with its point count. */
+function PostHistory({ entry }: { entry: PostMetrics | undefined }) {
+  if (!entry) return <p className="text-caption text-muted">Loading metrics…</p>;
+  if (entry.status === 'error') {
+    return (
+      <p className="text-caption text-status-bad">
+        Couldn’t load metrics for this post: {entry.message}
+      </p>
+    );
+  }
+  const histories = metricHistories(entry.series);
+  if (histories.length === 0) {
+    return <p className="text-caption text-muted">No captures for this post yet.</p>;
+  }
+  return (
+    <ul className="grid gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-4">
+      {histories.map(({ name, points, last }) => {
+        const label = humanizeMetric(name);
+        const first = points[0]!.value;
+        const latest = points[points.length - 1]!.value;
+        return (
+          <li key={name} className="min-w-0">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="truncate text-caption font-semibold text-muted" title={name}>
+                {label}
+              </span>
+              <span className="tnum text-sm font-semibold text-ink">{formatValue(latest)}</span>
+            </div>
+            <Sparkline
+              points={points}
+              label={`${label}: ${formatValue(first)} at first capture, ${formatValue(latest)} at the latest`}
+            />
+            <p className="tnum text-micro text-muted">
+              {points.length.toLocaleString()} {points.length === 1 ? 'capture' : 'captures'}, last{' '}
+              <time dateTime={new Date(last).toISOString()}>{formatCapture(last)}</time>
+            </p>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
+ * Published posts of the period, newest first, with one column per metric name the rows on screen
+ * returned. Rows fill in as their metrics request settles.
+ */
+function PostsTable({
+  capped,
+  metrics,
+  connections,
+}: {
+  capped: CappedPosts;
+  metrics: MetricsByPost;
+  connections: ConnectionView[];
+}) {
+  const [shown, setShown] = useState(TABLE_PAGE);
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const rows = capped.current.slice(0, shown);
+  const names = tableMetricColumns(rows, metrics);
+  const profiles = new Map(connections.map((c) => [c.id, c.displayName]));
+  const toggle = (id: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+
+  const columns: TableColumn<WindowedPost>[] = [
+    {
+      key: 'expand',
+      header: <span className="sr-only">Metric history</span>,
+      cell: ({ post }) => {
+        const isOpen = open.has(post.id);
+        const Caret = isOpen ? CaretDown : CaretRight;
+        return (
+          <button
+            type="button"
+            aria-expanded={isOpen}
+            aria-label={`Metric history: ${captionSnippet(post.caption)}`}
+            // The row click already toggles; without this the button would toggle twice.
+            onClick={(e) => {
+              e.stopPropagation();
+              toggle(post.id);
+            }}
+            className="grid h-7 w-7 place-items-center rounded-sm text-muted hover:bg-surface-strong hover:text-ink"
+          >
+            <Caret size={14} weight="bold" aria-hidden="true" />
+          </button>
+        );
+      },
+    },
+    {
+      key: 'published',
+      header: 'Published',
+      className: 'whitespace-nowrap',
+      cell: ({ post, at }) => (
+        <time dateTime={new Date(at).toISOString()}>{formatPublishAt(post.publishAt)}</time>
+      ),
+    },
+    {
+      key: 'platform',
+      header: 'Platform',
+      className: 'whitespace-nowrap',
+      cell: ({ post }) => {
+        const platform = platformMeta({ identifier: post.provider, displayName: post.provider });
+        return (
+          <span className="inline-flex items-center gap-2">
+            <platform.Icon size={18} aria-hidden="true" className="flex-none text-muted" />
+            {platform.label}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'profile',
+      header: 'Profile',
+      className: 'whitespace-nowrap',
+      cell: ({ post }) => profiles.get(post.connectionId) ?? noValue('Unknown profile'),
+    },
+    {
+      key: 'post',
+      header: 'Post',
+      className: 'w-full min-w-64',
+      cell: ({ post }) => {
+        const url = safeExternalUrl(post.releaseUrl);
+        const text = captionSnippet(post.caption, 80);
+        return url ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-baseline gap-1 text-body-ink underline"
+          >
+            {text}
+            <ArrowSquareOut size={14} aria-hidden="true" className="flex-none self-center" />
+            <span className="sr-only">(opens in a new tab)</span>
+          </a>
+        ) : (
+          <span className="text-body-ink">{text}</span>
+        );
+      },
+    },
+    ...names.map((name): TableColumn<WindowedPost> => ({
+      key: `metric:${name}`,
+      // The provider's own name stays one hover away from its humanised label.
+      header: <span title={name}>{humanizeMetric(name)}</span>,
+      align: 'right',
+      className: 'whitespace-nowrap',
+      cell: ({ post }) => <MetricValue cell={metricCell(metrics.get(post.id), name)} />,
+    })),
+  ];
+
+  return (
+    <>
+      <Table
+        caption="Posts published in this period, newest first, with their latest metrics"
+        dense
+        stickyHeader
+        rows={rows}
+        rowKey={(row) => row.post.id}
+        columns={columns}
+        onRowClick={(row) => toggle(row.post.id)}
+        renderExpanded={(row) =>
+          open.has(row.post.id) ? <PostHistory entry={metrics.get(row.post.id)} /> : null
+        }
+        empty={{
+          title: 'No published posts in this period',
+          description: 'A longer date range may have some.',
+          icon: Article,
+        }}
+      />
+      {rows.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="tnum text-caption text-muted">
+            Showing {rows.length.toLocaleString()} of {capped.current.length.toLocaleString()} posts
+            {capped.currentTotal > capped.current.length &&
+              ` — only the newest ${capped.current.length.toLocaleString()} of ${capped.currentTotal.toLocaleString()} in this period are loaded`}
+            . Values are each post’s all-time totals as of its last capture.
+          </p>
+          {shown < capped.current.length && (
+            <Button variant="outline" size="sm" onClick={() => setShown((n) => n + TABLE_PAGE)}>
+              Load more
+            </Button>
+          )}
+        </div>
+      )}
+    </>
   );
 }

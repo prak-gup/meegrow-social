@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import { cn } from '../../lib/cn';
 import { EmptyState, type EmptyStateProps } from './EmptyState';
 
@@ -21,6 +21,14 @@ export interface TableProps<T> {
   empty?: EmptyStateProps;
   /** Accessible name for the table. */
   caption?: string;
+  /** Tighter rows (`py-2`) for data-heavy tables. */
+  dense?: boolean;
+  /** Keep the header in view: the frame becomes a scroll area no taller than the screen. */
+  stickyHeader?: boolean;
+  /** Makes the whole row clickable. Pair it with a real button in a cell for keyboard users. */
+  onRowClick?: (row: T) => void;
+  /** Detail shown in a full-width row under `row`; return null/undefined for a collapsed row. */
+  renderExpanded?: (row: T) => ReactNode;
   className?: string;
 }
 
@@ -32,11 +40,25 @@ export function Table<T>({
   rowActions,
   empty,
   caption,
+  dense = false,
+  stickyHeader = false,
+  onRowClick,
+  renderExpanded,
   className,
 }: TableProps<T>) {
   if (rows.length === 0 && empty) return <EmptyState {...empty} className={className} />;
+  const pad = dense ? 'px-3 py-2' : 'px-4 py-3';
+  const headPad = dense ? 'px-3 py-2' : 'px-4 py-2.5';
+  const sticky = stickyHeader && 'sticky top-0 z-10 bg-surface-soft';
+  const span = columns.length + (rowActions ? 1 : 0);
   return (
-    <div className={cn('overflow-x-auto rounded-md border border-hairline bg-canvas', className)}>
+    <div
+      className={cn(
+        'rounded-md border border-hairline bg-canvas',
+        stickyHeader ? 'max-h-screen overflow-auto' : 'overflow-x-auto',
+        className,
+      )}
+    >
       <table className="w-full border-collapse text-left text-sm">
         {caption && <caption className="sr-only">{caption}</caption>}
         <thead className="bg-surface-soft">
@@ -46,7 +68,9 @@ export function Table<T>({
                 key={c.key}
                 scope="col"
                 className={cn(
-                  'px-4 py-2.5 text-caption font-bold text-muted',
+                  headPad,
+                  sticky,
+                  'text-caption font-bold text-muted',
                   c.align === 'right' && 'text-right',
                   c.className,
                 )}
@@ -55,37 +79,53 @@ export function Table<T>({
               </th>
             ))}
             {rowActions && (
-              <th scope="col" className="px-4 py-2.5">
+              <th scope="col" className={cn(headPad, sticky)}>
                 <span className="sr-only">Actions</span>
               </th>
             )}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, index) => (
-            <tr
-              key={rowKey(row, index)}
-              className="border-t border-hairline-soft align-middle hover:bg-surface-soft"
-            >
-              {columns.map((c) => (
-                <td
-                  key={c.key}
+          {rows.map((row, index) => {
+            const expanded = renderExpanded?.(row);
+            return (
+              <Fragment key={rowKey(row, index)}>
+                <tr
+                  onClick={onRowClick && (() => onRowClick(row))}
                   className={cn(
-                    'px-4 py-3 text-ink',
-                    c.align === 'right' && 'tnum text-right',
-                    c.className,
+                    'border-t border-hairline-soft align-middle hover:bg-surface-soft',
+                    onRowClick && 'cursor-pointer',
                   )}
                 >
-                  {c.cell(row)}
-                </td>
-              ))}
-              {rowActions && (
-                <td className="px-4 py-3">
-                  <div className="flex items-center justify-end gap-2">{rowActions(row)}</div>
-                </td>
-              )}
-            </tr>
-          ))}
+                  {columns.map((c) => (
+                    <td
+                      key={c.key}
+                      className={cn(
+                        pad,
+                        'text-ink',
+                        c.align === 'right' && 'tnum text-right',
+                        c.className,
+                      )}
+                    >
+                      {c.cell(row)}
+                    </td>
+                  ))}
+                  {rowActions && (
+                    <td className={pad}>
+                      <div className="flex items-center justify-end gap-2">{rowActions(row)}</div>
+                    </td>
+                  )}
+                </tr>
+                {expanded != null && expanded !== false && (
+                  <tr className="bg-surface-soft">
+                    <td colSpan={span} className={pad}>
+                      {expanded}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>
