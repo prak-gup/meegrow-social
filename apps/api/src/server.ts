@@ -24,9 +24,11 @@ import {
   loginInput,
   logsAggregateInput,
   logsQueryInput,
+  passwordConnectInput,
   providerIdentifier,
   queueSlotsQuery,
   registerMediaFromUrlInput,
+  siteCheckInput,
   startConnectInput,
   switchWorkspaceInput,
   updatePostInput,
@@ -48,6 +50,8 @@ import {
   cancelPost,
   completeCredentialCallback,
   changePasswordWithLimit,
+  checkConnectSite,
+  connectWithPassword,
   ConnectionNotFoundError,
   createPost,
   createQueue,
@@ -384,6 +388,20 @@ function tooManyAttempts(reply: FastifyReply, retryAfterSeconds: number): Fastif
     .send({ error: 'too many attempts, try again later' });
 }
 
+/** A fixed-vocabulary reason (core `CONNECT_FAILURE_MESSAGES`) as a sentence for a form. */
+function sentence(reason: string): string {
+  return `${reason.charAt(0).toUpperCase()}${reason.slice(1)}.`;
+}
+
+/** The HTTP status for each way a username-and-password connect can be refused. */
+const PASSWORD_CONNECT_STATUS: Record<string, number> = {
+  // 422, not 401: the caller's own session is fine, and must not read this as "signed out".
+  login_rejected: 422,
+  role_cannot_publish: 422,
+  check_expired: 409,
+  site_unreachable: 502,
+};
+
 export async function buildServer(): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, trustProxy: trustProxySetting() });
   await app.register(cors, { origin: true });
@@ -611,6 +629,98 @@ export async function buildServer(): Promise<FastifyInstance> {
           return reply.code(400).send({ error: err.message });
         throw err;
       }
+    },
+  );
+
+  // Look at a site address before anyone logs in: which connect methods it can use, and why not
+  // when it cannot. The dialog asks this first, so a site that cannot be connected by approval is
+  // offered the other method instead of a dead-end error. Unauthenticated requests to the site.
+  app.post<{ Params: { provider: string } }>(
+    '/v1/connections/:provider/site-check',
+    async (req, reply) => {
+      const provider = providerIdentifier.safeParse(req.params.provider);
+      if (!provider.success) return reply.code(400).send({ error: 'unknown provider' });
+      const parsed = siteCheckInput.safeParse(req.body ?? {});
+      if (!parsed.success) return reply.code(400).send({ error: 'enter the address of the site' });
+      try {
+        return await checkConnectSite(
+          req.authContext!.workspaceId,
+          provider.data,
+          parsed.data.siteUrl,
+        );
+      } catch (err) {
+        if (err instanceof ProviderBadRequestError)
+          return reply.code(400).send({ error: err.message });
+        throw err;
+      }
+    },
+  );
+
+  // Connect a site with a username and LOGIN password, for sites that cannot issue this app a
+  // password of its own (WordPress with Application Passwords switched off). The dashboard posts
+  // the form here once; core verifies it against the site, stores it encrypted, and that is the
+  // last place it exists outside the site.
+  //
+  // What keeps the password out of everything else:
+  //  - the response is `{ connectionId, displayName, externalId, endpoint }` or `{ error, code }`
+  //    with a sentence from core's fixed vocabulary — never the body, never the site's text;
+  //  - a body that fails validation is answered with one fixed sentence, not the zod error (which
+  //    can quote what was sent);
+  //  - `errorHandler` below replaces Fastify's default for this route, which would answer with
+  //    `error.message` — and a JSON parse error's message quotes the body it could not parse;
+  //  - request logging (the onResponse hook) records the route pattern and status, never a body,
+  //    and Fastify's own logger is off.
+  // Attempts are limited in core, per site, per caller and per address: this server must not be a
+  // way to guess at somebody's WordPress login.
+  app.post<{ Params: { provider: string } }>(
+    '/v1/connections/:provider/password',
+    {
+      errorHandler: (error, _req, reply) => {
+        const status =
+          typeof error.statusCode === 'number' && error.statusCode >= 400 && error.statusCode < 500
+            ? error.statusCode
+            : 500;
+        void reply
+          .code(status)
+          .header('cache-control', 'no-store')
+          .send({
+            error:
+              status === 500 ? 'the site could not be connected' : 'the request could not be read',
+          });
+      },
+    },
+    async (req, reply) => {
+      void reply.header('cache-control', 'no-store');
+      const provider = providerIdentifier.safeParse(req.params.provider);
+      if (!provider.success) return reply.code(400).send({ error: 'unknown provider' });
+      const parsed = passwordConnectInput.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'enter the username and password' });
+      }
+      const ctx = req.authContext!;
+      const outcome = await connectWithPassword(ctx.workspaceId, provider.data, parsed.data, {
+        ip: req.ip,
+        actor: ctx.userId ?? `workspace:${ctx.workspaceId}`,
+      });
+      if (outcome.ok) {
+        const { ok: _ok, ...connected } = outcome;
+        return reply.code(201).send(connected);
+      }
+      if (outcome.reason === 'rate_limited') {
+        const minutes = Math.ceil(outcome.retryAfterSeconds / 60);
+        return reply
+          .code(429)
+          .header('retry-after', String(outcome.retryAfterSeconds))
+          .send({
+            error:
+              'Too many login attempts for this site from here. Try again in ' +
+              `${minutes} minute${minutes === 1 ? '' : 's'}.`,
+            code: 'rate_limited',
+          });
+      }
+      return reply
+        .code(PASSWORD_CONNECT_STATUS[outcome.reason] ?? 400)
+        .send({ error: sentence(outcome.message), code: outcome.reason });
     },
   );
 
@@ -866,6 +976,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       displayName: p.displayName,
       isBetweenSteps: p.isBetweenSteps,
       ...(p.connectInput ? { connectInput: p.connectInput } : {}),
+      ...(p.connectMethods ? { connectMethods: [...p.connectMethods] } : {}),
     })),
   }));
 

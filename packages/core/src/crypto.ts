@@ -81,3 +81,31 @@ export function verifyConnectOutcome(outcome: string, seal: unknown): boolean {
   const given = Buffer.from(seal);
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
+
+/** MAC key for site-check tickets — its own label, for the reason `flowProofKey` has one. */
+function siteCheckKey(): Buffer {
+  return createHmac('sha256', key()).update('meegrow-social/site-check/v1').digest();
+}
+
+/**
+ * Seal what a site check established (see `checkConnectSite` in services/connections.ts) so the
+ * browser can carry it to the next request without being able to change it. The payload is
+ * readable — it holds nothing secret — but only this server can produce a ticket that opens.
+ */
+export function sealSiteCheck(payload: string): string {
+  const body = Buffer.from(payload, 'utf8').toString('base64url');
+  return `${body}.${createHmac('sha256', siteCheckKey()).update(body).digest('base64url')}`;
+}
+
+/** The payload of a ticket from `sealSiteCheck`, or null for anything this server did not seal. */
+export function openSiteCheck(ticket: unknown): string | null {
+  if (typeof ticket !== 'string') return null;
+  const [body, seal, ...rest] = ticket.split('.');
+  if (!body || !seal || rest.length > 0) return null;
+  const expected = Buffer.from(
+    createHmac('sha256', siteCheckKey()).update(body).digest('base64url'),
+  );
+  const given = Buffer.from(seal);
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
+  return Buffer.from(body, 'base64url').toString('utf8');
+}

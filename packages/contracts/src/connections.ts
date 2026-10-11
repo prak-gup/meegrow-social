@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { connectInputKind, connectionHealth, providerIdentifier, tokenModel } from './providers.js';
+import {
+  connectInputKind,
+  connectMethod,
+  connectionHealth,
+  providerIdentifier,
+  tokenModel,
+} from './providers.js';
 import { connectionImportView } from './imports.js';
 
 export const connectionView = z.object({
@@ -13,6 +19,12 @@ export const connectionView = z.object({
   expiresInDays: z.number().int().nullable(),
   health: connectionHealth,
   createdAt: z.coerce.date(),
+  /**
+   * How the account was connected, where a provider has more than one way (WordPress). `password`
+   * means a login password is stored for it. Absent for every OAuth platform and for connections
+   * made before this was recorded.
+   */
+  method: connectMethod.optional(),
   /** Past-post import state. Optional only so a consumer holding an older payload still parses. */
   import: connectionImportView.optional(),
 });
@@ -85,6 +97,8 @@ export const providerView = z.object({
    * a bare redirect. Absent for every OAuth platform.
    */
   connectInput: connectInputKind.optional(),
+  /** Set when there is more than one way to connect, so the dialog can offer the choice. */
+  connectMethods: z.array(connectMethod).optional(),
 });
 export type ProviderView = z.infer<typeof providerView>;
 
@@ -119,3 +133,61 @@ export type StartConnectInput = z.infer<typeof startConnectInput>;
 /** Where to send the person next. The same shape `GET …/auth-url` has always answered with. */
 export const startConnectResult = z.object({ url: z.string().url() });
 export type StartConnectResult = z.infer<typeof startConnectResult>;
+
+/** Body of `POST /v1/connections/:provider/site-check`. Shape-checked only, like `startConnectInput`. */
+export const siteCheckInput = z.object({
+  siteUrl: z.string().trim().min(1).max(2048),
+});
+export type SiteCheckInput = z.infer<typeof siteCheckInput>;
+
+/**
+ * What the server learned about a site address without logging in to it: which connect methods
+ * the site can use, and — plainly — why not when it cannot. Messages are written by this app for
+ * the person at the dialog; none is text from the site.
+ */
+export const siteCheck = z.object({
+  /** The address as the site finally answered at (after its own redirects). */
+  entered: z.string(),
+  name: z.string().nullable(),
+  /** WordPress Address (where it is administered) and Site Address (what visitors see). */
+  siteAddress: z.string().nullable(),
+  homeAddress: z.string().nullable(),
+  /** True when those two are different addresses. */
+  separateAddresses: z.boolean(),
+  approval: z.discriminatedUnion('available', [
+    z.object({ available: z.literal(true) }),
+    z.object({ available: z.literal(false), reason: z.string(), message: z.string() }),
+  ]),
+  password: z.discriminatedUnion('available', [
+    /** `endpoint` is the exact address a username and password would be sent to. */
+    z.object({ available: z.literal(true), endpoint: z.string() }),
+    z.object({ available: z.literal(false), reason: z.string(), message: z.string() }),
+  ]),
+  /**
+   * Present when `password.available`: a short-lived seal over the endpoint above, for this
+   * client only. The password route accepts a login for that endpoint and no other.
+   */
+  ticket: z.string().optional(),
+});
+export type SiteCheck = z.infer<typeof siteCheck>;
+
+/**
+ * Body of `POST /v1/connections/:provider/password`. `password` is a WordPress LOGIN password: it
+ * is never trimmed, echoed in an error, logged or returned. The limits are WordPress's own
+ * (`user_login` is 60 characters) with room for a long passphrase.
+ */
+export const passwordConnectInput = z.object({
+  ticket: z.string().min(1).max(4096),
+  username: z.string().trim().min(1).max(100),
+  password: z.string().min(1).max(512),
+});
+export type PasswordConnectInput = z.infer<typeof passwordConnectInput>;
+
+export const passwordConnectResult = z.object({
+  connectionId: z.string().uuid(),
+  displayName: z.string(),
+  externalId: z.string(),
+  /** The address the login was verified at, and will be used at. */
+  endpoint: z.string(),
+});
+export type PasswordConnectResult = z.infer<typeof passwordConnectResult>;

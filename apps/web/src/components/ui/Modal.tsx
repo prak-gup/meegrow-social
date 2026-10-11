@@ -43,7 +43,9 @@ export function Modal({
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className="w-full max-w-md rounded-lg border border-hairline bg-canvas p-4 shadow-1 md:p-5 focus:outline-none"
+        // Never taller than the screen: a long dialog scrolls inside itself, or its buttons end up
+        // below the fold where nothing can reach them.
+        className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-lg border border-hairline bg-canvas p-4 shadow-1 md:p-5 focus:outline-none"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

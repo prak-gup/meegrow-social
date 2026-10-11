@@ -1,14 +1,16 @@
 import { db, schema, withWorkspace } from '@meegrow-social/db';
 import { and, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
-import type {
-  CallbackResult,
-  ConnectionView,
-  ConnectionHealth,
-  ConnectionHealthStatus,
-  ConnectionHealthView,
-  ProviderAccountView,
-  ProviderIdentifier,
-  TokenModel,
+import {
+  connectMethod,
+  type CallbackResult,
+  type SiteCheck,
+  type ConnectionView,
+  type ConnectionHealth,
+  type ConnectionHealthStatus,
+  type ConnectionHealthView,
+  type ProviderAccountView,
+  type ProviderIdentifier,
+  type TokenModel,
 } from '@meegrow-social/contracts';
 import { getProvider } from '../providers/registry.js';
 import { METRIC_RETENTION_DAYS } from './metrics-retention.js';
@@ -16,6 +18,8 @@ import type { AuthTokens } from '../providers/types.js';
 import {
   decryptToken,
   encryptToken,
+  openSiteCheck,
+  sealSiteCheck,
   signConnectFlow,
   signConnectOutcome,
   verifyConnectFlowProof,
@@ -25,8 +29,10 @@ import {
   ConnectError,
   connectFailureCode,
   connectFailureMessage,
+  ProviderBadRequestError,
   type ConnectFailureCode,
 } from '../errors.js';
+import { beginSiteLoginAttempt } from './auth-throttle.js';
 import { connectionImportView, initialImportState } from './post-import.js';
 
 /** How long a started flow waits for the platform's redirect back (login + consent screens). */
@@ -377,6 +383,175 @@ export function openCallbackOutcome(
     : { status: 'error', error: connectFailureMessage(detail) };
 }
 
+/** How long a site check stays good for the login that follows it. */
+export const SITE_CHECK_TTL_MS = 15 * 60 * 1000;
+
+/** What a site-check ticket seals. Nothing secret: the browser already saw all of it. */
+interface SiteTicket {
+  workspaceId: string;
+  provider: string;
+  endpoint: string;
+  entered: string;
+  home: string | null;
+  name: string | null;
+  expiresAt: number;
+}
+
+function readSiteTicket(
+  ticket: string,
+  workspaceId: string,
+  provider: ProviderIdentifier,
+): SiteTicket | null {
+  const payload = openSiteCheck(ticket);
+  if (payload === null) return null;
+  let parsed: SiteTicket;
+  try {
+    parsed = JSON.parse(payload) as SiteTicket;
+  } catch {
+    return null;
+  }
+  // A ticket is good for the client and provider it was made for, and not for long.
+  if (
+    parsed.workspaceId !== workspaceId ||
+    parsed.provider !== provider ||
+    typeof parsed.endpoint !== 'string' ||
+    typeof parsed.entered !== 'string' ||
+    !(parsed.expiresAt > Date.now())
+  ) {
+    return null;
+  }
+  return parsed;
+}
+
+/**
+ * Look at a site address before anyone logs in to it (`POST /v1/connections/:provider/site-check`):
+ * which connect methods the site can use, and why not when it cannot. Unauthenticated requests to
+ * the site only, every one through the SSRF guard.
+ *
+ * When a username-and-password connect is possible the answer carries a `ticket`: the exact
+ * endpoint the person is about to be shown, sealed for this workspace. `connectWithPassword`
+ * sends a login to a sealed endpoint and to nothing else — so the address the password goes to is
+ * always one this server found and the person saw, never one taken from a request body, and never
+ * the result of a second, different discovery.
+ */
+export async function checkConnectSite(
+  workspaceId: string,
+  provider: ProviderIdentifier,
+  siteUrl: string,
+): Promise<SiteCheck> {
+  const impl = getProvider(provider);
+  if (!impl.inspectSite) {
+    throw new ProviderBadRequestError('This platform is not connected by a site address.');
+  }
+  const inspection = await impl.inspectSite(siteUrl);
+  if (!inspection.password.available) return inspection;
+  if (!impl.connectMethods?.includes('password') || !impl.authenticateWithPassword) {
+    return {
+      ...inspection,
+      password: {
+        available: false,
+        reason: 'not_offered',
+        message: 'This platform cannot be connected with a username and password.',
+      },
+    };
+  }
+  const ticket: SiteTicket = {
+    workspaceId,
+    provider,
+    endpoint: inspection.password.endpoint,
+    entered: inspection.entered,
+    home: inspection.homeAddress,
+    name: inspection.name,
+    expiresAt: Date.now() + SITE_CHECK_TTL_MS,
+  };
+  return { ...inspection, ticket: sealSiteCheck(JSON.stringify(ticket)) };
+}
+
+export type PasswordConnectOutcome =
+  | { ok: true; connectionId: string; displayName: string; externalId: string; endpoint: string }
+  | { ok: false; reason: 'rate_limited'; retryAfterSeconds: number }
+  /** `message` is a sentence from the fixed vocabulary — safe to show, and all there is to show. */
+  | { ok: false; reason: ConnectFailureCode; message: string };
+
+/** Who is asking for a login to be tried, for the attempt limits. */
+export interface PasswordConnectCaller {
+  ip: string;
+  /** A user id, or the workspace of an API key. */
+  actor: string;
+}
+
+/**
+ * Connect a site with a username and LOGIN password the person typed
+ * (`POST /v1/connections/:provider/password`). The password is checked against the site, stored
+ * only inside the connection's encrypted token, and appears nowhere else: not in the outcome, not
+ * in an error (failures are fixed codes — whatever the provider threw is reduced to one), not in a
+ * log (nothing here logs).
+ *
+ * This server is the one sending the guess, so attempts are limited before the site is asked
+ * anything — per site, per caller and per address (`beginSiteLoginAttempt`). Only a login the
+ * site ACCEPTED gives its attempt back. A wrong password, a firewall page and a site that did not
+ * answer all stay counted: each is a request we made at somebody's login, and an attacker must
+ * not get unlimited ones by picking a site that answers badly.
+ */
+export async function connectWithPassword(
+  workspaceId: string,
+  provider: ProviderIdentifier,
+  input: { ticket: string; username: string; password: string },
+  caller: PasswordConnectCaller,
+): Promise<PasswordConnectOutcome> {
+  const refuse = (reason: ConnectFailureCode): PasswordConnectOutcome => ({
+    ok: false,
+    reason,
+    message: connectFailureMessage(reason),
+  });
+  const impl = getProvider(provider);
+  if (!impl.connectMethods?.includes('password') || !impl.authenticateWithPassword) {
+    return refuse('unavailable');
+  }
+  const ticket = readSiteTicket(input.ticket, workspaceId, provider);
+  if (!ticket) return refuse('check_expired');
+
+  const gate = await beginSiteLoginAttempt({
+    ip: caller.ip,
+    actor: caller.actor,
+    site: new URL(ticket.endpoint).host,
+  });
+  if (!gate.allowed) {
+    return { ok: false, reason: 'rate_limited', retryAfterSeconds: gate.retryAfterSeconds };
+  }
+
+  let tokens: AuthTokens;
+  try {
+    tokens = await impl.authenticateWithPassword({
+      endpoint: ticket.endpoint,
+      username: input.username,
+      password: input.password,
+      site: { entered: ticket.entered, home: ticket.home, name: ticket.name },
+    });
+  } catch (err) {
+    // The code only — never the error's text, which a provider could have built from anything.
+    const reason = connectFailureCode(err);
+    // The right password for a user who may not publish is not a wrong guess.
+    await gate.settle(reason === 'role_cannot_publish' ? 'not_a_guess' : 'failed');
+    return refuse(reason);
+  }
+  await gate.settle('succeeded');
+  const connectionId = await createConnection(
+    workspaceId,
+    provider,
+    tokens,
+    tokens.externalId,
+    tokens.displayName,
+  );
+  return {
+    ok: true,
+    connectionId,
+    displayName: tokens.displayName,
+    externalId: tokens.externalId,
+    endpoint: ticket.endpoint,
+  };
+}
+
 /** Step 3 (two-phase only): the user picked an account; finalize the connection. */
 export async function finishConnect(
   workspaceId: string,
@@ -618,9 +793,16 @@ export async function listConnections(workspaceId: string): Promise<ConnectionVi
       expiresInDays: expiresInDaysFrom(r.expiresAt),
       health: computeHealth(r.tokenModel as TokenModel, r.needsReconnect, r.expiresAt),
       createdAt: r.createdAt,
+      ...connectionMethod(r.meta),
       import: connectionImportView(r),
     }));
   });
+}
+
+/** How a connection was made, read from its non-secret `meta` — the token is never opened for it. */
+export function connectionMethod(meta: unknown): Pick<ConnectionView, 'method'> {
+  const method = connectMethod.safeParse((meta as { method?: unknown } | null)?.method);
+  return method.success ? { method: method.data } : {};
 }
 
 /**
@@ -770,6 +952,7 @@ async function createConnection(
         refreshToken: tokens.refreshToken ? encryptToken(tokens.refreshToken) : null,
         tokenModel: impl.tokenModel,
         expiresAt: tokens.expiresAt ?? null,
+        ...(tokens.connectionMeta ? { meta: tokens.connectionMeta } : {}),
         // Queued here, run by the worker: the connect request never waits on the platform's
         // history. Null for a provider that cannot list its posts.
         importState: initialImportState(provider, new Date()),

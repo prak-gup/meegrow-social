@@ -11,6 +11,11 @@ built from those shapes (marked documentation-built). §8 is what a first live c
 > credential itself in the query string, so the callback is handled very differently from an OAuth
 > one (§3).
 
+> **Second transport (added 2026-10-11):** a site whose host switches Application Passwords off
+> cannot use any of the above. It can be connected with a WordPress **username and login
+> password over XML-RPC** instead — §11. That one _does_ store a login password, and §11.3 is its
+> security review.
+
 ---
 
 ## 1. Scope
@@ -20,7 +25,7 @@ Application Passwords, served over https. Create an article — now, scheduled, 
 app.
 
 Out, with what each would take: WordPress.com OAuth (§9.1), update and delete after publish (§9.2),
-analytics (§9.3), multisite, uploading inline images.
+analytics (§9.3), a plugin API-key transport (§11.9), multisite, uploading inline images.
 
 ## 2. The connect flow
 
@@ -76,6 +81,12 @@ passwords are available "to all users on sites served over SSL/HTTPS" by default
 
 **No migration.** Two additive, optional members on `SocialProvider`: `connectInput` and
 `credentialInCallback`.
+
+**Separate addresses.** WordPress has two address settings: WordPress Address (`siteurl` — where
+wp-admin, the authorize screen and `xmlrpc.php` live) and Site Address (`home` — what visitors
+see, and what the REST root is built from). They may be on different hosts. Discovery used to
+refuse any second host; it now accepts one **only on mutual evidence** (§11.4), so such a site can
+be entered by either address.
 
 ## 3. Security review — where the application password travels and rests
 
@@ -355,6 +366,8 @@ Either is a per-site dependency the client has to install or grant.
 
 ## 10. Sources
 
+XML-RPC sources are listed with §11.
+
 - [Application Passwords: Integration Guide][guide] — parameters, the `authentication` key, https.
 - [`wp-admin/authorize-application.php`][authorize-src] — what is appended to `success_url`, the
   reject path, `error=disabled`.
@@ -387,3 +400,284 @@ Either is a per-site dependency the client has to install or grant.
 [tags]: https://developer.wordpress.org/rest-api/reference/tags/
 [users]: https://developer.wordpress.org/rest-api/reference/users/
 [wpcom-oauth]: https://developer.wordpress.com/docs/oauth2/
+
+## 11. Username and password over XML-RPC
+
+_Added 2026-10-11. Like the rest of this note: **no request was made to any WordPress site**. The
+shapes come from the XML-RPC WordPress API reference and WordPress core's source (§11.10), and the
+tests replay fixtures built from them (marked documentation-built). §11.7 is what a first live
+connect must confirm._
+
+### 11.1 Why
+
+The first site anyone tried to connect could not use §2 at all:
+
+- its REST index reports `authentication: []` and the Application Passwords section is absent
+  from `profile.php` — the host disables the feature (`501 application_passwords_disabled`);
+- its two addresses are on different hosts, and discovery refused that outright — entering the
+  public address said "enter the other one", and entering the other one said "different host";
+- `xmlrpc.php` answers on both addresses.
+
+Neither a new password nor anything the client can click fixes the first point. XML-RPC is the
+one core interface left that authenticates without the `Authorization` header.
+
+### 11.2 The transport ladder
+
+| Order | Transport                                   | Credential                              | Works when                                                    | Cannot do                                             |
+| ----- | ------------------------------------------- | --------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------- |
+| 1     | REST + Application Password (`rest`)        | a password WordPress issues for THIS app | application passwords enabled; https                          | —                                                     |
+| 2     | XML-RPC + login password (`xmlrpc`)         | the user's real login password          | `xmlrpc.php` reachable and enabled                            | plugin-owned meta (§11.8); scoped or revocable access |
+| 3     | A plugin with its own API-key header (§11.9) | a key the plugin issues                 | the client installs the plugin                                | not built                                             |
+
+`rest` stays the recommendation wherever the site offers it: the credential is separate from the
+person's login, is named on their profile, and can be revoked without changing a password. The
+dialog selects it by default and only offers `xmlrpc` first when approval is unavailable.
+
+The transport is recorded **inside the encrypted credential** (`transport: 'rest' | 'xmlrpc'`);
+`WordPressProvider.post` dispatches on it. A credential written before this existed has no
+`transport` and reads as `rest`. **No migration:** the method is also copied, in the clear, to the
+existing `connections.meta` JSON column (`{ method: 'password', endpoint }`) so a list can show it
+without decrypting anything. Rolling back to a build without XML-RPC leaves such a connection
+unreadable to that build ("stored credentials are unreadable — reconnect"), not broken data.
+
+### 11.3 Security review — where the LOGIN password travels and rests
+
+This is a weaker arrangement than §3 and the dialog says so before a field can be typed in: it is
+the password that user signs in with, it cannot be scoped, and revoking it means changing it.
+
+| Stage                         | Where the secret is                                              | What protects it                                                                                                                                                                             |
+| ----------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browser                       | React state of the form                                          | Cleared when the site refuses it and when the request succeeds; gone when the dialog closes. Not written to storage. `autocomplete="off"` — a browser may still offer to save it.              |
+| Browser → our API             | JSON body of `POST /v1/connections/:provider/password`, over TLS | Sent once. Session or API key required; a cookie-authenticated request from another origin is refused. Never in a URL.                                                                       |
+| Our API handler               | In memory                                                        | See "what is logged" below.                                                                                                                                                                  |
+| Our API → the site            | Parameters of an XML-RPC `methodCall`, over TLS, via `safeFetch` | Sent only to the endpoint sealed by the site check (§11.5). https only, port 443, public addresses, pinned DNS. **Redirects are never followed.** No `Authorization` header is involved.       |
+| At rest                       | `connections.access_token`                                       | AES-256-GCM via the existing `encryptToken`. The username is inside the same ciphertext. `connections.meta` holds the method and the endpoint only.                                           |
+| API responses, MCP, dashboard | Never returned                                                   | The route answers `{ connectionId, displayName, externalId, endpoint }` or `{ error, code }`. `ConnectionView` has no token field.                                                            |
+| Publishing                    | Decrypted in the worker, sent as XML-RPC parameters              | Same guard on every request.                                                                                                                                                                 |
+
+**What is logged.** Nothing of the body. Fastify's logger is off; the request-log hook records
+the route _pattern_ and the status. Three places that would otherwise repeat a password back, and
+what closes each (all asserted in `apps/api/src/wordpress-password.test.ts`):
+
+1. **A validation error.** A zod error can quote the value it rejected. The route answers a body
+   that fails validation with one fixed sentence.
+2. **Fastify's default error handler**, which answers with `error.message` — and a JSON parse
+   error's message quotes the body it could not parse. The route has its own `errorHandler` that
+   answers a fixed sentence. Removing it makes two tests fail (checked).
+3. **The site itself.** A fault's text is the one string here this app did not write, and the
+   site has just been sent the password. The stored password is removed from any fault text
+   before it can reach a post's error or the event log. Connect-time failures never carry site
+   text at all: they are codes from `CONNECT_FAILURE_MESSAGES`.
+
+**Brute force.** This server is the one sending the guess, at a site that never asked to be
+tested. `beginSiteLoginAttempt` counts before the site is asked anything, in the existing attempt
+store (Redis in production, in-process fallback):
+
+| Counted per                                  | Limit        | Stops                                                  |
+| -------------------------------------------- | ------------ | ------------------------------------------------------ |
+| site (host the login goes to), all callers   | 5 an hour    | anyone getting more than 120 guesses a day at one site |
+| caller (user, or an API key's client)        | 10 an hour   | one account spraying a password across many sites      |
+| client address                               | 20 an hour   | the same from one address across accounts              |
+
+Only a login the site **accepted** gives its attempt back, and it never clears a counter (or one
+known login would buy unlimited guesses at another). A wrong password, a firewall page and a site
+that did not answer all stay counted — each is a request made at somebody's login. The cost: five
+failures lock everyone out of connecting that site for up to an hour.
+
+**Residual risks, stated plainly.** (a) A login password is as powerful as its user; an
+Administrator's is the whole site, including its users and plugins. The form says to create a
+dedicated Editor or Author. Nothing here can enforce that — an administrator's login is accepted.
+(b) There is nothing on the site that names this app; "revoke" means changing that user's
+password or deleting the user. (c) Two-factor plugins generally do not apply to XML-RPC, which is
+why many hosts and security plugins block it; a site that does will show as "blocked". (d) The
+site check and the login are unauthenticated-then-authenticated requests our server makes on an
+operator's say-so, to any public https host — the same exposure as §2's discovery, now including
+one login attempt, bounded by the limits above. (e) API keys can call the route, like the other
+connect routes; it is not exposed over MCP.
+
+**Invite links: not offered.** A client opening an invite link is not asked for a password. The
+public invite path still offers approval only, and there is no public route that accepts a login
+(asserted). If their site cannot be approved, the operator connects it from the dashboard. Whether
+a client should ever type a WordPress password into our page is a product decision that was left
+open rather than defaulted to yes.
+
+### 11.4 Address handling
+
+`WordPressClient.inspect` replaces the dead ends. A second host is accepted only on **mutual
+evidence**, never on one side's say-so:
+
+- the entered host's front page advertises a REST root on another host **and** the index served
+  there names the entered host as its `url` or `home`; or
+- the index names another host **and** that host's own front page advertises the _same_ REST
+  root.
+
+Every one of those requests is a new address to the SSRF guard (§4). A host that fails the test
+is never contacted with credentials, and its claimed address is not shown as the site's. For
+approval, the authorize screen must be on a confirmed host. For XML-RPC, candidates are tried in
+this order, each probed **without credentials** (`system.listMethods`):
+
+1. `xmlrpc.php` under the address the person entered;
+2. `xmlrpc.php` under the WordPress Address, if confirmed and different;
+3. only when the REST index could not say where WordPress lives: the `<link rel="EditURI">` on
+   the entered page (`rsd_link()`), **same host only**.
+
+After a login succeeds, the site's own `home_url` / `blog_url` (`wp.getOptions`) are used for the
+connection's address only where they agree with a host already confirmed.
+
+### 11.5 The connect flow
+
+1. `POST /v1/connections/:provider/site-check { siteUrl }` → what §11.4 found: approval available
+   or why not, a login possible or why not, both addresses, and the exact endpoint a login would
+   be sent to. When a login is possible the answer carries a **ticket**: that endpoint, sealed
+   (HMAC, its own key label) for this workspace and provider, good for 15 minutes.
+2. The dialog shows the endpoint and the warning copy, then
+   `POST /v1/connections/:provider/password { ticket, username, password }`.
+3. Core opens the ticket (wrong workspace, altered, expired → `check_expired`, nothing contacted),
+   counts the attempt, then `wp.getProfile` at the sealed endpoint. So the address the password
+   goes to is always one this server found and the person was shown — never one from a request
+   body, and never the result of a second, different discovery.
+4. **Capability.** XML-RPC has no "what can I do" call. `wp.getProfile` returns roles;
+   `administrator`, `editor` and `author` are accepted, `contributor` and `subscriber` refused.
+   **A user with only custom roles is refused too** — what such a role allows cannot be read, and
+   the alternative is finding out at publish time.
+5. `wp.getOptions` for the site's title and addresses (best effort), then the connection is
+   created with `meta.method = 'password'`. The Connections row reads "WordPress · password · …".
+
+### 11.6 Publishing
+
+Same article model, same `articleMarkdownToHtml`, same rules as §5–§6, carried by `wp.newPost`.
+
+| Ours                 | XML-RPC                                                                                              |
+| -------------------- | ---------------------------------------------------------------------------------------------------- |
+| title, body, status  | `post_title`, `post_content`, `post_status` (`publish` / `draft` / `pending` / `private`)            |
+| slug, excerpt        | `post_name`, `post_excerpt`                                                                          |
+| categories           | **`terms.category` — ids.** Names are looked up with `wp.getTerms`; an unknown one fails the post.   |
+| tags                 | `terms_names.post_tag` (created if missing, as REST does); numeric ids go in `terms.post_tag`        |
+| featured image       | `wp.uploadFile` (base64 in the request), then `post_thumbnail`                                       |
+
+- **`terms_names` is never used for categories**: it would create one from a typo, and it faults
+  on a name that appears twice in the hierarchy.
+- **`overwrite` is never sent to `wp.uploadFile`**: with it WordPress deletes an existing
+  attachment of the same name on a live site.
+- **Read-back.** `wp.newPost` answers with an id and nothing else, and an id says a post was
+  made, not what was stored. The post is read back with `wp.getPost`; the permalink, the status,
+  the featured image and the terms reported come from that. A difference becomes a notice on the
+  event log. An id whose post is not there is a failure. If the read-back itself fails, the post
+  is reported as created with a notice that it is **not confirmed** — it must not be retried.
+- **Duplicate safety** is §6's rule unchanged: no answer after the create was sent, or a 2xx that
+  is not XML-RPC, is final ("may or may not have been created — check the site"). A 5xx is
+  retried, with §6's caveat.
+- **Errors.** WordPress sends faults with HTTP 200 (405 for "XML-RPC services are disabled").
+  Fault 403 "Incorrect username or password" → needs reconnect. 403 is also used for refused
+  arguments and its text is translated, so an unrecognised 403 is settled by one `wp.getProfile`
+  call, where 403 can only mean the login. Fault 401 → the user may not do this (auth). 405, a
+  firewall page, a missing endpoint → final, with the cause named.
+- **Upload size.** The image travels base64-encoded inside the request, about a third larger. PHP
+  discards a body over `post_max_size` and WordPress then reports malformed XML; that fault on an
+  upload is reported as "probably larger than the site's upload limit".
+
+### 11.7 Live bring-up checklist — `https://jaipureyedental.com/blog`
+
+Nothing here has run. On that site (admin at `https://blog.jaipureyedental.com`, Hostinger):
+
+**Before**
+
+- [ ] In WordPress, create a user for this (Editor or Author), not the administrator account.
+      Note whose byline articles should carry — see §11.8.
+
+**Site check**
+
+- [ ] Enter the **public** address. Expect: approval "not available", both addresses shown, a
+      login offered at `https://jaipureyedental.com/blog/xmlrpc.php`.
+- [ ] Enter the **admin** address. Expect the same site, a login offered at
+      `https://blog.jaipureyedental.com/xmlrpc.php`. Neither should be an error.
+- [ ] Does the admin host's front page really send the `Link` header on a `HEAD`? If a CDN strips
+      it, the public address shows "says its address is … enter that instead" — the mutual check
+      failing safe. Record which.
+- [ ] `system.listMethods` is answered without credentials and lists `wp.newPost`. If Hostinger
+      or a plugin hides it, the state is "unknown" and a login is still offered — confirm.
+
+**Login**
+
+- [ ] The right login connects; the row reads "WordPress · password".
+- [ ] A wrong password says "did not accept that username and password" and the field empties.
+      Check the site's own login limiter did not lock our server's address after it.
+- [ ] `wp.getProfile` returns `roles` for that user. A Contributor is refused.
+- [ ] `wp.getOptions` returns `blog_title`, `home_url`, `blog_url`; the connection's address is the
+      public one.
+- [ ] `connections.access_token` is ciphertext; `connections.meta` has the method and endpoint
+      only; nothing in `event_logs` or the Caddy logs contains the password.
+- [ ] Six wrong logins in an hour: the sixth is refused by us and never reaches the site.
+
+**Publish**
+
+- [ ] A draft first (`status: draft`). The read-back returns a `link` — record what it is for a
+      draft — and the event log carries the "not public" notice.
+- [ ] A published article: the body renders as intended and `link` is the public permalink under
+      `/blog/`.
+- [ ] A category by name that exists is attached; a misspelt one fails **without** creating a
+      category. (This site has 51 categories, some near-duplicates and some that belong to
+      another business — pick names from the list, do not invent.)
+- [ ] A new tag is created; an existing one is reused.
+- [ ] Featured image: uploaded once, attached, and nothing in the library was overwritten. Try
+      one near the host's `post_max_size`.
+- [ ] Change the user's password on the site, publish: the post fails with the auth message and
+      the connection reads "Needs reconnect".
+- [ ] Open the article in wp-admin: the SEO plugin's panel is **empty**. That is §11.8, not a bug.
+
+Then re-record the fixtures in `providers/wordpress/wordpress.xmlrpc.test.ts`.
+
+### 11.8 What XML-RPC cannot do
+
+- **Plugin-owned SEO fields.** `wp.newPost` accepts `custom_fields`, returns a post id, and
+  silently stores nothing for keys a plugin registered with its own auth callback (Rank Math's
+  title, description and focus keyword are the known case). This build sends no `custom_fields`
+  at all rather than appear to. An article arrives with its SEO panel unfilled.
+- **Authorship.** The article is published as the connected user. Publishing as a named author
+  (`post_author`) needs `edit_others_posts` and an author option the article model does not have.
+  Until then the dedicated user's display name is the byline — choose it deliberately.
+- **Scoped or revocable access**, and anything on the site that names this app.
+- **Capabilities.** Only roles can be read (§11.5).
+- Multisite, and a site whose character set is not UTF-8 (responses are decoded as UTF-8).
+
+### 11.9 Not built: a plugin API-key transport
+
+A plugin that authenticates with its own header (Royal MCP's `X-Royal-MCP-API-Key` is the one
+seen working on this site) passes hosts that disable application passwords _and_ strip
+`Authorization`, and writes plugin-owned meta server-side, where §11.8's wall does not apply. It
+would need:
+
+- a third `transport` value and credential shape (`{ endpoint, apiKey }`) — the union in
+  `client.ts` and the dispatch in `post()` are already shaped for it;
+- a third connect method in the dialog: the client installs the plugin and pastes a key. A key is
+  a better secret than a login password (issued for this, revocable on its own) but the plugin
+  grants broad control of the install, which the copy must say;
+- a client for that plugin's API and a **capability probe at connect** (can it write SEO fields,
+  upload media, set terms) so a post that needs one says so before publish;
+- the same read-back rule: write the SEO fields, read them back, fail naming the ones that did
+  not persist;
+- SEO fields in the article options arm — which is what makes it worth building at all;
+- a decision on depending on a third-party plugin per client site.
+
+### 11.10 Sources (XML-RPC)
+
+- [XML-RPC WordPress API][xmlrpc-api] and its pages for [Posts][xmlrpc-posts]
+  (`wp.newPost`, `wp.getPost`), [Taxonomies][xmlrpc-tax] (`wp.getTerms`), [Media][xmlrpc-media]
+  (`wp.uploadFile`), [Users][xmlrpc-users] (`wp.getProfile`, `wp.getUsersBlogs`) and
+  [Options][xmlrpc-options] (`wp.getOptions`).
+- [`class-wp-xmlrpc-server.php`][xmlrpc-src] — the methods, their fault codes, `login()`,
+  `_insert_post` (terms and `terms_names`), the 405 for a disabled server.
+- [`wp-includes/IXR/`][ixr-src] — the wire layout the fixtures are written in.
+- [XML-RPC specification][xmlrpc-spec].
+- [`rsd_link()`][rsd-src] — the `EditURI` link.
+
+[xmlrpc-api]: https://codex.wordpress.org/XML-RPC_WordPress_API
+[xmlrpc-posts]: https://codex.wordpress.org/XML-RPC_WordPress_API/Posts
+[xmlrpc-tax]: https://codex.wordpress.org/XML-RPC_WordPress_API/Taxonomies
+[xmlrpc-media]: https://codex.wordpress.org/XML-RPC_WordPress_API/Media
+[xmlrpc-users]: https://codex.wordpress.org/XML-RPC_WordPress_API/Users
+[xmlrpc-options]: https://codex.wordpress.org/XML-RPC_WordPress_API/Options
+[xmlrpc-src]: https://github.com/WordPress/wordpress-develop/blob/trunk/src/wp-includes/class-wp-xmlrpc-server.php
+[ixr-src]: https://github.com/WordPress/wordpress-develop/tree/trunk/src/wp-includes/IXR
+[xmlrpc-spec]: http://xmlrpc.com/spec.md
+[rsd-src]: https://github.com/WordPress/wordpress-develop/blob/trunk/src/wp-includes/general-template.php

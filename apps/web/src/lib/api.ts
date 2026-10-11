@@ -27,6 +27,8 @@ import type {
   BulkPostMetricsView,
   AnalyticsStatusView,
   AnalyticsReportView,
+  PasswordConnectResult,
+  SiteCheck,
 } from '@meegrow-social/contracts';
 
 /**
@@ -108,6 +110,29 @@ export const api = {
       'POST',
       `/v1/connections/${encodeURIComponent(provider)}/start`,
       answers,
+    ),
+  /**
+   * Ask the server to look at a site address without logging in: which connect methods the site
+   * can use, why not when it cannot, and — when a login is possible — the exact address it would
+   * be sent to, sealed in `ticket`.
+   */
+  checkSite: (provider: string, siteUrl: string) =>
+    request<SiteCheck>('POST', `/v1/connections/${encodeURIComponent(provider)}/site-check`, {
+      siteUrl,
+    }),
+  /**
+   * Connect a site with a username and LOGIN password, for the endpoint a `checkSite` ticket
+   * names. Sent once, over this app's own https. Callers must not persist or log the password;
+   * the response never carries it.
+   */
+  connectWithPassword: (
+    provider: string,
+    login: { ticket: string; username: string; password: string },
+  ) =>
+    request<PasswordConnectResult>(
+      'POST',
+      `/v1/connections/${encodeURIComponent(provider)}/password`,
+      login,
     ),
   /** Mints for the active client, or for `workspaceId` — any client the user belongs to. */
   createInvite: (provider: string, workspaceId?: string) =>
