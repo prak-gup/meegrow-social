@@ -15,6 +15,8 @@ import type {
   CreatedWorkspaceView,
   CreatedInviteView,
   InviteView,
+  InviteFlowView,
+  InviteConnectedView,
   CreatedApiKeyView,
   PostMetricsView,
   FollowerSeriesView,
@@ -96,6 +98,13 @@ export const api = {
     request<InviteView>('GET', `/v1/invite/${encodeURIComponent(token)}`),
   startInvite: (token: string) =>
     request<{ url: string }>('POST', `/v1/invite/${encodeURIComponent(token)}/start`),
+  // The invite's account pick (public): the flow's HttpOnly proof cookie is the credential.
+  getInviteFlow: (flowId: string) =>
+    request<InviteFlowView>('GET', `/v1/invite/flow/${encodeURIComponent(flowId)}`),
+  finishInviteFlow: (flowId: string, externalId: string) =>
+    request<InviteConnectedView>('POST', `/v1/invite/flow/${encodeURIComponent(flowId)}/finish`, {
+      externalId,
+    }),
   finishConnect: (flowId: string, externalId: string) =>
     request<{ connectionId: string }>('POST', '/v1/connections/finish', { flowId, externalId }),
   deleteConnection: (id: string) => request<{ deleted: true }>('DELETE', `/v1/connections/${id}`),

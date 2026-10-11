@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import type { InviteView } from '@meegrow-social/contracts';
 import { api } from '../lib/api';
@@ -13,7 +13,7 @@ import {
   Plugs,
 } from '../lib/icons';
 
-const BRAND: Record<string, { Icon: typeof FacebookLogo; bg: string }> = {
+export const BRAND: Record<string, { Icon: typeof FacebookLogo; bg: string }> = {
   facebook: { Icon: FacebookLogo, bg: 'bg-brand-facebook' },
   instagram: { Icon: InstagramLogo, bg: 'bg-brand-instagram' },
   gmb: { Icon: GoogleLogo, bg: 'bg-brand-gmb' },
@@ -23,10 +23,49 @@ const BRAND: Record<string, { Icon: typeof FacebookLogo; bg: string }> = {
   youtube: { Icon: YoutubeLogo, bg: 'bg-brand-youtube' },
 };
 
+/** The card every public invite screen sits in — the client never sees the dashboard chrome. */
+export function InviteCard({ children }: { children: ReactNode }) {
+  return (
+    <div className="grid min-h-screen place-items-center bg-surface-soft px-4">
+      <div className="w-full max-w-md rounded-lg border border-hairline bg-canvas p-8 shadow-1">
+        <Logo size={26} className="mb-6" />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** Platform mark + what is being connected for whom, shared by the landing and the picker. */
+export function InviteHeading({
+  provider,
+  title,
+  subtitle,
+}: {
+  provider: string;
+  title: string;
+  subtitle: string;
+}) {
+  const brand = BRAND[provider] ?? { Icon: Plugs, bg: 'bg-muted' };
+  return (
+    <div className="mb-5 flex items-center gap-4">
+      <span
+        className={`grid h-14 w-14 flex-none place-items-center rounded-md text-white ${brand.bg}`}
+      >
+        <brand.Icon size={30} weight="fill" />
+      </span>
+      <div>
+        <h1 className="text-xl font-semibold leading-tight">{title}</h1>
+        <p className="text-body text-muted">{subtitle}</p>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Public connect-invite landing (no login). A client opens the link the operator sent, sees which
- * account they're granting for which agency, and starts the OAuth. The existing /connect/callback
- * finalises into the invite's workspace.
+ * account they're granting for which agency, and starts the OAuth. /connect/callback then either
+ * connects straight into the invite's workspace or, when an account has to be picked, sends this
+ * browser on to InviteFinish.
  */
 export function Invite() {
   const { token = '' } = useParams();
@@ -57,59 +96,41 @@ export function Invite() {
     }
   };
 
-  const brand = invite ? (BRAND[invite.provider] ?? { Icon: Plugs, bg: 'bg-muted' }) : null;
-
   return (
-    <div className="grid min-h-screen place-items-center bg-surface-soft px-4">
-      <div className="w-full max-w-md rounded-lg border border-hairline bg-canvas p-8 shadow-1">
-        <Logo size={26} className="mb-6" />
+    <InviteCard>
+      {state === 'loading' && <p className="text-muted">Loading…</p>}
 
-        {state === 'loading' && <p className="text-muted">Loading…</p>}
+      {state === 'invalid' && (
+        <>
+          <h1 className="text-xl font-semibold">This link isn’t valid</h1>
+          <p className="mt-2 text-body text-muted">
+            It may have expired or already been used. Ask your agency for a fresh link.
+          </p>
+        </>
+      )}
 
-        {state === 'invalid' && (
-          <>
-            <h1 className="text-xl font-semibold">This link isn’t valid</h1>
-            <p className="mt-2 text-body text-muted">
-              It may have expired or already been used. Ask your agency for a fresh link.
-            </p>
-          </>
-        )}
-
-        {invite && brand && (state === 'ready' || state === 'starting') && (
-          <>
-            <div className="mb-5 flex items-center gap-4">
-              <span
-                className={`grid h-14 w-14 flex-none place-items-center rounded-md text-white ${brand.bg}`}
-              >
-                <brand.Icon size={30} weight="fill" />
-              </span>
-              <div>
-                <h1 className="text-xl font-semibold leading-tight">
-                  Connect your {invite.providerDisplayName}
-                </h1>
-                <p className="text-body text-muted">
-                  so {invite.workspaceName} can publish on your behalf
-                </p>
-              </div>
-            </div>
-            <ul className="mb-6 space-y-2 text-sm text-body-ink">
-              <li>• You’ll sign in with {invite.providerDisplayName} and approve access.</li>
-              <li>• {invite.workspaceName} can post and read insights — nothing else.</li>
-              <li>• Your password is never shared, and you can revoke access anytime.</li>
-            </ul>
-            {err && <p className="mb-4 text-sm text-error">{err}</p>}
-            <button
-              onClick={() => void start()}
-              disabled={state === 'starting'}
-              className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-sm bg-rausch px-4 text-body font-medium text-white hover:bg-rausch-active disabled:opacity-60"
-            >
-              {state === 'starting'
-                ? 'Redirecting…'
-                : `Continue with ${invite.providerDisplayName}`}
-            </button>
-          </>
-        )}
-      </div>
-    </div>
+      {invite && (state === 'ready' || state === 'starting') && (
+        <>
+          <InviteHeading
+            provider={invite.provider}
+            title={`Connect your ${invite.providerDisplayName}`}
+            subtitle={`so ${invite.workspaceName} can publish on your behalf`}
+          />
+          <ul className="mb-6 space-y-2 text-sm text-body-ink">
+            <li>• You’ll sign in with {invite.providerDisplayName} and approve access.</li>
+            <li>• {invite.workspaceName} can post and read insights — nothing else.</li>
+            <li>• Your password is never shared, and you can revoke access anytime.</li>
+          </ul>
+          {err && <p className="mb-4 text-sm text-error">{err}</p>}
+          <button
+            onClick={() => void start()}
+            disabled={state === 'starting'}
+            className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-sm bg-rausch px-4 text-body font-medium text-white hover:bg-rausch-active disabled:opacity-60"
+          >
+            {state === 'starting' ? 'Redirecting…' : `Continue with ${invite.providerDisplayName}`}
+          </button>
+        </>
+      )}
+    </InviteCard>
   );
 }

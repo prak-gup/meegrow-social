@@ -12,6 +12,7 @@ import { ApiKeys } from './pages/ApiKeys';
 import { ChangePassword } from './pages/ChangePassword';
 import { Analytics } from './pages/Analytics';
 import { Invite } from './pages/Invite';
+import { InviteFinish } from './pages/InviteFinish';
 
 /** Gates the authenticated area: waits for the session probe, redirects to /login if absent. */
 function Protected() {
@@ -27,6 +28,8 @@ export function App() {
     <Routes>
       {/* Public: the client-facing connect-invite landing (no session required). */}
       <Route path="/i/:token" element={<Invite />} />
+      {/* Public: where /connect/callback sends an invited client to pick the account to connect. */}
+      <Route path="/i/finish/:flowId" element={<InviteFinish />} />
       <Route
         path="/login"
         element={me && !loading ? <Navigate to="/overview" replace /> : <Login />}
