@@ -58,8 +58,14 @@ bash scripts/guardrails.sh
 pnpm lint
 pnpm build            # turbo, strict tsc across all packages
 pnpm test             # unit — no infra needed
-pnpm test:integration # RLS + API + publish — needs Postgres (DATABASE_URL + APP_DATABASE_URL)
+pnpm test:integration # RLS + API + publish — needs Postgres + Redis; DESTRUCTIVE, read below
 ```
+
+**`pnpm test:integration` truncates every table of the database it is pointed at.** It only runs
+against a database whose name ends in `_test` (default `meegrow_social_test`, never the dev
+`meegrow_social`) and refuses anything else. Create that database once and see
+[`docs/dev/TESTING.md`](docs/dev/TESTING.md) before running it locally. A bare `vitest run` skips
+the integration suites.
 
 `DATABASE_URL` is the admin/migration connection; `APP_DATABASE_URL` is the non-superuser `mgs_app`
 role the app uses so RLS actually enforces. Both are set for you in `docker-compose.dev.yml` land via

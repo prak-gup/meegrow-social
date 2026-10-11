@@ -8,6 +8,7 @@ import {
   createWorkspace,
   resetDb,
   useRecordingScheduler,
+  useTestDatabaseEnv,
 } from '@meegrow-social/testing';
 import type { FastifyInstance } from 'fastify';
 import { buildServer } from './server.js';
@@ -23,7 +24,7 @@ let app: FastifyInstance;
 let baseUrl: string;
 
 beforeAll(async () => {
-  process.env.DATABASE_URL ??= 'postgres://mgs:mgs@localhost:5433/meegrow_social';
+  useTestDatabaseEnv();
   process.env.TOKEN_ENCRYPTION_KEY ??= 'integration-test-key';
   app = await buildServer();
   // A real socket, not `app.inject`: the MCP transport hijacks the raw response and later closes the

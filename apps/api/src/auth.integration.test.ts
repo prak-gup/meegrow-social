@@ -8,6 +8,7 @@ import {
   createUser,
   createWorkspace,
   resetDb,
+  useTestDatabaseEnv,
 } from '@meegrow-social/testing';
 import type { FastifyInstance } from 'fastify';
 import { buildServer } from './server.js';
@@ -15,8 +16,7 @@ import { buildServer } from './server.js';
 let app: FastifyInstance;
 
 beforeAll(async () => {
-  process.env.DATABASE_URL ??= 'postgres://prakhar@localhost:5432/meegrow_social';
-  process.env.APP_DATABASE_URL ??= 'postgres://mgs_app:mgs_app@localhost:5432/meegrow_social';
+  useTestDatabaseEnv();
   process.env.TOKEN_ENCRYPTION_KEY ??= 'integration-test-key';
   app = await buildServer();
 });

@@ -5,6 +5,7 @@ import {
   createWorkspace,
   resetDb,
   useRecordingScheduler,
+  useTestDatabaseEnv,
 } from '@meegrow-social/testing';
 import { registerProvider } from '../providers/registry.js';
 import type { AuthTokens, PostResult, SocialProvider } from '../providers/types.js';
@@ -16,8 +17,7 @@ import { publishPost } from './publish.js';
  * lock that makes "check the status" and "send the post" one step.
  */
 beforeAll(() => {
-  process.env.DATABASE_URL ??= 'postgres://mgs:mgs@localhost:5433/meegrow_social';
-  process.env.APP_DATABASE_URL ??= 'postgres://mgs_app:mgs_app@localhost:5433/meegrow_social';
+  useTestDatabaseEnv();
   process.env.TOKEN_ENCRYPTION_KEY ??= 'integration-test-key';
   registerProvider(slow);
 });

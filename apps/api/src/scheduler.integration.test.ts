@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Queue, Worker } from 'bullmq';
 import { createBullScheduler, publishJobId, PUBLISH_QUEUE } from './scheduler.js';
 import type { PublishJobData } from './scheduler.js';
+import { requireTestRedisUrl } from '@meegrow-social/testing';
 
 /**
  * Exercises the REAL BullMQ adapter (needs Redis; CI provides it).
@@ -11,7 +12,7 @@ import type { PublishJobData } from './scheduler.js';
  * any custom id containing ':' — stranding every scheduled post as 'scheduled' with no job. A fake
  * cannot catch a constraint only the real adapter enforces, so this suite drives the actual queue.
  */
-const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
+const REDIS_URL = requireTestRedisUrl();
 
 let queue: Queue<PublishJobData>;
 

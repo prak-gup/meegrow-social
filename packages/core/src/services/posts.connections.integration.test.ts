@@ -6,14 +6,14 @@ import {
   createWorkspace,
   resetDb,
   useRecordingScheduler,
+  useTestDatabaseEnv,
 } from '@meegrow-social/testing';
 import { ConnectionNotFoundError, deleteConnection } from './connections.js';
 import { createPost, duplicatePost, listPosts } from './posts.js';
 import { previewQueueSlots } from './queues.js';
 
 beforeAll(() => {
-  process.env.DATABASE_URL ??= 'postgres://mgs:mgs@localhost:5433/meegrow_social';
-  process.env.APP_DATABASE_URL ??= 'postgres://mgs_app:mgs_app@localhost:5433/meegrow_social';
+  useTestDatabaseEnv();
   process.env.TOKEN_ENCRYPTION_KEY ??= 'integration-test-key';
 });
 beforeEach(resetDb);

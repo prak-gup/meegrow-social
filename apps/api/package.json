@@ -8,7 +8,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vitest run --exclude '**/*.integration.test.ts'",
-    "test:integration": "vitest run '**/*.integration.test.ts'",
+    "test:integration": "MGS_RUN_INTEGRATION_TESTS=1 vitest run '**/*.integration.test.ts'",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "seed:owner": "tsx src/seed.ts"
