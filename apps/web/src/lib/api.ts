@@ -1,4 +1,5 @@
 import type {
+  ApiKeyView,
   AuthMeView,
   CalendarView,
   ConnectionView,
@@ -13,6 +14,7 @@ import type {
   CreatedWorkspaceView,
   CreatedInviteView,
   InviteView,
+  CreatedApiKeyView,
 } from '@meegrow-social/contracts';
 
 /**
@@ -90,6 +92,14 @@ export const api = {
   finishConnect: (flowId: string, externalId: string) =>
     request<{ connectionId: string }>('POST', '/v1/connections/finish', { flowId, externalId }),
   deleteConnection: (id: string) => request<{ deleted: true }>('DELETE', `/v1/connections/${id}`),
+
+  // --- API keys (#8) ---
+  // Scoped to the session's active workspace. The create response is the only one carrying the
+  // secret; callers must not persist or log it.
+  listApiKeys: () => request<{ apiKeys: ApiKeyView[] }>('GET', '/v1/api-keys'),
+  createApiKey: (name: string) => request<CreatedApiKeyView>('POST', '/v1/api-keys', { name }),
+  revokeApiKey: (id: string) =>
+    request<{ revoked: true }>('DELETE', `/v1/api-keys/${encodeURIComponent(id)}`),
 
   // --- Posts (#5) ---
   // Filter values are sent as URL params (the server validates via listPostsQuery); the response is

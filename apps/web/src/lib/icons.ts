@@ -36,6 +36,7 @@ export {
   PlayCircle,
   Copy,
   Gear,
+  Key,
   Bell,
   Article,
   FacebookLogo,
