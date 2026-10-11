@@ -1,7 +1,16 @@
 import { cn } from '../lib/cn';
 
 /** The meegrow·social mark + wordmark. Colours come from tokens via fill/stroke utilities. */
-export function Logo({ className, size = 30 }: { className?: string; size?: number }) {
+export function Logo({
+  className,
+  size = 30,
+  compact = false,
+}: {
+  className?: string;
+  size?: number;
+  /** The mark alone, for the collapsed sidebar rail. */
+  compact?: boolean;
+}) {
   return (
     <span className={cn('flex items-center gap-2', className)}>
       <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
@@ -15,9 +24,13 @@ export function Logo({ className, size = 30 }: { className?: string; size?: numb
         />
         <circle cx="24" cy="9" r="2.6" className="fill-ink" />
       </svg>
-      <span className="text-wordmark font-bold tracking-tight text-rausch">
-        meegrow<span className="text-ink">·social</span>
-      </span>
+      {compact ? (
+        <span className="sr-only">meegrow·social</span>
+      ) : (
+        <span className="text-wordmark font-bold tracking-tight text-rausch">
+          meegrow<span className="text-ink">·social</span>
+        </span>
+      )}
     </span>
   );
 }

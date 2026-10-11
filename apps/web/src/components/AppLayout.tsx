@@ -1,13 +1,23 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import type { OverviewView } from '@meegrow-social/contracts';
 import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
+import {
+  formatBadge,
+  isComposeShortcut,
+  navBadges,
+  readCollapsed,
+  writeCollapsed,
+} from '../lib/sidebar';
+import { useSidebarOverview } from '../lib/useSidebarOverview';
 import { Composer } from '../pages/Composer';
+import { AccountMenu } from './AccountMenu';
 import { ClientSwitcher } from './ClientSwitcher';
 import { AddClientModal } from './AddClientModal';
 import { Logo } from './Logo';
 import { Button } from './ui/Button';
-import { RowMenu } from './ui/RowMenu';
+import { Tooltip } from './ui/Tooltip';
 import {
   House,
   CalendarBlank,
@@ -16,121 +26,191 @@ import {
   UsersThree,
   Plugs,
   Key,
-  LockKey,
   Plus,
   List,
   CloseIcon,
-  SignOut,
-  CaretUpDown,
+  SidebarSimple,
+  type IconComponent,
 } from '../lib/icons';
 
-const TABS = [
+type BadgeKey = 'content' | 'connections';
+
+const TABS: { to: string; label: string; Icon: IconComponent; badge?: BadgeKey }[] = [
   { to: '/overview', label: 'Overview', Icon: House },
   { to: '/calendar', label: 'Calendar', Icon: CalendarBlank },
-  { to: '/content', label: 'Content', Icon: SquaresFour },
+  { to: '/content', label: 'Content', Icon: SquaresFour, badge: 'content' },
   // Always listed. Until the numbers are validated against the platforms the page itself carries a
   // "Preview" badge (VITE_ANALYTICS_UI, see pages/Analytics.tsx and docs/dev/ANALYTICS-UI-BRIEF.md §1).
   { to: '/analytics', label: 'Analytics', Icon: ChartLineUp },
   { to: '/clients', label: 'Clients', Icon: UsersThree },
-  { to: '/connections', label: 'Connections', Icon: Plugs },
+  { to: '/connections', label: 'Connections', Icon: Plugs, badge: 'connections' },
   { to: '/settings/api-keys', label: 'API keys', Icon: Key },
 ];
+
+/** What a nav badge counts, in words (the number alone is not a name). */
+const BADGE_WORDS: Record<BadgeKey, (n: number) => string> = {
+  content: (n) => (n === 1 ? 'failed post' : 'failed posts'),
+  connections: () => 'need attention',
+};
+
+interface SidebarProps {
+  onNavigate?: () => void;
+  onAddClient: () => void;
+  overview: OverviewView | null;
+  onSwitcherOpen: () => void;
+  /** Icon-rail form (desktop only). */
+  collapsed?: boolean;
+  /** Present on the desktop rail only: flips collapsed/expanded. */
+  onToggleCollapsed?: () => void;
+  /** The composer is open: the sidebar is inert, so no popover may be open or openable. */
+  composing: boolean;
+}
 
 /** Everything the sidebar holds. Rendered once as the desktop rail and once inside the mobile drawer. */
 function SidebarContent({
   onNavigate,
   onAddClient,
-}: {
-  onNavigate?: () => void;
-  onAddClient: () => void;
-}) {
-  const { me, logout } = useAuth();
+  overview,
+  onSwitcherOpen,
+  collapsed = false,
+  onToggleCollapsed,
+  composing,
+}: SidebarProps) {
   const navigate = useNavigate();
   const { pathname, search } = useLocation();
-  const displayName = me?.user.name ?? me?.user.email ?? 'Account';
-  const initial = displayName.trim()[0]?.toUpperCase() ?? 'U';
+  const badges = navBadges(overview);
 
   return (
-    <div className="flex h-full flex-col gap-3 p-3">
-      <Logo className="py-1 pl-1 pr-10 md:pr-1" size={24} />
+    <div className={cn('flex h-full flex-col gap-3', collapsed ? 'p-2' : 'p-3')}>
+      <Logo
+        className={cn('py-1', collapsed ? 'justify-center' : 'pl-1 pr-10 md:pr-1')}
+        size={24}
+        compact={collapsed}
+      />
 
       {/* No lock needed while composing: the composer is a modal panel and this whole sidebar is
           inert behind it, so the client cannot change under an unsaved post. */}
-      <ClientSwitcher onAddClient={onAddClient} onNavigate={onNavigate} />
+      <ClientSwitcher
+        onAddClient={onAddClient}
+        onNavigate={onNavigate}
+        overview={overview}
+        onOpen={onSwitcherOpen}
+        collapsed={collapsed}
+        disabled={composing}
+      />
 
-      <Button
-        variant="accent"
-        className="w-full"
-        onClick={() => {
-          onNavigate?.();
-          // The composer opens as a panel over this page and returns here when closed.
-          navigate('/composer', { state: { background: pathname + search } });
-        }}
-      >
-        <Plus size={16} weight="bold" />
-        Create post
-      </Button>
+      <Tooltip label={collapsed ? 'Create post (C)' : undefined}>
+        <Button
+          variant="accent"
+          size={collapsed ? 'icon' : 'default'}
+          className={cn('relative w-full active:bg-rausch-active', collapsed && 'md:w-full')}
+          aria-label="Create post"
+          aria-keyshortcuts="c"
+          disabled={composing}
+          onClick={() => {
+            onNavigate?.();
+            // The composer opens as a panel over this page and returns here when closed.
+            navigate('/composer', { state: { background: pathname + search } });
+          }}
+        >
+          <Plus size={16} weight="bold" aria-hidden="true" />
+          {!collapsed && (
+            <>
+              Create post
+              <kbd className="absolute right-2 hidden rounded-xs bg-white/20 px-1 font-sans text-micro font-medium md:inline">
+                C
+              </kbd>
+            </>
+          )}
+        </Button>
+      </Tooltip>
 
       <nav aria-label="Main" className="flex flex-col gap-0.5">
-        {TABS.map(({ to, label, Icon }) => (
-          <NavLink key={to} to={to} onClick={onNavigate} className={navClass}>
-            <Icon size={18} />
-            {label}
-          </NavLink>
-        ))}
+        {TABS.map(({ to, label, Icon, badge }) => {
+          const n = badge ? badges[badge] : 0;
+          const words = n > 0 && badge ? `${formatBadge(n)} ${BADGE_WORDS[badge](n)}` : '';
+          return (
+            <Tooltip
+              key={to}
+              label={collapsed ? (words ? `${label} · ${words}` : label) : undefined}
+            >
+              <NavLink
+                to={to}
+                onClick={onNavigate}
+                aria-label={collapsed ? (words ? `${label}, ${words}` : label) : undefined}
+                className={({ isActive }) => navClass(isActive, collapsed)}
+              >
+                {({ isActive }) => (
+                  <>
+                    <span className="relative flex-none">
+                      <Icon size={18} weight={isActive ? 'fill' : 'regular'} aria-hidden="true" />
+                      {collapsed && n > 0 && (
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            'absolute -right-1 -top-1 h-2 w-2 rounded-full ring-2 ring-canvas',
+                            badge === 'content' ? 'bg-status-bad' : 'bg-status-warn',
+                          )}
+                        />
+                      )}
+                    </span>
+                    {!collapsed && <span className="min-w-0 flex-1 truncate">{label}</span>}
+                    {!collapsed && n > 0 && (
+                      <span
+                        className={cn(
+                          'tnum grid h-4 min-w-4 flex-none place-items-center rounded-full px-1 text-micro font-semibold text-white',
+                          badge === 'content' ? 'bg-status-bad' : 'bg-status-warn',
+                        )}
+                      >
+                        <span aria-hidden="true">{formatBadge(n)}</span>
+                        <span className="sr-only">{words}</span>
+                      </span>
+                    )}
+                  </>
+                )}
+              </NavLink>
+            </Tooltip>
+          );
+        })}
       </nav>
 
-      {/* Account-level actions live in one menu on the user row, so the name gets the row's full
-          width instead of sharing it with icons. */}
-      <div className="mt-auto border-t border-hairline-soft pt-2">
-        <RowMenu
-          label={`Account: ${displayName}`}
-          align="start"
-          items={[
-            {
-              label: 'Change password',
-              icon: <LockKey size={14} />,
-              onSelect: () => {
-                onNavigate?.();
-                navigate('/settings/password');
-              },
-            },
-            {
-              label: 'Sign out',
-              icon: <SignOut size={14} />,
-              onSelect: () => void logout().then(() => navigate('/login')),
-            },
-          ]}
-          className="flex h-11 w-full items-center gap-2 rounded-sm px-1 text-left hover:bg-surface-soft aria-expanded:bg-surface-strong"
-        >
-          <span
-            className="grid h-7 w-7 flex-none place-items-center rounded-full bg-surface-strong text-xs font-semibold text-ink"
-            aria-hidden="true"
-          >
-            {initial}
-          </span>
-          {/* The name has the row to itself; the caret sits on the email line, which truncates
-              anyway. */}
-          <span className="min-w-0 flex-1 leading-tight">
-            <span className="block truncate text-sm font-medium text-ink">{displayName}</span>
-            <span className="flex items-center gap-1 text-micro text-muted">
-              <span className="min-w-0 flex-1 truncate">
-                {me?.user.name ? me.user.email : 'Account'}
-              </span>
-              <CaretUpDown size={10} className="flex-none" aria-hidden="true" />
-            </span>
-          </span>
-        </RowMenu>
+      <div className="mt-auto flex flex-col gap-1 border-t border-hairline-soft pt-2">
+        {onToggleCollapsed && (
+          <Tooltip label={collapsed ? 'Expand sidebar' : undefined}>
+            <button
+              type="button"
+              onClick={onToggleCollapsed}
+              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              className={cn(
+                'flex h-8 w-full items-center rounded-sm text-sm font-medium text-muted transition-colors hover:bg-surface-soft hover:text-ink active:bg-surface-strong',
+                collapsed ? 'justify-center' : 'gap-2.5 px-2.5',
+              )}
+            >
+              <SidebarSimple size={18} aria-hidden="true" />
+              {!collapsed && 'Collapse'}
+            </button>
+          </Tooltip>
+        )}
+        {/* Account-level actions live in one menu on the user row, so the name gets the row's full
+            width instead of sharing it with icons. */}
+        <AccountMenu onNavigate={onNavigate} collapsed={collapsed} disabled={composing} />
       </div>
     </div>
   );
 }
 
-/** A sidebar row: 44px on a phone drawer, 32px from md up. Active is a neutral fill, never the accent. */
-const navClass = ({ isActive }: { isActive: boolean }) =>
+/**
+ * A sidebar row: 44px on a phone drawer, 32px from md up. Hover, pressed and keyboard-focus each
+ * read differently. The active page is a stronger fill, a slim ink bar on the left edge, a filled
+ * icon and `aria-current="page"` (NavLink sets it) — never the accent colour.
+ */
+const navClass = (isActive: boolean, collapsed: boolean) =>
   cn(
-    'flex h-11 items-center gap-2.5 rounded-sm px-2.5 text-base font-medium text-muted hover:bg-surface-soft hover:text-ink md:h-8',
-    isActive && 'bg-surface-strong text-ink',
+    'relative flex h-11 items-center rounded-sm text-base font-medium transition-colors md:h-8',
+    collapsed ? 'justify-center' : 'gap-2 px-2.5',
+    isActive
+      ? 'bg-surface-strong text-ink before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-ink'
+      : 'text-muted hover:bg-surface-soft hover:text-ink active:bg-surface-strong',
   );
 
 /**
@@ -148,10 +228,36 @@ export function AppLayout({
   composerOver?: string | null;
 }) {
   const { me } = useAuth();
+  const navigate = useNavigate();
   const { pathname, search } = useLocation();
   const composing = composerOver !== null;
   const [adding, setAdding] = useState(false);
   const [drawer, setDrawer] = useState(false);
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const { overview, refresh, refreshIfStale } = useSidebarOverview(me?.activeWorkspaceId ?? null);
+
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((v) => {
+      writeCollapsed(!v);
+      return !v;
+    });
+  }, []);
+
+  // Numbers on the nav go stale as posts fail and connections lapse: re-check when the user moves.
+  useEffect(() => refreshIfStale(), [pathname, refreshIfStale]);
+
+  // `c` opens the composer, unless the user is typing or something modal is already open.
+  useEffect(() => {
+    if (composing || drawer || adding) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!isComposeShortcut(e)) return;
+      if (document.querySelector('[role="dialog"], [data-popover]')) return;
+      e.preventDefault();
+      navigate('/composer', { state: { background: pathname + search } });
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [composing, drawer, adding, navigate, pathname, search]);
 
   const triggerRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
@@ -216,11 +322,29 @@ export function AppLayout({
   }, [composing, drawer]);
 
   return (
-    <div className="min-h-screen bg-canvas md:pl-sidebar">
+    <div className={cn('min-h-screen bg-canvas', collapsed ? 'md:pl-14' : 'md:pl-sidebar')}>
       <div ref={backgroundRef}>
-        {/* Desktop rail */}
-        <aside className="fixed inset-y-0 left-0 z-30 hidden w-sidebar overflow-y-auto border-r border-hairline bg-canvas md:block">
-          <SidebarContent onAddClient={() => setAdding(true)} />
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-50 focus:rounded-sm focus:bg-ink focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-white"
+        >
+          Skip to content
+        </a>
+        {/* Desktop rail. overflow-x is hidden outright: a popover can never widen or scroll it. */}
+        <aside
+          className={cn(
+            'fixed inset-y-0 left-0 z-30 hidden overflow-y-auto overflow-x-hidden border-r border-hairline bg-canvas md:block',
+            collapsed ? 'w-14' : 'w-sidebar',
+          )}
+        >
+          <SidebarContent
+            onAddClient={() => setAdding(true)}
+            overview={overview}
+            onSwitcherOpen={() => void refresh()}
+            collapsed={collapsed}
+            onToggleCollapsed={toggleCollapsed}
+            composing={composing}
+          />
         </aside>
 
         {/* Mobile top bar */}
@@ -249,7 +373,12 @@ export function AppLayout({
         {/* Keyed on the active workspace so workspace-scoped pages (Content/Connections) remount and
           refetch when the client switcher changes scope — otherwise a same-route switch is a no-op
           and the page keeps showing the previous client's data. */}
-        <main key={me?.activeWorkspaceId ?? 'none'} className="px-4 py-4 md:px-6 md:py-5">
+        <main
+          id="main-content"
+          tabIndex={-1}
+          key={me?.activeWorkspaceId ?? 'none'}
+          className="px-4 py-4 focus:outline-none md:px-6 md:py-5"
+        >
           <Outlet />
         </main>
       </div>
@@ -270,7 +399,7 @@ export function AppLayout({
           />
           <aside
             ref={drawerRef}
-            className="absolute inset-y-0 left-0 w-64 max-w-[85vw] overflow-y-auto bg-canvas shadow-1"
+            className="absolute inset-y-0 left-0 w-64 max-w-[85vw] overflow-y-auto overflow-x-hidden bg-canvas shadow-1"
           >
             <button
               type="button"
@@ -281,6 +410,9 @@ export function AppLayout({
               <CloseIcon size={18} />
             </button>
             <SidebarContent
+              overview={overview}
+              onSwitcherOpen={() => void refresh()}
+              composing={composing}
               onNavigate={() => setDrawer(false)}
               onAddClient={() => {
                 setDrawer(false);

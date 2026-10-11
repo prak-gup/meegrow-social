@@ -63,5 +63,6 @@ export {
   Play,
   Images,
   Trophy,
+  SidebarSimple,
 } from '@phosphor-icons/react';
 export type { Icon as IconComponent } from '@phosphor-icons/react';
