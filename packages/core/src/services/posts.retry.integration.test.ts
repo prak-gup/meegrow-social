@@ -234,6 +234,9 @@ describe('retryPost', () => {
         throw new Error('redis is down');
       },
       async cancelPublish() {},
+      async publishJobState() {
+        return 'none';
+      },
     });
     await expect(retryPost(ws, postId)).rejects.toThrow('redis is down');
 

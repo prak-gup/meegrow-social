@@ -3,6 +3,7 @@ import { recordPublishExhaustion } from './deps.js';
 import { isFinalFailure, onPublishJobFailed, type FailedPublishJob } from './publish.js';
 
 vi.mock('./deps.js', () => ({
+  PUBLISH_QUEUE: 'publish',
   publishPost: vi.fn(),
   recordPublishExhaustion: vi.fn(),
 }));

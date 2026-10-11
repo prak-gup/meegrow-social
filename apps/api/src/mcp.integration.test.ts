@@ -415,8 +415,9 @@ describe('retry, slot preview and health over /mcp', () => {
       isError: false,
       body: { id: a.post.id, status: 'scheduled', error: null },
     });
-    // Handed to the scheduler to run now — the MCP call itself published nothing.
-    expect(calls).toEqual([{ postId: a.post.id, when: 'now' }]);
+    // Handed to the scheduler — the MCP call itself published nothing. The seeded post is
+    // scheduled an hour ahead, and a retry keeps a time that is still to come.
+    expect(calls).toEqual([{ postId: a.post.id, when: a.post.publishAt }]);
     expect(await getPost(a.ws, a.post.id)).toMatchObject({ status: 'scheduled', releaseUrl: null });
 
     // Now scheduled, a second retry is refused and enqueues nothing more.

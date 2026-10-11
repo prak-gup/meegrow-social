@@ -54,7 +54,7 @@ describe('publish (via FakeProvider)', () => {
     useRecordingScheduler();
     const ws = await createWorkspace();
     const connectionId = await createConnection(ws, 'fake');
-    const scheduledFor = new Date(Date.now() + 60_000);
+    const scheduledFor = new Date(Date.now() + 30_000);
 
     const [post] = await createPost(ws, {
       caption: 'scheduled post',

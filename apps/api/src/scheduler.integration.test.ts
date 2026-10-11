@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Queue } from 'bullmq';
+import { Queue, Worker } from 'bullmq';
 import { createBullScheduler, publishJobId, PUBLISH_QUEUE } from './scheduler.js';
 import type { PublishJobData } from './scheduler.js';
 
@@ -69,6 +69,50 @@ describe('createBullScheduler against real BullMQ', () => {
     await expect(
       scheduler.cancelPublish({ postId: '44444444-4444-4444-8444-444444444444' }),
     ).resolves.not.toThrow();
+  });
+
+  // What the stranded-post sweep relies on (core/services/publish-sweep.ts).
+  it('publishJobState: none without a job, live while one waits, none again once cancelled', async () => {
+    const scheduler = createBullScheduler(REDIS_URL);
+    const postId = '66666666-6666-4666-8666-666666666666';
+    expect(await scheduler.publishJobState({ postId })).toBe('none');
+
+    await scheduler.schedulePublish({
+      workspaceId: 'ws-1',
+      postId,
+      when: new Date(Date.now() + 60_000),
+    });
+    expect(await scheduler.publishJobState({ postId })).toBe('live');
+
+    await scheduler.cancelPublish({ postId });
+    expect(await scheduler.publishJobState({ postId })).toBe('none');
+  });
+
+  it('publishJobState: dead for a job that failed for good, and a retry can replace it', async () => {
+    const scheduler = createBullScheduler(REDIS_URL);
+    const postId = '77777777-7777-4777-8777-777777777777';
+    await scheduler.schedulePublish({ workspaceId: 'ws-1', postId, when: 'now' });
+
+    // Take the job by hand and fail it without a retry — what BullMQ does to a job that stalls
+    // past maxStalledCount, where the worker's own `failed` handler never runs.
+    const worker = new Worker<PublishJobData>(PUBLISH_QUEUE, null, {
+      connection: { url: REDIS_URL },
+    });
+    try {
+      const job = await worker.getNextJob('test-token');
+      expect(job?.id).toBe(publishJobId(postId));
+      job!.discard();
+      await job!.moveToFailed(new Error('worker died'), 'test-token', false);
+    } finally {
+      await worker.close();
+    }
+    expect(await scheduler.publishJobState({ postId })).toBe('dead');
+
+    // The dead job still owns the id: an add is dropped until it is cancelled.
+    await scheduler.cancelPublish({ postId });
+    expect(await scheduler.publishJobState({ postId })).toBe('none');
+    await scheduler.schedulePublish({ workspaceId: 'ws-1', postId, when: 'now' });
+    expect(await scheduler.publishJobState({ postId })).toBe('live');
   });
 
   // What retry relies on: publish job ids are deterministic per post, and BullMQ silently drops an

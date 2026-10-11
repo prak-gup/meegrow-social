@@ -316,7 +316,8 @@ export function registerPostTools(server: McpServer, ctx: AuthContext): void {
     {
       description:
         'Retry a post whose status is `failed`: it is queued again and PUBLISHES TO THE REAL ' +
-        'SOCIAL ACCOUNT IMMEDIATELY, through the normal publish path. Returns the post, now ' +
+        'SOCIAL ACCOUNT IMMEDIATELY, through the normal publish path — unless its `publishAt` ' +
+        'is still in the future, in which case it is queued for that time. Returns the post, now ' +
         '`scheduled`; read the outcome back with get_post. Only a failed post can be retried: ' +
         'any other status, including published, fails with invalid_state, so a post that went ' +
         'out is never sent twice. Each account of a multi-account post is its own post and is ' +

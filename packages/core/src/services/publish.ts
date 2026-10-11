@@ -75,7 +75,8 @@ function refusalMessage(
  *
  * A propagated error rolls this transaction back, so the post still reads `scheduled` afterwards.
  * That is right while the job runner has attempts left; once it has none, the runner must call
- * `recordPublishExhaustion`, or the post stays `scheduled` forever with no job behind it.
+ * `recordPublishExhaustion`. If that never happens (the job stalled out, the write was lost) the
+ * post is left `scheduled` with a dead job, which `sweepStrandedPublishes` finds and fails.
  */
 export async function publishPost(
   workspaceId: string,
@@ -247,7 +248,8 @@ export function exhaustedPublishMessage(attempts: number, error: string): string
  *
  * The two writes are separate transactions, each re-tried a few times, so a failure of one never
  * costs the other. If either still fails this throws `PublishExhaustionError` AFTER attempting
- * both; the caller must log it, because a post that could not be marked is stuck in `scheduled`.
+ * both; the caller must log it, because a post that could not be marked is stuck in `scheduled`
+ * until `sweepStrandedPublishes` fails it.
  */
 export async function recordPublishExhaustion(
   input: PublishExhaustionInput,

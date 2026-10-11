@@ -6,4 +6,10 @@ export {
   METRIC_RETENTION_SWEEP_MS,
   refreshExpiringTokens,
   sweepAnalytics,
+  sweepStrandedPublishes,
+  PUBLISH_SWEEP_INTERVAL_MS,
+  PUBLISH_QUEUE,
+  createQueueScheduler,
+  setScheduler,
+  type PublishJobData,
 } from '@meegrow-social/core';

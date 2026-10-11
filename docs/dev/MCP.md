@@ -138,12 +138,15 @@ Notes that are easy to get wrong:
   time, with `not_found` — for every variant, and the whole call fails if any one is wrong. Take
   ids from `list_connections`. They do not check that `provider` matches the connection's own
   provider; a mismatch is accepted and fails at publish.
-- `retry_post` publishes for real, immediately, through the same job queue as a first attempt. Only
+- `retry_post` publishes for real, immediately, through the same job queue as a first attempt — or
+  at the post's `publishAt` when that is still in the future (a post that could not be queued for
+  tomorrow is queued for tomorrow, not sent today). Only
   a `failed` post can be retried, so a post that is `published` is never sent twice, and each
   account of a multi-account post is retried on its own. One case it cannot see: a post the
   platform accepted but that was recorded as `failed` anyway. If the `error` leaves that open, look
-  at the account before retrying. A post stuck in `scheduled` after its job ran out of attempts on
-  a transient error is not `failed` and cannot be retried with this tool.
+  at the account before retrying. A post whose job ran out of attempts, could not be queued, or
+  was found stranded by the worker's sweep is marked `failed` with the reason in `error`, and can
+  be retried with this tool.
 - `validate_post` checks, without writing anything: the contract; each platform's own rules; that
   every connection is in the workspace; that a queue schedule names an existing, active queue; and
   that each media ref resolves and fits the platform's media spec. The last two are stricter than
