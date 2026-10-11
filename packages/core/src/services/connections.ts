@@ -97,16 +97,25 @@ export async function handleCallback(state: string, code: string): Promise<Callb
 
   if (impl.isBetweenSteps) {
     const accounts = impl.listAccounts ? await impl.listAccounts(tokens) : [];
-    await db()
+    const [claimedFlow] = await db()
       .update(schema.oauthFlows)
       .set({
         encryptedTokens: encryptToken(serialize(tokens)),
         accounts,
         status: 'awaiting_account',
       })
-      .where(eq(schema.oauthFlows.id, flow.id));
+      .where(and(eq(schema.oauthFlows.id, flow.id), eq(schema.oauthFlows.status, 'pending')))
+      .returning();
+    if (!claimedFlow) throw new Error('invalid, already-used, or unknown connect state');
     return { status: 'choose_account', flowId: flow.id, accounts };
   }
+
+  const [claimedFlow] = await db()
+    .update(schema.oauthFlows)
+    .set({ status: 'consumed' })
+    .where(and(eq(schema.oauthFlows.id, flow.id), eq(schema.oauthFlows.status, 'pending')))
+    .returning();
+  if (!claimedFlow) throw new Error('invalid, already-used, or unknown connect state');
 
   const connectionId = await createConnection(
     flow.workspaceId,
@@ -115,10 +124,6 @@ export async function handleCallback(state: string, code: string): Promise<Callb
     tokens.externalId,
     tokens.displayName,
   );
-  await db()
-    .update(schema.oauthFlows)
-    .set({ status: 'consumed' })
-    .where(eq(schema.oauthFlows.id, flow.id));
   return { status: 'connected', connectionId };
 }
 
@@ -147,6 +152,14 @@ export async function finishConnect(
   // the user-level ones (Facebook: a Page's own non-expiring Page token). See SocialProvider.
   const impl = getProvider(flow.provider as ProviderIdentifier);
   const tokens = impl.finalizeAccount ? await impl.finalizeAccount(userTokens, chosen) : userTokens;
+
+  const [claimedFlow] = await db()
+    .update(schema.oauthFlows)
+    .set({ status: 'consumed' })
+    .where(and(eq(schema.oauthFlows.id, flow.id), eq(schema.oauthFlows.status, 'awaiting_account')))
+    .returning();
+  if (!claimedFlow) throw new Error('no account-selection flow for this id');
+
   const connectionId = await createConnection(
     flow.workspaceId,
     flow.provider as ProviderIdentifier,
@@ -154,10 +167,6 @@ export async function finishConnect(
     chosen.externalId,
     chosen.displayName,
   );
-  await db()
-    .update(schema.oauthFlows)
-    .set({ status: 'consumed' })
-    .where(eq(schema.oauthFlows.id, flow.id));
   return connectionId;
 }
 
