@@ -556,3 +556,14 @@ export function uniqueLabels(labels: readonly string[]): string[] {
     return n === 1 ? label : `${label} (${n})`;
   });
 }
+
+// --- Roles ---
+
+/**
+ * Is this membership role a client's? Clients get the same screen without operator affordances.
+ * `viewer` counts until the roles matrix (#20) adds `client`. Cosmetic only: the API does not
+ * enforce the role yet.
+ */
+export function isClientRole(role: string | null | undefined): boolean {
+  return role === 'client' || role === 'viewer';
+}

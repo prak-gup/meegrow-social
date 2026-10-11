@@ -17,6 +17,7 @@ import {
   formatValue,
   groupTotals,
   humanizeMetric,
+  isClientRole,
   lastCaptureByConnection,
   latestCapture,
   loadProgress,
@@ -752,5 +753,16 @@ describe('formatting', () => {
       'Acme (2)',
       'Acme (3)',
     ]);
+  });
+});
+
+describe('isClientRole', () => {
+  it('is true for client, and for viewer until the roles matrix lands', () => {
+    expect(isClientRole('client')).toBe(true);
+    expect(isClientRole('viewer')).toBe(true);
+  });
+
+  it.each(['owner', 'admin', 'member', '', null, undefined])('is false for %s', (role) => {
+    expect(isClientRole(role)).toBe(false);
   });
 });

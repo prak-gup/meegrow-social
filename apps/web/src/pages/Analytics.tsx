@@ -26,6 +26,7 @@ import {
   formatValue,
   groupTotals,
   humanizeMetric,
+  isClientRole,
   lastCaptureByConnection,
   latestCapture,
   loadProgress,
@@ -310,6 +311,9 @@ export function Analytics() {
   const { connections, all, filters, selected, windows, posts, capped, metrics, followers } = data;
 
   const workspace = me?.user.memberships.find((m) => m.workspaceId === me.activeWorkspaceId);
+  // Clients see the same numbers without operator affordances. Cosmetic until #20 enforces the
+  // role at the API.
+  const isClient = isClientRole(workspace?.role);
   const setFilters = (patch: Partial<AnalyticsFilters>) =>
     setParams(filtersToParams(resolveFilters({ ...filters, ...patch }, all)), { replace: true });
 
@@ -350,7 +354,13 @@ export function Analytics() {
           : 'Published posts and connected accounts for this client.'
       }
       className="mb-0"
-      actions={!VALIDATED && <Badge variant="neutral">Preview — numbers not yet validated</Badge>}
+      actions={
+        !VALIDATED && (
+          <Badge variant="neutral">
+            {isClient ? 'Beta' : 'Preview — numbers not yet validated'}
+          </Badge>
+        )
+      }
     />
   );
 
@@ -375,9 +385,11 @@ export function Analytics() {
           title="Connect an account to start collecting analytics."
           icon={Plugs}
           action={
-            <Button asChild>
-              <Link to="/connections">Connect an account</Link>
-            </Button>
+            !isClient && (
+              <Button asChild>
+                <Link to="/connections">Connect an account</Link>
+              </Button>
+            )
           }
         />
       </div>
@@ -403,6 +415,7 @@ export function Analytics() {
         settled={settled}
         stale={selected.filter(needsReconnect)}
         lastByConnection={lastByConnection}
+        canReconnect={!isClient}
       />
 
       {/* Announces load progress and filter results to screen readers. */}
@@ -596,11 +609,13 @@ function SyncLine({
   settled,
   stale,
   lastByConnection,
+  canReconnect,
 }: {
   asOf: number | null;
   settled: boolean;
   stale: ConnectionView[];
   lastByConnection: ReadonlyMap<string, number>;
+  canReconnect: boolean;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -627,7 +642,7 @@ function SyncLine({
           </Badge>
         );
       })}
-      {stale.length > 0 && (
+      {canReconnect && stale.length > 0 && (
         <Link to="/connections" className="text-caption font-semibold text-ink underline">
           Reconnect
         </Link>
