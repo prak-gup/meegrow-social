@@ -2,10 +2,10 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import type { HTMLAttributes } from 'react';
 import { cn } from '../../lib/cn';
 
-// The one chip look: 20px, tinted by tone, text at >= 4.5:1 on its own tint. StatusChip maps the
+// The one chip look: 20px (grows if the text wraps), tinted by tone, text at >= 4.5:1 on its own tint. StatusChip maps the
 // domain statuses onto these tones so every page shows a status the same way.
 export const badgeVariants = cva(
-  'inline-flex h-5 items-center gap-1 whitespace-nowrap rounded-full px-2 text-xs font-medium',
+  'inline-flex min-h-5 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
   {
     variants: {
       variant: {

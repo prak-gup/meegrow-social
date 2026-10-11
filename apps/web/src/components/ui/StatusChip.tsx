@@ -17,7 +17,7 @@ export interface StatusChipProps {
 export function StatusChip({ status, label, className }: StatusChipProps) {
   const { label: stock, tone } = CHIP[status];
   return (
-    <Badge variant={tone} className={className}>
+    <Badge variant={tone} className={cn('whitespace-nowrap', className)}>
       <span aria-hidden="true" className={cn('h-1.5 w-1.5 flex-none rounded-full bg-current')} />
       {label ?? stock}
     </Badge>
