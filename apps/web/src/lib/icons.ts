@@ -11,6 +11,8 @@ export {
   Plus,
   MagnifyingGlass,
   CaretDown,
+  CaretUpDown,
+  Check,
   CaretLeft,
   CaretRight,
   ArrowUp,

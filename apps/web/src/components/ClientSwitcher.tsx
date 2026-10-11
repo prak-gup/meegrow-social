@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
-import { ALL_CLIENTS_SWATCH, clientHue } from '../lib/clientHue';
-import { CaretDown, MagnifyingGlass, Plus } from '../lib/icons';
+import { clientHue } from '../lib/clientHue';
+import { CaretUpDown, Check, MagnifyingGlass, Plus, UsersThree } from '../lib/icons';
 
 /**
  * The client scope switcher at the top of the sidebar. WHO (client) lives in a searchable
@@ -69,43 +69,40 @@ export function ClientSwitcher({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="flex h-12 w-full items-center gap-3 rounded-sm border border-hairline bg-canvas px-3 text-left hover:bg-surface-soft"
+        aria-label={`Client: ${label}. Switch client`}
+        className="flex h-11 w-full items-center gap-2 rounded-sm border border-hairline-strong bg-canvas px-2.5 text-left hover:bg-surface-soft md:h-8"
       >
-        <span
-          className="inline-block h-3 w-3 flex-none rounded-full"
-          style={{
-            background: onOverview || !active ? ALL_CLIENTS_SWATCH : clientHue(active.name),
-          }}
-        />
-        <span className="flex min-w-0 flex-1 flex-col leading-tight">
-          <span className="text-micro font-bold uppercase tracking-wide text-muted">Client</span>
-          <span className="truncate text-sm font-semibold text-ink">{label}</span>
+        {onOverview || !active ? (
+          <UsersThree size={14} className="flex-none text-muted" aria-hidden="true" />
+        ) : (
+          <span
+            className="inline-block h-2.5 w-2.5 flex-none rounded-full"
+            style={{ background: clientHue(active.name) }}
+          />
+        )}
+        <span className="min-w-0 flex-1 truncate text-base font-medium text-ink md:text-sm">
+          {label}
         </span>
-        <CaretDown size={14} className="flex-none text-muted" />
+        <CaretUpDown size={12} className="flex-none text-muted" aria-hidden="true" />
       </button>
 
       {open && (
-        <div className="absolute left-0 z-40 mt-2 w-full rounded-md border border-hairline bg-canvas p-2 shadow-1">
-          <div className="mb-2 flex items-center gap-2.5 rounded-sm border border-hairline px-3 py-2">
-            <MagnifyingGlass size={16} className="text-muted" />
+        <div className="absolute left-0 z-40 mt-1 w-60 max-w-[calc(100vw-2rem)] rounded-md border border-hairline bg-canvas p-1.5 shadow-1">
+          <div className="mb-1.5 flex items-center gap-2 rounded-sm border border-hairline-strong px-2.5 py-1.5">
+            <MagnifyingGlass size={14} className="text-muted" />
             <input
               autoFocus
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search clients…"
-              className="w-full border-0 bg-transparent text-body text-ink outline-none placeholder:text-muted"
+              aria-label="Search clients"
+              className="w-full border-0 bg-transparent text-lg text-ink outline-none placeholder:text-muted md:text-sm"
             />
           </div>
-          <button
-            type="button"
-            onClick={pickAll}
-            className="flex w-full items-center gap-3 rounded-sm px-3 py-2.5 text-left hover:bg-surface-soft"
-          >
-            <span
-              className="inline-block h-3 w-3 rounded-full"
-              style={{ background: ALL_CLIENTS_SWATCH }}
-            />
-            <span className="text-body font-medium">All clients</span>
+          <button type="button" onClick={pickAll} className={rowClass}>
+            <UsersThree size={14} className="flex-none text-muted" aria-hidden="true" />
+            <span className="flex-1 truncate">All clients</span>
+            {onOverview && <Check size={14} aria-hidden="true" />}
           </button>
           <div className="max-h-64 overflow-y-auto">
             {filtered.map((m) => (
@@ -113,29 +110,32 @@ export function ClientSwitcher({
                 key={m.workspaceId}
                 type="button"
                 onClick={() => void pick(m.workspaceId)}
-                className="flex w-full items-center gap-3 rounded-sm px-3 py-2.5 text-left hover:bg-surface-soft"
+                className={rowClass}
               >
                 <span
-                  className="inline-block h-3 w-3 flex-none rounded-full"
+                  className="inline-block h-2.5 w-2.5 flex-none rounded-full"
                   style={{ background: clientHue(m.name) }}
                 />
-                <span className="truncate text-body font-medium">{m.name}</span>
+                <span className="flex-1 truncate">{m.name}</span>
+                {!onOverview && active?.workspaceId === m.workspaceId && (
+                  <Check size={14} aria-hidden="true" />
+                )}
               </button>
             ))}
             {filtered.length === 0 && (
-              <p className="px-3 py-3 text-sm text-muted">No clients match “{q}”.</p>
+              <p className="px-2.5 py-2 text-sm text-muted">No clients match “{q}”.</p>
             )}
           </div>
-          <div className="mt-1.5 border-t border-hairline-soft pt-1.5">
+          <div className="mt-1 border-t border-hairline-soft pt-1">
             <button
               type="button"
               onClick={() => {
                 setOpen(false);
                 onAddClient();
               }}
-              className="flex w-full items-center gap-3 rounded-sm px-3 py-2.5 text-left font-semibold text-ink hover:bg-surface-soft"
+              className={rowClass}
             >
-              <Plus size={16} weight="bold" />
+              <Plus size={14} weight="bold" className="flex-none" />
               Add client
             </button>
           </div>
@@ -144,3 +144,6 @@ export function ClientSwitcher({
     </div>
   );
 }
+
+const rowClass =
+  'flex h-11 w-full items-center gap-2 rounded-sm px-2.5 text-left text-base text-ink hover:bg-surface-soft md:h-8 md:text-sm';

@@ -6,6 +6,7 @@ import { clientHue } from '../lib/clientHue';
 import { ClientSwitcher } from './ClientSwitcher';
 import { AddClientModal } from './AddClientModal';
 import { Logo } from './Logo';
+import { Button } from './ui/Button';
 import {
   House,
   CalendarBlank,
@@ -52,99 +53,83 @@ function SidebarContent({
   const initial = displayName.trim()[0]?.toUpperCase() ?? 'U';
 
   return (
-    <div className="flex h-full flex-col gap-4 p-4">
-      <Logo className="py-1 pl-1 pr-8" />
+    <div className="flex h-full flex-col gap-3 p-3">
+      <Logo className="py-1 pl-1 pr-10 md:pr-1" size={24} />
 
       {scopeLocked ? (
-        <div className="flex h-12 w-full items-center gap-3 rounded-sm border border-hairline bg-surface-soft px-3">
+        <div className="flex h-11 w-full items-center gap-2 rounded-sm border border-hairline bg-surface-soft px-2.5 md:h-8">
           <span
-            className="inline-block h-3 w-3 flex-none rounded-full"
+            className="inline-block h-2.5 w-2.5 flex-none rounded-full"
             style={{ background: active ? clientHue(active.name) : undefined }}
           />
-          <span className="flex min-w-0 flex-1 flex-col leading-tight">
-            <span className="text-micro font-bold uppercase tracking-wide text-muted">
-              Posting as
-            </span>
-            <span className="truncate text-sm font-semibold text-ink">
-              {active?.name ?? 'No client'}
-            </span>
+          <span className="truncate text-base font-medium text-ink md:text-sm">
+            <span className="sr-only">Posting as </span>
+            {active?.name ?? 'No client'}
           </span>
         </div>
       ) : (
         <ClientSwitcher onAddClient={onAddClient} onNavigate={onNavigate} />
       )}
 
-      <button
-        type="button"
+      <Button
+        variant="accent"
+        className="w-full"
         onClick={() => {
           onNavigate?.();
           navigate('/composer');
         }}
-        className="inline-flex h-11 items-center justify-center gap-2 rounded-sm bg-rausch px-4 text-body font-medium text-white hover:bg-rausch-active"
       >
-        <Plus size={18} weight="bold" />
+        <Plus size={16} weight="bold" />
         Create post
-      </button>
+      </Button>
 
       <nav aria-label="Main" className="flex flex-col gap-0.5">
         {TABS.map(({ to, label, Icon }) => (
-          <NavLink
-            key={to}
-            to={to}
-            onClick={onNavigate}
-            className={({ isActive }) =>
-              cn(
-                'flex h-10 items-center gap-3 rounded-sm px-3 text-body font-semibold text-muted hover:bg-surface-soft hover:text-ink',
-                isActive && 'bg-surface-strong text-ink',
-              )
-            }
-          >
-            <Icon size={20} />
+          <NavLink key={to} to={to} onClick={onNavigate} className={navClass}>
+            <Icon size={18} />
             {label}
           </NavLink>
         ))}
       </nav>
 
-      <div className="mt-auto border-t border-hairline-soft pt-4">
-        <div className="flex items-center gap-3">
+      <div className="mt-auto flex flex-col gap-0.5 border-t border-hairline-soft pt-3">
+        {/* Account-level, so it sits with the user rather than in the per-client nav above. */}
+        <NavLink to="/settings/password" onClick={onNavigate} className={navClass}>
+          <LockKey size={18} />
+          Change password
+        </NavLink>
+        <div className="mt-1 flex items-center gap-2 px-1">
           <span
-            className="grid h-9 w-9 flex-none place-items-center rounded-full bg-surface-strong text-sm font-semibold text-ink"
+            className="grid h-7 w-7 flex-none place-items-center rounded-full bg-surface-strong text-xs font-semibold text-ink"
             aria-hidden="true"
           >
             {initial}
           </span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-ink">{displayName}</p>
-            {me?.user.name && <p className="truncate text-caption text-muted">{me.user.email}</p>}
+          <div className="min-w-0 flex-1 leading-tight">
+            <p className="truncate text-sm font-medium text-ink">{displayName}</p>
+            {me?.user.name && <p className="truncate text-micro text-muted">{me.user.email}</p>}
           </div>
           <button
             type="button"
             onClick={() => void logout().then(() => navigate('/login'))}
-            className="grid h-9 w-9 flex-none place-items-center rounded-sm text-muted hover:bg-surface-soft hover:text-ink"
+            className="grid h-11 w-11 flex-none place-items-center rounded-sm text-muted hover:bg-surface-strong hover:text-ink md:h-8 md:w-8"
             aria-label="Sign out"
             title="Sign out"
           >
-            <SignOut size={18} />
+            <SignOut size={16} />
           </button>
         </div>
-        {/* Account-level, so it sits with the user rather than in the per-client nav above. */}
-        <NavLink
-          to="/settings/password"
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            cn(
-              'mt-2 flex h-9 items-center gap-3 rounded-sm px-3 text-sm font-semibold text-muted hover:bg-surface-soft hover:text-ink',
-              isActive && 'bg-surface-strong text-ink',
-            )
-          }
-        >
-          <LockKey size={18} />
-          Change password
-        </NavLink>
       </div>
     </div>
   );
 }
+
+/** A sidebar row: 44px on a phone drawer, 32px from md up. Active is a neutral fill, never the accent. */
+const navClass = ({ isActive }: { isActive: boolean }) =>
+  cn(
+    'flex h-11 items-center gap-2.5 rounded-sm px-2.5 text-base font-medium text-muted hover:bg-surface-soft hover:text-ink md:h-8',
+    isActive && 'bg-surface-strong text-ink',
+  );
 
 /**
  * Work-tool shell: fixed left sidebar (brand · client switcher · create · nav · account) on md+,
@@ -224,16 +209,16 @@ export function AppLayout() {
             type="button"
             ref={triggerRef}
             onClick={() => setDrawer(true)}
-            className="grid h-10 w-10 place-items-center rounded-sm hover:bg-surface-soft"
+            className="-ml-2 grid h-11 w-11 place-items-center rounded-sm hover:bg-surface-soft"
             aria-label="Open menu"
             aria-expanded={drawer}
           >
             <List size={22} />
           </button>
-          <Logo size={26} />
+          <Logo size={24} />
           <NavLink
             to="/composer"
-            className="grid h-10 w-10 place-items-center rounded-sm bg-rausch text-white hover:bg-rausch-active"
+            className="-mr-2 grid h-11 w-11 place-items-center rounded-sm bg-rausch text-white hover:bg-rausch-active"
             aria-label="Create post"
           >
             <Plus size={18} weight="bold" />
@@ -243,7 +228,7 @@ export function AppLayout() {
         {/* Keyed on the active workspace so workspace-scoped pages (Content/Connections) remount and
           refetch when the client switcher changes scope — otherwise a same-route switch is a no-op
           and the page keeps showing the previous client's data. */}
-        <main key={me?.activeWorkspaceId ?? 'none'} className="px-4 py-6 md:px-8">
+        <main key={me?.activeWorkspaceId ?? 'none'} className="px-4 py-4 md:px-6 md:py-5">
           <Outlet />
         </main>
       </div>
@@ -264,12 +249,12 @@ export function AppLayout() {
           />
           <aside
             ref={drawerRef}
-            className="absolute inset-y-0 left-0 w-sidebar overflow-y-auto bg-canvas shadow-1"
+            className="absolute inset-y-0 left-0 w-64 max-w-[85vw] overflow-y-auto bg-canvas shadow-1"
           >
             <button
               type="button"
               onClick={() => setDrawer(false)}
-              className="absolute right-2 top-3 grid h-9 w-9 place-items-center rounded-sm text-muted hover:bg-surface-soft"
+              className="absolute right-1 top-1 grid h-11 w-11 place-items-center rounded-sm text-muted hover:bg-surface-soft"
               aria-label="Close menu"
             >
               <CloseIcon size={18} />
