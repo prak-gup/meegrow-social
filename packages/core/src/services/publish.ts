@@ -9,9 +9,57 @@ import { resolveMediaRefs } from './media.js';
 
 export interface PublishOutcome {
   postId: string;
-  status: 'published' | 'failed';
+  /** `skipped`: the job was refused and nothing was sent or written to the post (see `skipped`). */
+  status: 'published' | 'failed' | 'skipped';
   releaseUrl?: string;
   error?: string;
+  /** Why a `skipped` job did nothing. */
+  skipped?: PublishRefusal;
+}
+
+/**
+ * The only status a publish job may act on. Everything else means the job is stale: the post was
+ * cancelled, moved back to draft, already failed, or (`publishing`) is owned by another run.
+ */
+export const PUBLISHABLE_STATUS = 'scheduled';
+
+/**
+ * How far ahead of `publishAt` a job may fire and still publish. Covers clock skew between the
+ * process that computed the job's delay, Redis, and this worker — not a scheduling feature.
+ */
+export const EARLY_PUBLISH_TOLERANCE_MS = 60_000;
+
+export type PublishRefusal =
+  /** The post is not `scheduled` (cancelled, draft, failed, ...). */
+  | 'not_scheduled'
+  /** The post was rescheduled to a later time after this job was queued. */
+  | 'not_due';
+
+/**
+ * Whether a publish job that fired for this post must be refused. Pure: `publishPost` evaluates it
+ * on the row it has just locked, so the answer cannot change before the post is sent.
+ *
+ * A `published` post is not handled here — `publishPost` reports it as the success it already is.
+ */
+export function publishRefusal(
+  post: { status: string; publishAt: Date | null },
+  now: Date,
+): PublishRefusal | null {
+  if (post.status !== PUBLISHABLE_STATUS) return 'not_scheduled';
+  // publishAt is null for a publish-now post, which is due the moment it exists.
+  if (post.publishAt && post.publishAt.getTime() - now.getTime() > EARLY_PUBLISH_TOLERANCE_MS) {
+    return 'not_due';
+  }
+  return null;
+}
+
+function refusalMessage(
+  refusal: PublishRefusal,
+  post: { status: string; publishAt: Date | null },
+): string {
+  return refusal === 'not_due'
+    ? `Publish job ignored: the post is now scheduled for ${post.publishAt!.toISOString()}`
+    : `Publish job ignored: the post is '${post.status}', not '${PUBLISHABLE_STATUS}'`;
 }
 
 /**
@@ -19,16 +67,48 @@ export interface PublishOutcome {
  * a post already `published` is a no-op. Transient provider errors propagate (BullMQ retries);
  * auth/bad-request errors mark the post failed (and, for auth, the connection needs_reconnect).
  *
+ * Only a `scheduled` post that is due is sent. The row is locked (`FOR UPDATE`) before its status
+ * is read and stays locked until this transaction ends, so the check and the send are one step:
+ * a second job for the same post, or a cancel/edit, waits here and then sees what this run
+ * committed. Anything else — cancelled, draft, failed, rescheduled to later — returns `skipped`
+ * without touching the post, so the job completes instead of retrying or failing the post.
+ *
  * A propagated error rolls this transaction back, so the post still reads `scheduled` afterwards.
  * That is right while the job runner has attempts left; once it has none, the runner must call
  * `recordPublishExhaustion`, or the post stays `scheduled` forever with no job behind it.
  */
-export async function publishPost(workspaceId: string, postId: string): Promise<PublishOutcome> {
+export async function publishPost(
+  workspaceId: string,
+  postId: string,
+  now: Date = new Date(),
+): Promise<PublishOutcome> {
   return withWorkspace(workspaceId, async (tx) => {
-    const [post] = await tx.select().from(schema.posts).where(eq(schema.posts.id, postId)).limit(1);
+    const [post] = await tx
+      .select()
+      .from(schema.posts)
+      .where(eq(schema.posts.id, postId))
+      .limit(1)
+      .for('update');
     if (!post) throw new Error(`post ${postId} not found`);
     if (post.status === 'published') {
       return { postId, status: 'published', releaseUrl: post.releaseUrl ?? undefined };
+    }
+    const refusal = publishRefusal(post, now);
+    if (refusal) {
+      const [account] = await tx
+        .select({ displayName: schema.connections.displayName })
+        .from(schema.connections)
+        .where(eq(schema.connections.id, post.connectionId))
+        .limit(1);
+      await tx.insert(schema.eventLogs).values({
+        workspaceId,
+        kind: 'publish',
+        status: 'skipped',
+        platform: post.provider,
+        account: account?.displayName ?? null,
+        message: refusalMessage(refusal, post),
+      });
+      return { postId, status: 'skipped', skipped: refusal };
     }
 
     const [conn] = await tx

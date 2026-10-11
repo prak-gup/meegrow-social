@@ -286,14 +286,20 @@ export async function listPosts(
 /**
  * Cancel a draft/scheduled post (PRD F3.5): marks it cancelled AND interrupts its pending BullMQ job
  * via the scheduler port (no-op if the job already fired). Rejects posts past the point of no return.
+ *
+ * The status write is what stops the post going out: `publishPost` refuses anything not `scheduled`,
+ * so a job that could not be removed (already running, or Redis unreachable) does nothing.
  */
 export async function cancelPost(workspaceId: string, postId: string): Promise<boolean> {
   const outcome = await withWorkspace(workspaceId, async (tx) => {
+    // Row lock: a publish job that already holds this post finishes first, and we then read what it
+    // committed — so a post that just went out is refused below, never overwritten as `cancelled`.
     const [row] = await tx
       .select({ status: schema.posts.status })
       .from(schema.posts)
       .where(eq(schema.posts.id, postId))
-      .limit(1);
+      .limit(1)
+      .for('update');
     if (!row) return 'missing' as const;
     if (!CANCELABLE_STATUSES.has(row.status)) return row.status;
     await tx.update(schema.posts).set({ status: 'cancelled' }).where(eq(schema.posts.id, postId));
@@ -319,7 +325,14 @@ export async function updatePost(
 ): Promise<PostView | null> {
   type Action = 'none' | 'schedule' | 'cancel' | 'reschedule';
   const result = await withWorkspace(workspaceId, async (tx) => {
-    const [row] = await tx.select().from(schema.posts).where(eq(schema.posts.id, postId)).limit(1);
+    // Row lock, for the same reason as `cancelPost`: an edit must not land on top of a publish that
+    // is in flight and turn a published post back into a draft or a scheduled one.
+    const [row] = await tx
+      .select()
+      .from(schema.posts)
+      .where(eq(schema.posts.id, postId))
+      .limit(1)
+      .for('update');
     if (!row) return null;
     if (!EDITABLE_STATUSES.has(row.status)) {
       throw new PostStateError(`a '${row.status}' post cannot be edited`);
