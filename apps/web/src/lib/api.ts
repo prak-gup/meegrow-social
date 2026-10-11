@@ -22,6 +22,7 @@ import type {
   PostMetricsView,
   FollowerSeriesView,
   PostGroupSummary,
+  ConnectionImportView,
   PostValidationResult,
   BulkPostMetricsView,
   AnalyticsStatusView,
@@ -145,6 +146,17 @@ export const api = {
   finishConnect: (flowId: string, externalId: string) =>
     request<{ connectionId: string }>('POST', '/v1/connections/finish', { flowId, externalId }),
   deleteConnection: (id: string) => request<{ deleted: true }>('DELETE', `/v1/connections/${id}`),
+  /**
+   * Queue a read of the account's existing posts for the last `windowDays` (30, 90, 180 or 365).
+   * Answers at once; progress is `import` on `listConnections`. Reads the platform only — nothing
+   * is posted. Asking while a run is queued or under way changes nothing and returns that run.
+   */
+  importPastPosts: (id: string, windowDays: number) =>
+    request<{ import: ConnectionImportView }>(
+      'POST',
+      `/v1/connections/${encodeURIComponent(id)}/import`,
+      { windowDays },
+    ),
 
   // --- API keys (#8) ---
   // Scoped to the session's active workspace. The create response is the only one carrying the
@@ -186,6 +198,7 @@ export const api = {
   listPostGroups: (
     query: {
       status?: string;
+      source?: string;
       provider?: string;
       connectionId?: string;
       from?: string;

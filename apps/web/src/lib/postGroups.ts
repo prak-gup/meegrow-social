@@ -34,10 +34,20 @@ export const RANGES = [
 ] as const;
 export type RangeKey = (typeof RANGES)[number]['value'];
 
+/** Where a post came from: made here, or found on the platform by an import. '' = both. */
+export type SourceKey = '' | 'app' | 'imported';
+
+export const SOURCES: ReadonlyArray<{ value: SourceKey; label: string }> = [
+  { value: '', label: 'All sources' },
+  { value: 'app', label: 'Published here' },
+  { value: 'imported', label: 'Imported' },
+];
+
 export interface GroupFilters {
   /** Caption search. */
   q: string;
   status: PostStatus | '';
+  source: SourceKey;
   provider: string;
   connectionId: string;
   range: RangeKey;
@@ -47,6 +57,7 @@ export interface GroupFilters {
 export const NO_GROUP_FILTERS: GroupFilters = {
   q: '',
   status: '',
+  source: '',
   provider: '',
   connectionId: '',
   range: '',
@@ -57,6 +68,7 @@ export const NO_GROUP_FILTERS: GroupFilters = {
 export const hasGroupFilters = (f: GroupFilters): boolean =>
   f.q.trim() !== '' ||
   f.status !== '' ||
+  f.source !== '' ||
   f.provider !== '' ||
   f.connectionId !== '' ||
   f.range !== '';
@@ -79,6 +91,7 @@ export function groupQuery(f: GroupFilters, now: number, offset: number, limit =
   return {
     q: f.q.trim() || undefined,
     status: f.status || undefined,
+    source: f.source || undefined,
     provider: f.provider || undefined,
     connectionId: f.connectionId || undefined,
     ...rangeBounds(f.range, now),
@@ -133,6 +146,57 @@ export function applyPosts<G extends PostGroup>(group: G, updated: readonly Post
 /** Does the group still belong under a status filter? The filter is on variants: any match keeps it. */
 export function groupMatchesStatus(group: PostGroup, status: PostStatus | ''): boolean {
   return status === '' || group.posts.some((p) => p.status === status);
+}
+
+// --- Imported posts ---
+
+type Sourced = Pick<PostView, 'source' | 'platformRemovedAt'>;
+
+/** Found on the platform by an import, not published here. An older payload has no `source`. */
+export const isImported = (post: Pick<PostView, 'source'>): boolean => post.source === 'imported';
+
+/**
+ * A group that is an imported post. Imports never pair platforms, so such a group has one variant;
+ * "every variant" keeps a mixed group — which nothing creates — on the side of normal actions.
+ */
+export function isImportedGroup(group: { posts: readonly Pick<PostView, 'source'>[] }): boolean {
+  return group.posts.length > 0 && group.posts.every(isImported);
+}
+
+/** The platform no longer has this post (it was deleted there). Its status is still `published`. */
+export const isRemoved = (post: Pick<PostView, 'platformRemovedAt'>): boolean =>
+  post.platformRemovedAt != null;
+
+/**
+ * How many of a group's variants are gone from their platform, and whether that is all of the
+ * ones that went out. `all` is what replaces the "Published" chip; `some` is a note beside it.
+ */
+export function groupRemoval(posts: readonly (Sourced & Pick<PostView, 'status'>)[]): {
+  count: number;
+  all: boolean;
+} {
+  const published = posts.filter((p) => p.status === 'published');
+  const count = published.filter(isRemoved).length;
+  return { count, all: count > 0 && count === published.length };
+}
+
+/**
+ * What a group's chip says: its status, except that a group whose published variants are ALL gone
+ * from their platform reads "Removed on platform" rather than "Published".
+ */
+export function groupChip(
+  group: Pick<PostGroup, 'status' | 'posts'>,
+): PostGroup['status'] | 'removed' {
+  return group.status === 'published' && groupRemoval(group.posts).all ? 'removed' : group.status;
+}
+
+/** A day's or a page's posts under the source filter. '' keeps everything. */
+export function filterBySource<P extends Pick<PostView, 'source'>>(
+  posts: readonly P[],
+  source: SourceKey,
+): P[] {
+  if (source === '') return [...posts];
+  return posts.filter((p) => (isImported(p) ? 'imported' : 'app') === source);
 }
 
 // --- Thumbnail ---
@@ -232,6 +296,11 @@ export function groupWhen(
 // --- Actions ---
 
 export interface GroupActions {
+  /**
+   * Every variant is an imported post: it was not published here, so nothing here can change it.
+   * Only "view" and "duplicate" are offered, and the duplicate carries the caption alone.
+   */
+  imported: boolean;
   /** Variants the API accepts a caption edit or a new time for (draft, scheduled). */
   editable: PostView[];
   /** Variants that can still be cancelled. */
@@ -246,13 +315,18 @@ export interface GroupActions {
 export function groupActions(posts: readonly PostView[]): GroupActions {
   const links: GroupActions['links'] = [];
   for (const post of posts) {
-    const url = safeExternalUrl(post.releaseUrl);
+    // A post deleted on the platform has a link that no longer opens anything.
+    const url = isRemoved(post) ? null : safeExternalUrl(post.releaseUrl);
     if (url) links.push({ post, url });
   }
+  // An imported post is refused by edit, reschedule, cancel and retry whatever its status reads,
+  // so none of them is ever offered for one.
+  const ours = posts.filter((p) => !isImported(p));
   return {
-    editable: posts.filter((p) => canEditPost(p.status)),
-    cancelable: posts.filter((p) => canCancelPost(p.status)),
-    failed: posts.filter((p) => p.status === 'failed'),
+    imported: isImportedGroup({ posts }),
+    editable: ours.filter((p) => canEditPost(p.status)),
+    cancelable: ours.filter((p) => canCancelPost(p.status)),
+    failed: ours.filter((p) => p.status === 'failed'),
     links,
   };
 }

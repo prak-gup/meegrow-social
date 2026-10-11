@@ -18,7 +18,8 @@ export type ChipStatus =
   | 'published'
   | 'failed'
   | 'partly_failed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'removed';
 
 export const CHIP: Record<ChipStatus, { label: string; tone: ChipTone }> = {
   healthy: { label: 'Healthy', tone: 'success' },
@@ -33,6 +34,9 @@ export const CHIP: Record<ChipStatus, { label: string; tone: ChipTone }> = {
   // A multi-platform post where some accounts failed and others did not (contracts groupDisplayStatus).
   partly_failed: { label: 'Partly failed', tone: 'danger' },
   cancelled: { label: 'Cancelled', tone: 'neutral' },
+  // Published, then deleted on the platform itself (`platformRemovedAt`). Not a post status: the
+  // post is still `published` in the API, and this is what its chip says instead.
+  removed: { label: 'Removed on platform', tone: 'neutral' },
 };
 
 /** A connection's chip. An already-lapsed token needs a reconnect, whatever the stored health says. */

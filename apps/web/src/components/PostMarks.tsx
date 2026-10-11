@@ -5,6 +5,7 @@ import {
   CheckCircle,
   CircleNotch,
   Clock,
+  DownloadSimple,
   FileDashed,
   Prohibit,
   WarningCircle,
@@ -89,6 +90,30 @@ export function PlatformIcons({ posts, accounts, size = 'md', className }: Platf
           <span className="sr-only"> more accounts</span>
         </span>
       )}
+    </span>
+  );
+}
+
+/**
+ * The quiet mark of a post that was not published here but found on the platform by an import.
+ * A few muted words on a card; just the icon where there is no room (a calendar cell), with the
+ * word on hover and for screen readers.
+ * Usage: {isImportedGroup(group) && <ImportedMark />}
+ */
+export function ImportedMark({
+  compact = false,
+  className,
+}: {
+  compact?: boolean;
+  className?: string;
+}) {
+  return (
+    <span
+      title="Imported from the platform — not published here"
+      className={cn('inline-flex flex-none items-center gap-0.5 text-micro text-muted', className)}
+    >
+      <DownloadSimple size={compact ? 10 : 11} aria-hidden="true" />
+      <span className={compact ? 'sr-only' : undefined}>Imported</span>
     </span>
   );
 }

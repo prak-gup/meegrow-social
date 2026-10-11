@@ -867,6 +867,27 @@ describe('sync line', () => {
     ).toBe('posts refresh hourly for 72 h, then every 12 hours · followers daily');
   });
 
+  it('says that old posts are refreshed less often, when the API reports it', () => {
+    const HOUR = 3_600_000;
+    const DAY = 24 * HOUR;
+    const cadence = {
+      sweepIntervalMs: HOUR,
+      freshPostWindowMs: 48 * HOUR,
+      freshPostIntervalMs: HOUR,
+      postIntervalMs: DAY,
+      accountIntervalMs: DAY,
+      olderPosts: [
+        { afterMs: 30 * DAY, intervalMs: 7 * DAY },
+        { afterMs: 90 * DAY, intervalMs: 28 * DAY },
+      ],
+    };
+    expect(cadenceText(cadence)).toBe(
+      'posts refresh hourly for 48 h, then daily, weekly after 30 days, every 28 days after 90 days · followers daily',
+    );
+    expect(cadenceWord(7 * DAY)).toBe('weekly');
+    expect(cadenceWord(3 * DAY)).toBe('every 3 days');
+  });
+
   it('says when the next collection falls due: never, already, or at a time', () => {
     const at = (d: Date | null) => nextRefresh({ nextDueAt: d }, NOW);
     expect(at(null)).toEqual({ kind: 'none' });

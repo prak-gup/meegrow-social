@@ -15,10 +15,12 @@ import {
   GROUP_PAGE_SIZE,
   NO_GROUP_FILTERS,
   RANGES,
+  SOURCES,
   appendGroups,
   applyPosts,
   compactNumber,
   groupCaption,
+  groupChip,
   groupError,
   groupMatchesStatus,
   groupMetric,
@@ -27,13 +29,16 @@ import {
   groupWhen,
   hasGroupFilters,
   idChunks,
+  isImportedGroup,
   metricsToLoad,
   topMetricNames,
   visibleGroup,
   type GroupFilters,
   type LatestByPost,
   type RangeKey,
+  type SourceKey,
 } from '../lib/postGroups';
+import { importingNote } from '../lib/postImport';
 import { humanizeMetric } from '../lib/analytics';
 import {
   captionSnippet,
@@ -43,7 +48,7 @@ import {
   type ViewMode,
 } from '../lib/postList';
 import { POST_STATUSES, STATUS_LABEL } from '../lib/postStatus';
-import { PlatformIcons } from '../components/PostMarks';
+import { ImportedMark, PlatformIcons } from '../components/PostMarks';
 import { usePostGroupActions, type PostChange } from '../components/PostGroupActions';
 import { PostThumb } from '../components/PostThumb';
 import { Button } from '../components/ui/Button';
@@ -88,7 +93,7 @@ export function Posts() {
   const [latest, setLatest] = useState<LatestByPost>(new Map());
   const [metricsFailed, setMetricsFailed] = useState(false);
 
-  const { q, status, provider, connectionId, range, order } = filters;
+  const { q, status, source, provider, connectionId, range, order } = filters;
   // Which filter set (and retry) the loaded list belongs to, so a late "Load more" can be dropped,
   // and the instant its date range was resolved at, so every page uses the same bounds.
   const listKey = useRef('');
@@ -111,7 +116,7 @@ export function Posts() {
   // operator already left must not overwrite the current list.
   useEffect(() => {
     let stale = false;
-    const current: GroupFilters = { q, status, provider, connectionId, range, order };
+    const current: GroupFilters = { q, status, source, provider, connectionId, range, order };
     listKey.current = `${JSON.stringify(current)}|${attempt}`;
     loadedAt.current = Date.now();
     setLoading(true);
@@ -134,7 +139,7 @@ export function Posts() {
     return () => {
       stale = true;
     };
-  }, [q, status, provider, connectionId, range, order, attempt]);
+  }, [q, status, source, provider, connectionId, range, order, attempt]);
 
   const loadMore = async () => {
     const key = listKey.current;
@@ -239,6 +244,7 @@ export function Posts() {
   };
 
   const names = useMemo(() => topMetricNames(groups, latest), [groups, latest]);
+  const importing = useMemo(() => importingNote(connections), [connections]);
   const count = more ? `First ${groups.length} posts` : `${groups.length} posts`;
 
   return (
@@ -262,6 +268,12 @@ export function Posts() {
                 { value: '', label: 'All statuses' },
                 ...POST_STATUSES.map((s) => ({ value: s, label: STATUS_LABEL[s] })),
               ]}
+            />
+            <FilterSelect
+              label="Source"
+              value={source}
+              onChange={(v) => set({ source: v as SourceKey })}
+              options={SOURCES.map((s) => ({ value: s.value, label: s.label }))}
             />
             <FilterSelect
               label="Platform"
@@ -368,7 +380,7 @@ export function Posts() {
         filtered ? (
           <EmptyState
             title="No posts match these filters"
-            description="Try a different search, status, platform or date."
+            description="Try a different search, status, source, platform or date."
             icon={Article}
             action={
               <Button variant="outline" onClick={clearFilters}>
@@ -378,8 +390,11 @@ export function Posts() {
           />
         ) : (
           <EmptyState
-            title="No posts yet"
-            description="Posts you create or schedule for this client will show up here."
+            // A newly connected account is not empty, it is still arriving.
+            title={importing ? 'Importing past posts…' : 'No posts yet'}
+            description={
+              importing ?? 'Posts you create or schedule for this client will show up here.'
+            }
             icon={Article}
             action={
               <Button asChild>
@@ -530,6 +545,9 @@ function GroupCard({
     >
       <div className="flex items-center gap-2 px-3 pt-2">
         <PlatformIcons posts={group.posts} accounts={accounts} />
+        {/* Beside the platform, where it reads as "from Facebook, imported" and costs the
+            account name no room. */}
+        {isImportedGroup(group) && <ImportedMark />}
         <When group={group} className="ml-auto truncate text-caption text-muted" />
         <RowMenu
           label={`Actions for post: ${captionSnippet(groupCaption(group))}`}
@@ -544,7 +562,7 @@ function GroupCard({
             {groupCaption(group) || <span className="text-muted">(no caption)</span>}
           </p>
           <div className="flex min-w-0 items-center gap-2">
-            <StatusChip status={group.status} />
+            <StatusChip status={groupChip(group)} />
             {!failed && (
               <span className="min-w-0 truncate text-caption text-muted">
                 {accountLine(group, accounts)}
@@ -597,9 +615,10 @@ function GroupTable({
             </p>
             {/* Phones drop the Platforms, Status and When columns, so the cell carries them. */}
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 md:hidden">
-              <StatusChip status={g.status} />
+              <StatusChip status={groupChip(g)} />
               <PlatformIcons posts={g.posts} accounts={accounts} />
               <When group={g} className="text-caption text-muted" />
+              {isImportedGroup(g) && <ImportedMark />}
             </div>
             <FailureLine group={g} />
           </div>
@@ -623,7 +642,12 @@ function GroupTable({
       key: 'status',
       header: 'Status',
       className: 'hidden whitespace-nowrap md:table-cell',
-      cell: (g) => <StatusChip status={g.status} />,
+      cell: (g) => (
+        <span className="flex items-center gap-2">
+          <StatusChip status={groupChip(g)} />
+          {isImportedGroup(g) && <ImportedMark />}
+        </span>
+      ),
     },
     {
       key: 'when',
