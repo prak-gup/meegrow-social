@@ -6,6 +6,28 @@ has moved, trust the file, not this page.
 **Reads with:** `BUILD-SPEC-V2.md` §8 F3 (lines 533–537), invariant 7 (lines 102–103), the client-role
 decision (lines 46–61) · `DESIGN-airbnb.md` (tokens) · issue #28 (acceptance criteria).
 
+> **Update 2026-10-11 (analytics v2) — the page and its data path were rebuilt; §2–§5 and §8 below
+> describe the screen before it.** What holds now:
+>
+> - **One read.** The screen is drawn from `GET /v1/analytics/report` (core
+>   `services/analytics-report.ts`, MCP `analytics_report`): totals against the prior period,
+>   per-platform and by-publish-date breakdowns, best times, followers, formats, top posts, posting
+>   frequency and an accumulation curve. The arithmetic left the web app; `lib/analyticsReport.ts`
+>   only shapes and labels.
+> - **Invariant 7 still holds, and "never hardcode a metric name" now has one stated exception.**
+>   Storage keeps platform-native names. `core/services/metric-concepts.ts` is the single read-time
+>   mapping from display concepts (views, reach, likes, comments, shares, saves, clicks, follows)
+>   to native names, tested platform × concept. A concept a platform lacks is `null` → "—". Every
+>   native name, mapped or not, is listed in the page's "Platform metrics, as collected" section
+>   and in each post's expanded row.
+> - **Engagement rate** = (likes + comments + shares + saves) ÷ reach, ÷ views for a post without
+>   reach; a ratio of sums over the posts that have both halves. The screen states the formula,
+>   what each rate was divided by, and warns when one number mixes the two.
+> - **Time.** "Over time" is by publish week (day for ≤ 14 days) in the viewer's timezone, summing
+>   current all-time totals, and says so. Only "Engagement accumulation" uses snapshot history,
+>   and only for posts with enough of it.
+> - **§7 (validation against the platforms) is still open** and the preview badge still stands.
+>
 > **Update 2026-10-11 (UI pass 2) — where this brief is now out of date.** The page was reworked
 > and two of §9's questions were answered with small API additions, so read the following over the
 > matching parts below:

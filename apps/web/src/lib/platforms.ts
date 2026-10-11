@@ -76,6 +76,25 @@ export function platformMeta(p: { identifier: string; displayName: string }): Pl
   );
 }
 
+const PLATFORM_COLOR: Record<string, string> = {
+  facebook: 'hsl(var(--brand-facebook))',
+  instagram: 'hsl(var(--brand-instagram))',
+  gmb: 'hsl(var(--brand-gmb))',
+  linkedin: 'hsl(var(--brand-linkedin))',
+  'linkedin-page': 'hsl(var(--brand-linkedin))',
+  x: 'hsl(var(--brand-x))',
+  youtube: 'hsl(var(--brand-youtube))',
+  wordpress: 'hsl(var(--brand-wordpress))',
+};
+
+/**
+ * The colour a platform is drawn in on a chart: its brand token, so a platform is the same colour
+ * in every chart of a screen. Unknown (dev/fake) providers are muted grey.
+ */
+export function platformColor(identifier: string): string {
+  return PLATFORM_COLOR[identifier] ?? 'hsl(var(--muted))';
+}
+
 /**
  * The product's name as a client meets it. There is no agency/operator entity in the data model (a
  * workspace is the client; a user is a person), and this is the name the platform's own consent

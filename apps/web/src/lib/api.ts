@@ -26,6 +26,7 @@ import type {
   PostValidationResult,
   BulkPostMetricsView,
   AnalyticsStatusView,
+  AnalyticsReportView,
 } from '@meegrow-social/contracts';
 
 /**
@@ -229,6 +230,11 @@ export const api = {
   latestPostMetrics: (postIds: string[]) =>
     request<BulkPostMetricsView>('POST', '/v1/posts/metrics/latest', { postIds }),
   analyticsStatus: () => request<AnalyticsStatusView>('GET', '/v1/analytics/status'),
+  // The whole Analytics screen in one read, computed by core: totals against the prior period,
+  // breakdowns, best times, top posts. `timezone` is the viewer's; `scope: 'all'` adds up every
+  // client the user belongs to. Dates arrive as ISO strings.
+  analyticsReport: (query: Query) =>
+    request<AnalyticsReportView>('GET', '/v1/analytics/report', undefined, query),
   connectionFollowers: (id: string) =>
     request<FollowerSeriesView>('GET', `/v1/connections/${encodeURIComponent(id)}/followers`),
 
