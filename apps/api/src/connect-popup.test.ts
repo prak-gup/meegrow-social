@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { connectPopupHtml } from './server.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { connectOutcome, connectPopupHtml } from './server.js';
 
 /**
  * The OAuth popup page (#45). Page/account names in the payload come from the *provider* (Meta
@@ -62,10 +62,138 @@ describe('connectPopupHtml', () => {
     expect(html).toContain('Perfectly Normal Page');
   });
 
-  it('renders the outcome as text when there is no opener', () => {
-    const html = connectPopupHtml({ status: 'error', error: 'connect flow expired' });
-    expect(html).toContain('if (window.opener)');
-    expect(html).toContain('Connect failed');
-    expect(html).toContain('connect flow expired');
+  it('escapes provider-supplied text in the visible page too', () => {
+    const html = connectPopupHtml({ status: 'error', error: '<img src=x onerror=alert(1)>' });
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+  });
+});
+
+/**
+ * Runs the page's own script against a stub window, so what is asserted is what a browser does —
+ * with a dashboard behind the popup, and without one (an invite, or a top-level redirect).
+ */
+function open(payload: unknown, withOpener: boolean) {
+  const html = connectPopupHtml(payload);
+  const text = (id: string): string =>
+    (html.match(new RegExp(`<[a-z0-9]+ id="${id}">([^<]*)<`)) ?? [])[1] ?? '';
+  const shown = { t: text('t'), m: text('m') };
+  const posted: Array<{ message: unknown; target: unknown }> = [];
+  let closed = false;
+  const window = {
+    opener: withOpener
+      ? { postMessage: (message: unknown, target: unknown) => posted.push({ message, target }) }
+      : null,
+    close: () => {
+      closed = true;
+    },
+  };
+  const document = {
+    getElementById: (id: 't' | 'm') => ({
+      set textContent(value: string) {
+        shown[id] = value;
+      },
+    }),
+  };
+  const script = html.slice(
+    html.indexOf('<script>') + '<script>'.length,
+    html.indexOf('</script>'),
+  );
+  new Function('window', 'document', script)(window, document);
+  return { title: shown.t, detail: shown.m, posted, closed };
+}
+
+const FLOW = '0b6f1c1e-6f0a-4e0e-9a51-0d6c6f2f8a11';
+const PAYLOADS = {
+  connected: { status: 'connected', connectionId: 'abc' },
+  choose_account: {
+    status: 'choose_account',
+    flowId: FLOW,
+    accounts: [{ externalId: '1', displayName: 'Page One' }],
+  },
+  no_accounts: { status: 'choose_account', flowId: FLOW, accounts: [] },
+  error: { status: 'error', error: 'connect flow expired' },
+} as const;
+
+describe('callback page with an opener (the dashboard popup)', () => {
+  beforeEach(() => {
+    process.env.APP_URL = 'https://social.meegrowlabs.com';
+  });
+
+  it.each(Object.entries(PAYLOADS))('%s: hands the payload over and closes', (_name, payload) => {
+    const page = open(payload, true);
+    expect(page.posted).toEqual([
+      {
+        message: { source: 'meegrow-social-connect', payload },
+        target: 'https://social.meegrowlabs.com',
+      },
+    ]);
+    expect(page.closed).toBe(true);
+    // If the browser refuses to close it, the leftover text must not claim an outcome.
+    expect(page.title).toBe('Finishing up');
+    expect(page.detail).not.toMatch(/connected/i);
+  });
+});
+
+describe('callback page without an opener', () => {
+  it.each(Object.entries(PAYLOADS))('%s: posts nothing and stays open', (_name, payload) => {
+    const page = open(payload, false);
+    expect(page.posted).toEqual([]);
+    expect(page.closed).toBe(false);
+  });
+
+  it('says Connected only when a connection was created', () => {
+    const page = open(PAYLOADS.connected, false);
+    expect(page.title).toBe('Connected');
+    expect(page.detail).toContain('The account is connected');
+  });
+
+  it('does not call an unfinished account pick a success', () => {
+    const page = open(PAYLOADS.choose_account, false);
+    expect(page.title).toBe('Not connected yet');
+    expect(page.detail).toContain('Nothing has been connected');
+    expect(page.detail).toContain('still has to be chosen');
+  });
+
+  it('explains an empty account list instead of a picker or a success', () => {
+    const page = open(PAYLOADS.no_accounts, false);
+    expect(page.title).toBe('Nothing to connect');
+    expect(page.detail).toContain('did not offer any account');
+    expect(page.detail).toContain('Nothing has been connected');
+  });
+
+  it('gives the reason for a failure', () => {
+    const page = open(PAYLOADS.error, false);
+    expect(page.title).toBe('Not connected');
+    expect(page.detail).toContain('Connecting failed: connect flow expired.');
+    expect(page.detail).toContain('Nothing has been connected');
+  });
+
+  it('is already truthful before any script runs', () => {
+    // The outcome is rendered server-side; the script only ever handles the opener case.
+    const html = connectPopupHtml(PAYLOADS.choose_account);
+    expect(html).toContain('<h1 id="t">Not connected yet</h1>');
+    expect(html).not.toContain('Connected. You can close this window.');
+  });
+});
+
+describe('connectOutcome', () => {
+  it('reports connected for exactly one status', () => {
+    expect(connectOutcome(PAYLOADS.connected).connected).toBe(true);
+    for (const payload of [
+      PAYLOADS.choose_account,
+      PAYLOADS.no_accounts,
+      PAYLOADS.error,
+      { status: 'something_new' },
+      {},
+      null,
+      undefined,
+      'connected',
+    ]) {
+      const outcome = connectOutcome(payload);
+      expect(outcome.connected).toBe(false);
+      expect(outcome.title).not.toBe('Connected');
+      expect(outcome.detail).toContain('Nothing has been connected');
+    }
   });
 });

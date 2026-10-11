@@ -7,10 +7,13 @@ import {
   resetDb,
   useRecordingScheduler,
 } from '@meegrow-social/testing';
+import { signConnectFlow } from '../crypto.js';
 import {
   deleteConnection,
   finishConnect,
+  finishInviteConnect,
   getConnectionHealth,
+  getInviteFlow,
   handleCallback,
   listConnectionHealth,
   listConnections,
@@ -93,6 +96,135 @@ describe('OAuth connect flow', () => {
     if (result.status !== 'connected') throw new Error('unreachable');
     expect(await deleteConnection(ws, result.connectionId)).toBe(true);
     expect(await listConnections(ws)).toHaveLength(0);
+  });
+});
+
+/**
+ * The account pick of an invite-started flow: no session, no workspace argument — the flow's proof
+ * is the credential and the flow's own workspace is the only place a connection can land.
+ */
+describe('invite account pick (finishInviteConnect)', () => {
+  const awaiting = async (name = 'Ecolive') => {
+    const ws = await createWorkspace(name);
+    const { flowId } = await startConnect(ws, 'fake_2step', APP);
+    await handleCallback(flowId, 'auth-code');
+    return { ws, flowId, proof: signConnectFlow(flowId) };
+  };
+
+  it('shows the picker, then connects the chosen account into the flow workspace', async () => {
+    const { ws, flowId, proof } = await awaiting();
+    expect(await getInviteFlow(flowId, proof)).toEqual({
+      status: 'choose_account',
+      workspaceName: 'Ecolive',
+      provider: 'fake_2step',
+      providerDisplayName: 'Fake Two-Step Provider',
+      accounts: [
+        { externalId: 'page-1', displayName: 'Page One' },
+        { externalId: 'page-2', displayName: 'Page Two' },
+      ],
+    });
+
+    const result = await finishInviteConnect(flowId, proof, 'page-2');
+    expect(result).toMatchObject({
+      status: 'connected',
+      accountName: 'Page Two',
+      workspaceName: 'Ecolive',
+      providerDisplayName: 'Fake Two-Step Provider',
+    });
+    const conns = await listConnections(ws);
+    expect(conns).toHaveLength(1);
+    expect(conns[0]).toMatchObject({ externalId: 'page-2', displayName: 'Page Two' });
+    if (result.status !== 'connected') throw new Error('unreachable');
+    expect(conns[0]?.id).toBe(result.connectionId);
+
+    // Single-use: the same proof cannot connect a second account.
+    expect(await finishInviteConnect(flowId, proof, 'page-1')).toEqual({ status: 'used' });
+    expect(await getInviteFlow(flowId, proof)).toEqual({ status: 'used' });
+    expect(await listConnections(ws)).toHaveLength(1);
+  });
+
+  it('refuses a missing, forged or foreign proof and an unknown flow, identically', async () => {
+    const a = await awaiting('A');
+    const b = await awaiting('B');
+    for (const [flowId, proof] of [
+      [a.flowId, undefined],
+      [a.flowId, ''],
+      [a.flowId, 'A'.repeat(43)],
+      [a.flowId, b.proof], // a real proof, for someone else's flow
+      [NONEXISTENT, a.proof],
+      [NONEXISTENT, signConnectFlow(NONEXISTENT)],
+      ['not-a-uuid', a.proof],
+    ] as const) {
+      expect(await getInviteFlow(flowId, proof)).toEqual({ status: 'not_found' });
+      expect(await finishInviteConnect(flowId, proof, 'page-1')).toEqual({ status: 'not_found' });
+    }
+    expect(await listConnections(a.ws)).toHaveLength(0);
+    expect(await listConnections(b.ws)).toHaveLength(0);
+  });
+
+  it("never lands in another workspace: each proof finishes only its own flow's workspace", async () => {
+    const a = await awaiting('A');
+    const b = await awaiting('B');
+    expect((await finishInviteConnect(a.flowId, a.proof, 'page-1')).status).toBe('connected');
+    expect(await listConnections(a.ws)).toHaveLength(1);
+    expect(await listConnections(b.ws)).toHaveLength(0);
+  });
+
+  it('refuses an expired flow', async () => {
+    const { ws, flowId, proof } = await awaiting();
+    await db()
+      .update(schema.oauthFlows)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(schema.oauthFlows.id, flowId));
+    expect(await getInviteFlow(flowId, proof)).toEqual({ status: 'expired' });
+    expect(await finishInviteConnect(flowId, proof, 'page-1')).toEqual({ status: 'expired' });
+    expect(await listConnections(ws)).toHaveLength(0);
+  });
+
+  it('offers nothing and connects nothing when the platform returned no accounts', async () => {
+    const { ws, flowId, proof } = await awaiting();
+    // Test setup only — fake_2step always lists two; this is the Instagram-without-a-linked-Page case.
+    await db()
+      .update(schema.oauthFlows)
+      .set({ accounts: [] })
+      .where(eq(schema.oauthFlows.id, flowId));
+    expect(await getInviteFlow(flowId, proof)).toMatchObject({
+      status: 'choose_account',
+      accounts: [],
+    });
+    expect(await finishInviteConnect(flowId, proof, 'page-1')).toEqual({
+      status: 'invalid_account',
+    });
+    expect(await listConnections(ws)).toHaveLength(0);
+  });
+
+  it('refuses an account that was not offered, and the flow stays usable', async () => {
+    const { ws, flowId, proof } = await awaiting();
+    expect(await finishInviteConnect(flowId, proof, 'page-999')).toEqual({
+      status: 'invalid_account',
+    });
+    expect((await finishInviteConnect(flowId, proof, 'page-1')).status).toBe('connected');
+    expect(await listConnections(ws)).toHaveLength(1);
+  });
+
+  it('has nothing to pick before the platform has redirected back', async () => {
+    const ws = await createWorkspace();
+    const { flowId } = await startConnect(ws, 'fake_2step', APP);
+    expect(await getInviteFlow(flowId, signConnectFlow(flowId))).toEqual({ status: 'not_found' });
+  });
+
+  it('gives the account pick its own window, counted from the callback', async () => {
+    const ws = await createWorkspace();
+    const { flowId } = await startConnect(ws, 'fake_2step', APP);
+    const expiry = async () =>
+      (
+        await db().select().from(schema.oauthFlows).where(eq(schema.oauthFlows.id, flowId))
+      )[0]!.expiresAt.getTime();
+    const MIN = 60_000;
+    expect(await expiry()).toBeLessThan(Date.now() + 11 * MIN);
+    await handleCallback(flowId, 'auth-code');
+    expect(await expiry()).toBeGreaterThan(Date.now() + 29 * MIN);
+    expect(await expiry()).toBeLessThan(Date.now() + 31 * MIN);
   });
 });
 

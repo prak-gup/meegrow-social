@@ -12,6 +12,7 @@ import {
   createWorkspaceInput,
   createQueueInput,
   finishConnectInput,
+  finishInviteFlowInput,
   listPostsQuery,
   loginInput,
   logsAggregateInput,
@@ -31,6 +32,7 @@ import {
   buildUserView,
   createApiKeyForWorkspace,
   createClientWorkspace,
+  CONNECT_FLOW_MAX_AGE_MS,
   createConnectInvite,
   getConnectInvite,
   calendarPosts,
@@ -44,7 +46,9 @@ import {
   deleteConnection,
   deleteQueue,
   finishConnect,
+  finishInviteConnect,
   getConnectionHealth,
+  getInviteFlow,
   getMedia,
   getPost,
   getPostGroup,
@@ -73,13 +77,16 @@ import {
   SESSION_COOKIE,
   SESSION_TTL_MS,
   startConnect,
+  startInviteConnect,
   switchActiveWorkspace,
   updatePost,
   updateQueue,
   uploadMedia,
   validateMediaAgainstPlatform,
   validatePost,
+  verifyConnectFlowProof,
   type AuthContext,
+  type InviteFinishResult,
   PostStateError,
   ProviderBadRequestError,
 } from '@meegrow-social/core';
@@ -89,38 +96,153 @@ function appUrl(): string {
   return process.env.APP_URL ?? `http://localhost:${process.env.API_PORT ?? 8990}`;
 }
 
+/** What a person reads on the callback page when no dashboard is there to take the result. */
+export interface ConnectOutcome {
+  /** True only when a connection row was created. Nothing else may be worded as success. */
+  connected: boolean;
+  title: string;
+  detail: string;
+}
+
+/**
+ * The truthful, human wording of a callback result. `choose_account` is NOT a success: the flow is
+ * parked waiting for an account pick and no connection exists yet — reporting it as "Connected" is
+ * how an invite once looked finished while connecting nothing.
+ */
+export function connectOutcome(payload: unknown): ConnectOutcome {
+  const p = (payload ?? {}) as { status?: unknown; error?: unknown; accounts?: unknown };
+  if (p.status === 'connected') {
+    return {
+      connected: true,
+      title: 'Connected',
+      detail: 'The account is connected. You can close this window.',
+    };
+  }
+  if (p.status === 'choose_account') {
+    if (Array.isArray(p.accounts) && p.accounts.length === 0) {
+      return {
+        connected: false,
+        title: 'Nothing to connect',
+        detail:
+          'Access was approved, but that login did not offer any account that can be connected. ' +
+          'Nothing has been connected.',
+      };
+    }
+    return {
+      connected: false,
+      title: 'Not connected yet',
+      detail:
+        'Access was approved, but the account still has to be chosen and this window cannot do ' +
+        'that. Nothing has been connected. Go back to the page you started from and connect again.',
+    };
+  }
+  const reason =
+    p.status === 'error' && typeof p.error === 'string' ? p.error : 'unexpected result';
+  return {
+    connected: false,
+    title: 'Not connected',
+    detail:
+      `Connecting failed: ${reason}. Nothing has been connected. Go back to the page you started ` +
+      'from and try again. If you were sent a link, open it again.',
+  };
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
+  );
+}
+
 /**
  * The page the OAuth popup lands on (#45). It hands the callback result to the dashboard that
  * opened it and closes; two-phase providers carry a flowId that exists nowhere else, so dumping
- * JSON into the popup left the user stranded. Falls back to rendering the outcome as text when
- * there's no opener (e.g. the provider redirected in the top-level window).
+ * JSON into the popup left the user stranded. With no opener (the provider redirected in the
+ * top-level window) nobody receives the result, so the page itself says what happened — rendered
+ * server-side from `connectOutcome`, so it is right even if the script never runs.
  *
  * The payload is provider-derived (Page names come from Meta), so it is embedded as JSON with `<`
- * escaped — that closes the `</script>` breakout, the only injection route into this page. The
+ * escaped — that closes the `</script>` breakout — and the visible text is HTML-escaped. The
  * message is posted to our own origin, never `*`, so nothing else can read it.
  */
 export function connectPopupHtml(payload: unknown): string {
   const json = JSON.stringify(payload).replace(/</g, '\\u003c');
   const origin = JSON.stringify(appUrl().replace(/\/$/, ''));
+  const outcome = connectOutcome(payload);
   return `<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>Connecting…</title></head>
-<body style="font:14px system-ui;padding:24px;color:#111">
-<p id="m">Finishing up — you can close this window.</p>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(outcome.title)}</title>
+<style>
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f7f7f7;color:#222;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{box-sizing:border-box;width:calc(100% - 32px);max-width:28rem;padding:32px;background:#fff;border:1px solid #ddd;border-radius:12px}
+h1{margin:0 0 8px;font-size:20px;line-height:1.25}
+p{margin:0;color:#555}
+</style>
+</head>
+<body>
+<main>
+<h1 id="t">${escapeHtml(outcome.title)}</h1>
+<p id="m">${escapeHtml(outcome.detail)}</p>
+</main>
 <script>
 (function () {
   var payload = ${json};
   if (window.opener) {
     window.opener.postMessage({ source: 'meegrow-social-connect', payload: payload }, ${origin});
+    document.getElementById('t').textContent = 'Finishing up';
+    document.getElementById('m').textContent = 'Continue in the window you started from. You can close this one.';
     window.close();
-  } else {
-    document.getElementById('m').textContent =
-      payload.status === 'error' ? 'Connect failed: ' + payload.error : 'Connected. You can close this window.';
   }
 })();
 </script>
 </body>
 </html>`;
+}
+
+/**
+ * Cookie carrying an invite-started flow's proof (core `signConnectFlow`). One per flow, so a
+ * client working through two invite links at once does not lose the first.
+ */
+export function inviteFlowCookie(flowId: string): string {
+  return `mg_flow_${flowId}`;
+}
+
+/**
+ * Lax, not Strict: the browser must send it on the platform's top-level redirect back to
+ * /connect/callback. Lax still withholds it from cross-site POSTs, which covers the finish call.
+ */
+function inviteFlowCookieOptions() {
+  return {
+    httpOnly: true,
+    secure: process.env.COOKIE_SECURE === 'true',
+    sameSite: 'lax' as const,
+    path: '/',
+    maxAge: Math.floor(CONNECT_FLOW_MAX_AGE_MS / 1000),
+  };
+}
+
+/** The invite account-pick outcomes that are not a connection, in the `{ error }` shape. */
+function inviteFlowRefusal(
+  reply: FastifyReply,
+  result: Exclude<InviteFinishResult, { status: 'connected' }>,
+): FastifyReply {
+  switch (result.status) {
+    case 'used':
+      return reply.code(409).send({ error: 'this connection step was already completed' });
+    case 'expired':
+      return reply.code(410).send({ error: 'this connection step expired before it was finished' });
+    case 'invalid_account':
+      return reply.code(400).send({ error: 'that account is not one of the accounts offered' });
+    case 'failed':
+      return reply.code(502).send({ error: result.error });
+    case 'not_found':
+      return reply
+        .code(404)
+        .send({ error: 'this connection step is not available in this browser' });
+  }
 }
 
 const SESSION_MAX_AGE_S = Math.floor(SESSION_TTL_MS / 1000);
@@ -435,29 +557,81 @@ export async function buildServer(): Promise<FastifyInstance> {
   });
 
   // Public: the client clicked Connect — start the OAuth for the invite's workspace + provider. The
-  // existing /connect/callback finalizes into that workspace (the flow carries the workspaceId), so
-  // no session on the client's side is needed.
+  // flow carries the workspaceId, so no session on the client's side is needed; the proof cookie is
+  // what lets this browser, and no other, pick the account afterwards.
   app.post<{ Params: { token: string } }>('/v1/invite/:token/start', async (req, reply) => {
-    const invite = await getConnectInvite(req.params.token);
-    if (!invite) return reply.code(404).send({ error: 'this invite link is invalid or expired' });
-    const { url } = await startConnect(invite.workspaceId, invite.provider, appUrl());
-    return { url };
+    const started = await startInviteConnect(req.params.token, appUrl());
+    if (!started) return reply.code(404).send({ error: 'this invite link is invalid or expired' });
+    reply.setCookie(inviteFlowCookie(started.flowId), started.proof, inviteFlowCookieOptions());
+    return { url: started.url };
   });
 
-  // Public: provider redirects the user's browser here after consent. This lands in the popup the
-  // dashboard opened, so it answers with a tiny HTML page that hands the result to the opener and
-  // closes itself (#45) — a two-phase provider's flowId only exists here, and JSON in a popup is
-  // unusable. handleCallback still returns the CallbackResult contract; only the transport differs.
-  app.get<{ Querystring: { state?: string; code?: string } }>(
+  // Public: the account picker of an invite-started flow. No session — the flow's proof cookie is
+  // the credential (see core `finishInviteConnect`); without it the answer is the same 404 as for
+  // a flow that does not exist.
+  app.get<{ Params: { flowId: string } }>('/v1/invite/flow/:flowId', async (req, reply) => {
+    const { flowId } = req.params;
+    const state = await getInviteFlow(flowId, req.cookies[inviteFlowCookie(flowId)]);
+    if (state.status !== 'choose_account') return inviteFlowRefusal(reply, state);
+    return {
+      workspaceName: state.workspaceName,
+      provider: state.provider,
+      providerDisplayName: state.providerDisplayName,
+      accounts: state.accounts,
+    };
+  });
+
+  // Public: the client picked an account — create the connection in the invite's workspace.
+  app.post<{ Params: { flowId: string } }>('/v1/invite/flow/:flowId/finish', async (req, reply) => {
+    if (!originAllowed(req)) return reply.code(403).send({ error: 'cross-origin request blocked' });
+    const parsed = finishInviteFlowInput.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const { flowId } = req.params;
+    const result = await finishInviteConnect(
+      flowId,
+      req.cookies[inviteFlowCookie(flowId)],
+      parsed.data.externalId,
+    );
+    if (result.status !== 'connected') return inviteFlowRefusal(reply, result);
+    reply.clearCookie(inviteFlowCookie(flowId), { path: '/' });
+    return reply.code(201).send({
+      connectionId: result.connectionId,
+      accountName: result.accountName,
+      workspaceName: result.workspaceName,
+      providerDisplayName: result.providerDisplayName,
+    });
+  });
+
+  // Public: provider redirects the user's browser here after consent. From the dashboard this lands
+  // in the popup it opened, so it answers with a tiny HTML page that hands the result to the opener
+  // and closes itself (#45) — a two-phase provider's flowId only exists here, and JSON in a popup
+  // is unusable. From an invite there is no opener and no session: when this browser holds the
+  // flow's proof and an account still has to be picked, it is sent on to the public picker instead.
+  // handleCallback still returns the CallbackResult contract; only the transport differs.
+  app.get<{ Querystring: { state?: string; code?: string; error?: string } }>(
     '/connect/callback',
     async (req, reply) => {
-      const { state, code } = req.query;
+      const { state, code, error } = req.query;
       const send = (payload: unknown, status: number): void => {
         void reply.code(status).type('text/html; charset=utf-8').send(connectPopupHtml(payload));
       };
-      if (!state || !code) return send({ status: 'error', error: 'missing state or code' }, 400);
+      if (!state || !code) {
+        // A fixed phrase, never the query's own text: this page must not echo what a link says.
+        const reason =
+          error === 'access_denied'
+            ? 'access was not approved on the platform’s screen'
+            : 'missing state or code';
+        return send({ status: 'error', error: reason }, 400);
+      }
       try {
-        return send(await handleCallback(state, code), 200);
+        const result = await handleCallback(state, code);
+        if (
+          result.status === 'choose_account' &&
+          verifyConnectFlowProof(result.flowId, req.cookies[inviteFlowCookie(result.flowId)])
+        ) {
+          return reply.redirect(`${appUrl().replace(/\/$/, '')}/i/finish/${result.flowId}`);
+        }
+        return send(result, 200);
       } catch (err) {
         return send(
           { status: 'error', error: err instanceof Error ? err.message : 'callback failed' },

@@ -6,15 +6,25 @@ import type {
   ConnectionHealth,
   ConnectionHealthStatus,
   ConnectionHealthView,
+  ProviderAccountView,
   ProviderIdentifier,
   TokenModel,
 } from '@meegrow-social/contracts';
 import { getProvider } from '../providers/registry.js';
 import { METRIC_RETENTION_DAYS } from './metrics-retention.js';
 import type { AuthTokens } from '../providers/types.js';
-import { decryptToken, encryptToken } from '../crypto.js';
+import { decryptToken, encryptToken, verifyConnectFlowProof } from '../crypto.js';
 
+/** How long a started flow waits for the platform's redirect back (login + consent screens). */
 const FLOW_TTL_MS = 10 * 60 * 1000;
+/**
+ * How long a two-phase flow waits for the account pick, counted from the callback rather than from
+ * the start: the consent screens already spent an unknown share of FLOW_TTL_MS, and a person reading
+ * a list of Pages on a phone should not lose the flow to whatever was left of it.
+ */
+const ACCOUNT_PICK_TTL_MS = 30 * 60 * 1000;
+/** The longest a flow can live end to end — how long the invite path's proof cookie is kept. */
+export const CONNECT_FLOW_MAX_AGE_MS = FLOW_TTL_MS + ACCOUNT_PICK_TTL_MS;
 /** Refreshable tokens (auto-refresh / refresh-cron) surface 'expiring' within 7d of expiry. */
 export const EXPIRING_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 /** One-time tokens can't be auto-refreshed, so they surface 'expiring' earlier (14d) for manual re-auth. */
@@ -175,6 +185,7 @@ export async function handleCallback(state: string, code: string): Promise<Callb
         encryptedTokens: encryptToken(serialize(tokens)),
         accounts,
         status: 'awaiting_account',
+        expiresAt: new Date(Date.now() + ACCOUNT_PICK_TTL_MS),
       })
       .where(eq(schema.oauthFlows.id, flow.id));
     return { status: 'choose_account', flowId: flow.id, accounts };
@@ -209,8 +220,21 @@ export async function finishConnect(
   if (flow.workspaceId !== workspaceId) throw new Error('flow does not belong to this workspace');
   if (flow.expiresAt.getTime() < Date.now()) throw new Error('connect flow expired');
 
-  const accounts = (flow.accounts as Array<{ externalId: string; displayName: string }>) ?? [];
-  const chosen = accounts.find((a) => a.externalId === externalId);
+  return (await connectChosenAccount(flow, externalId)).connectionId;
+}
+
+type OAuthFlow = typeof schema.oauthFlows.$inferSelect;
+
+function offeredAccounts(flow: OAuthFlow): ProviderAccountView[] {
+  return (flow.accounts as ProviderAccountView[] | null) ?? [];
+}
+
+/** Create the connection for the account picked out of an `awaiting_account` flow, and consume it. */
+async function connectChosenAccount(
+  flow: OAuthFlow,
+  externalId: string,
+): Promise<{ connectionId: string; displayName: string }> {
+  const chosen = offeredAccounts(flow).find((a) => a.externalId === externalId);
   if (!chosen) throw new Error('chosen account is not one of the offered accounts');
   if (!flow.encryptedTokens) throw new Error('flow is missing tokens');
 
@@ -230,7 +254,110 @@ export async function finishConnect(
     .update(schema.oauthFlows)
     .set({ status: 'consumed' })
     .where(eq(schema.oauthFlows.id, flow.id));
-  return connectionId;
+  return { connectionId, displayName: chosen.displayName };
+}
+
+/**
+ * The account-pick step of a flow started from a connect invite, for a person with no session.
+ *
+ * `proof` (see `signConnectFlow`) is the whole credential: the server issues it only from the
+ * invite start route, to the browser that started this flow. So a valid proof means both "this flow
+ * came from an invite" and "this is the browser that started it" — a flow started from the
+ * dashboard never has one and cannot be finished here. The workspace is always the flow's own (the
+ * invite's); the caller cannot name another. A bad proof and an unknown flow get the same answer.
+ */
+export type InviteFlowState =
+  | {
+      status: 'choose_account';
+      workspaceName: string;
+      provider: ProviderIdentifier;
+      providerDisplayName: string;
+      accounts: ProviderAccountView[];
+    }
+  | { status: 'not_found' | 'used' | 'expired' };
+
+type LiveInviteFlow = Extract<InviteFlowState, { status: 'choose_account' }> & { flow: OAuthFlow };
+
+async function loadInviteFlow(
+  flowId: string,
+  proof: string | undefined | null,
+): Promise<LiveInviteFlow | Exclude<InviteFlowState, { status: 'choose_account' }>> {
+  // Checked before the lookup: only an id this server signed ever reaches the database.
+  if (!verifyConnectFlowProof(flowId, proof)) return { status: 'not_found' };
+  const [flow] = await db()
+    .select()
+    .from(schema.oauthFlows)
+    .where(eq(schema.oauthFlows.id, flowId))
+    .limit(1);
+  if (!flow) return { status: 'not_found' };
+  if (flow.status === 'consumed') return { status: 'used' };
+  if (flow.expiresAt.getTime() < Date.now()) return { status: 'expired' };
+  // Still 'pending': the platform never redirected back, so there is nothing to pick from yet.
+  if (flow.status !== 'awaiting_account') return { status: 'not_found' };
+
+  const [workspace] = await db()
+    .select({ name: schema.workspaces.name })
+    .from(schema.workspaces)
+    .where(eq(schema.workspaces.id, flow.workspaceId))
+    .limit(1);
+  if (!workspace) return { status: 'not_found' };
+  const provider = flow.provider as ProviderIdentifier;
+  return {
+    status: 'choose_account',
+    workspaceName: workspace.name,
+    provider,
+    providerDisplayName: getProvider(provider).displayName,
+    accounts: offeredAccounts(flow),
+    flow,
+  };
+}
+
+/** What the invite's account picker shows: who is asking, for which platform, and the choices. */
+export async function getInviteFlow(
+  flowId: string,
+  proof: string | undefined | null,
+): Promise<InviteFlowState> {
+  const loaded = await loadInviteFlow(flowId, proof);
+  if (loaded.status !== 'choose_account') return loaded;
+  const { flow: _flow, ...view } = loaded;
+  return view;
+}
+
+export type InviteFinishResult =
+  | {
+      status: 'connected';
+      connectionId: string;
+      accountName: string;
+      workspaceName: string;
+      providerDisplayName: string;
+    }
+  | { status: 'not_found' | 'used' | 'expired' | 'invalid_account' }
+  /** The platform refused the chosen account (e.g. it is no longer reachable). Nothing was created. */
+  | { status: 'failed'; error: string };
+
+/** Finish an invite-started flow: connect the picked account into the invite's workspace. */
+export async function finishInviteConnect(
+  flowId: string,
+  proof: string | undefined | null,
+  externalId: string,
+): Promise<InviteFinishResult> {
+  const loaded = await loadInviteFlow(flowId, proof);
+  if (loaded.status !== 'choose_account') return loaded;
+  if (!loaded.accounts.some((a) => a.externalId === externalId)) {
+    return { status: 'invalid_account' };
+  }
+  try {
+    const { connectionId, displayName } = await connectChosenAccount(loaded.flow, externalId);
+    return {
+      status: 'connected',
+      connectionId,
+      accountName: displayName,
+      workspaceName: loaded.workspaceName,
+      providerDisplayName: loaded.providerDisplayName,
+    };
+  } catch (err) {
+    return { status: 'failed', error: err instanceof Error ? err.message : 'could not connect' };
+  }
 }
 
 export async function listConnections(workspaceId: string): Promise<ConnectionView[]> {
