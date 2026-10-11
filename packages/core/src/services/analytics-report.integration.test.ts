@@ -201,7 +201,12 @@ describe('getAnalyticsReport', () => {
     expect(await ids({ source: 'app', provider: 'facebook' })).toEqual([page]);
 
     const filtered = await getAnalyticsReport(ws, query({ provider: 'facebook' }), clock);
-    expect(filtered.accounts.map((a) => a.displayName)).toEqual(['FB']);
+    // Every account stays listed, so a screen can still offer it; only the selected ones count.
+    expect(filtered.accounts.map((a) => [a.displayName, a.selected])).toEqual([
+      ['IG', false],
+      ['IG two', false],
+      ['FB', true],
+    ]);
   });
 
   it('reads followers per account for the period and the one before', async () => {
@@ -336,7 +341,8 @@ describe('tenant isolation', () => {
     const report = await getAnalyticsReport(a.ws, query({ connectionId: b.conn }), clock);
 
     expect(report.topPosts).toEqual([]);
-    expect(report.accounts).toEqual([]);
+    // Its own account is listed and not selected; the other workspace's never appears.
+    expect(report.accounts.map((x) => [x.id, x.selected])).toEqual([[a.conn, false]]);
     expect(report.summary.totals.likes.value).toBeNull();
     expect(report.summary.followers.value).toBeNull();
   });

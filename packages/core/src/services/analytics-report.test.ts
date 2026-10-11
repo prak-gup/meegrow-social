@@ -61,6 +61,7 @@ const account = (id: string, provider: string): ReportAccount => ({
   provider,
   displayName: provider,
   needsReconnect: false,
+  selected: true,
 });
 
 const input = (patch: Partial<ReportInput>): ReportInput => ({

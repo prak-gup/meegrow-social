@@ -563,7 +563,8 @@ export function buildAnalyticsReport(input: ReportInput): AnalyticsReportView {
   ) as Record<MetricConcept, ComparedNumber>;
   const rate = engagementRate(currentValues);
   const ratePrior = engagementRate(priorValues).rate;
-  const followers = followerSection(input.accounts, input.followerPoints, period, zone);
+  const accounts = input.accounts.filter((a) => a.selected);
+  const followers = followerSection(accounts, input.followerPoints, period, zone);
 
   const by = rankingBasis(current);
   const ranked = by
@@ -587,7 +588,7 @@ export function buildAnalyticsReport(input: ReportInput): AnalyticsReportView {
 
   // --- per platform ---
   const providers = [
-    ...new Set([...input.accounts.map((a) => a.provider), ...current.map((p) => p.provider)]),
+    ...new Set([...accounts.map((a) => a.provider), ...current.map((p) => p.provider)]),
   ];
   const byPlatform = providers
     .map((provider) => {
@@ -704,13 +705,16 @@ async function loadWorkspace(
       .from(schema.connections)
       .orderBy(asc(schema.connections.createdAt));
     const accounts: ReportAccount[] = connections
-      .filter(
-        (c) =>
-          providerVisible(c.provider) &&
+      .filter((c) => providerVisible(c.provider))
+      .map((c) => ({
+        ...c,
+        workspaceId: workspace.id,
+        workspaceName: workspace.name,
+        selected:
           (!filters.provider || c.provider === filters.provider) &&
           (!filters.connectionId || c.id === filters.connectionId),
-      )
-      .map((c) => ({ ...c, workspaceId: workspace.id, workspaceName: workspace.name }));
+      }));
+    const selected = accounts.filter((a) => a.selected);
 
     const published = and(
       eq(schema.posts.status, 'published'),
@@ -804,7 +808,7 @@ async function loadWorkspace(
     // Follower captures of both periods. A name counts only on a platform that uses it.
     const followerNames = allFollowerMetricNames();
     const followerRows =
-      accounts.length === 0
+      selected.length === 0
         ? []
         : await tx
             .select({
@@ -819,7 +823,7 @@ async function loadWorkspace(
                 isNull(schema.metrics.postId),
                 inArray(
                   schema.metrics.connectionId,
-                  accounts.map((a) => a.id),
+                  selected.map((a) => a.id),
                 ),
                 inArray(schema.metrics.metric, followerNames),
                 gt(schema.metrics.capturedAt, period.priorStart),
@@ -827,7 +831,7 @@ async function loadWorkspace(
               ),
             )
             .orderBy(asc(schema.metrics.capturedAt), asc(schema.metrics.createdAt));
-    const providerOf = new Map(accounts.map((a) => [a.id, a.provider]));
+    const providerOf = new Map(selected.map((a) => [a.id, a.provider]));
     const followerPoints: RawFollowerPoint[] = followerRows.flatMap((r) =>
       r.connectionId && followerSources(providerOf.get(r.connectionId) ?? '').includes(r.metric)
         ? [{ connectionId: r.connectionId, value: Number(r.value), capturedAt: r.capturedAt }]

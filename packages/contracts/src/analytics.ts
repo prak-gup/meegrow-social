@@ -217,6 +217,8 @@ export const reportAccount = z.object({
   provider: z.string(),
   displayName: z.string(),
   needsReconnect: z.boolean(),
+  /** False for an account the platform / account filter leaves out: listed, but in no number. */
+  selected: z.boolean(),
 });
 export type ReportAccount = z.infer<typeof reportAccount>;
 
@@ -262,7 +264,10 @@ export const analyticsReportView = z.object({
   }),
   /** Width of an `overTime` bucket: days for a period of two weeks or less, else Monday weeks. */
   bucket: z.enum(['day', 'week']),
-  /** Every account the filters cover, with or without posts in the period. */
+  /**
+   * Every account in scope, with or without posts in the period, so a screen can offer them as
+   * filters. Only the `selected` ones are behind the numbers.
+   */
   accounts: z.array(reportAccount),
   /**
    * The mapping as applied: per platform in view, the native metric name(s) behind each concept
