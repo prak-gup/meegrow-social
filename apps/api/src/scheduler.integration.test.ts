@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Queue, Worker } from 'bullmq';
 import { createBullScheduler, publishJobId, PUBLISH_QUEUE } from './scheduler.js';
 import type { PublishJobData } from './scheduler.js';
@@ -17,6 +17,12 @@ let queue: Queue<PublishJobData>;
 
 beforeAll(() => {
   queue = new Queue<PublishJobData>(PUBLISH_QUEUE, { connection: { url: REDIS_URL } });
+});
+
+// Each test starts from an empty queue: the cases that take a job by hand (`getNextJob`) get the
+// oldest waiting one, which would otherwise be a job an earlier test left behind.
+beforeEach(async () => {
+  await queue.obliterate({ force: true });
 });
 
 afterAll(async () => {
