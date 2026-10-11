@@ -11,6 +11,8 @@ export * from './providers/google/client.js';
 export * from './providers/google/gbp.js';
 export * from './providers/google/youtube.js';
 export * from './providers/wordpress/client.js';
+export * from './providers/wordpress/xmlrpc.js';
+export * from './providers/wordpress/xmlrpc-client.js';
 export * from './providers/wordpress/wordpress.js';
 export * from './net/safe-fetch.js';
 export * from './media/validate.js';

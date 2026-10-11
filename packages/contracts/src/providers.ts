@@ -41,3 +41,12 @@ export type ConnectionHealth = z.infer<typeof connectionHealth>;
  */
 export const connectInputKind = z.enum(['site_url']);
 export type ConnectInputKind = z.infer<typeof connectInputKind>;
+
+/**
+ * How a site-address provider (WordPress) was, or can be, connected. `approval`: the person
+ * approves on the site's own screen and the site issues a separate password for this app.
+ * `password`: the person types a username and login password here, for sites where the first is
+ * switched off. Recorded on the connection so the difference stays visible afterwards.
+ */
+export const connectMethod = z.enum(['approval', 'password']);
+export type ConnectMethod = z.infer<typeof connectMethod>;

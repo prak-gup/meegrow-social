@@ -46,6 +46,18 @@ export const CONNECT_FAILURE_MESSAGES = {
     'that WordPress user is not allowed to publish posts — approve with an Author, Editor or Administrator account',
   site_unreachable: 'the site could not be reached to confirm the connection',
   unavailable: 'the site does not offer this kind of connection',
+  // Username-and-password connect (XML-RPC). Never WordPress's own text, never what was typed.
+  login_rejected: 'the site did not accept that username and password',
+  role_cannot_publish:
+    'that WordPress user cannot publish posts — use a user with the Author or Editor role',
+  xmlrpc_disabled:
+    'XML-RPC is switched off on this site, so it cannot be connected with a username and password',
+  xmlrpc_blocked:
+    'a firewall or security plugin on the site is blocking XML-RPC requests from this server',
+  xmlrpc_not_found: 'no xmlrpc.php was found at that address',
+  site_moved:
+    'the site redirected the request to another address, so nothing was sent on — check the site again with the address it redirects to',
+  check_expired: 'this site check is no longer valid — check the site again',
   failed: 'the connection could not be completed',
 } as const;
 

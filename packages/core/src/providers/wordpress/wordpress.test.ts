@@ -278,7 +278,15 @@ describe('small helpers', () => {
   });
 
   it('credentials round-trip, and an unreadable blob never appears in the error', () => {
-    expect(decodeCredentials(encodeCredentials(CREDENTIALS))).toEqual(CREDENTIALS);
+    // A blob written before transports existed has none, and reads back as REST.
+    expect(decodeCredentials(encodeCredentials(CREDENTIALS))).toEqual({
+      transport: 'rest',
+      ...CREDENTIALS,
+    });
+    expect(decodeCredentials(JSON.stringify({ v: 1, ...CREDENTIALS }))).toEqual({
+      transport: 'rest',
+      ...CREDENTIALS,
+    });
     for (const bad of ['', 'PLAIN-TOKEN-secret', '{"siteUrl":"x"}', 'null', '[]']) {
       const err = (() => {
         try {
@@ -410,14 +418,32 @@ describe('discovery', () => {
       /does not offer the core REST API/,
     ],
     [
-      'a REST root advertised on another host',
+      'a REST root advertised on another host that does not name this one back',
       [
         {
           match: 'HEAD blog.example.com',
           headers: { link: '<https://api.elsewhere.test/wp-json/>; rel="https://api.w.org/"' },
         },
+        {
+          match: 'GET api.elsewhere.test/wp-json/',
+          body: { ...INDEX, url: 'https://api.elsewhere.test', home: 'https://api.elsewhere.test' },
+        },
       ],
-      /different host/,
+      /does not name blog\.example\.com as one of its own addresses/,
+    ],
+    [
+      'a REST root advertised on another host that does not answer',
+      [
+        {
+          match: 'HEAD blog.example.com',
+          headers: { link: '<https://api.elsewhere.test/wp-json/>; rel="https://api.w.org/"' },
+        },
+        {
+          match: 'GET api.elsewhere.test',
+          throws: new SafeFetchError('timeout', 'no answer'),
+        },
+      ],
+      /No WordPress REST API was found/,
     ],
     [
       'an authorize screen on another host',
@@ -462,6 +488,11 @@ describe('discovery', () => {
       [
         HEAD_FRONT,
         { match: 'GET /wp-json/', body: { ...INDEX, url: 'https://other.example.org' } },
+        // The host it names does not point back at this REST root, so the claim is not accepted.
+        {
+          match: 'HEAD other.example.org',
+          headers: { link: '<https://other.example.org/wp-json/>; rel="https://api.w.org/"' },
+        },
       ],
       /says its address is other\.example\.org/,
     ],
@@ -560,7 +591,8 @@ describe('authenticate — the redirect back from authorize-application.php', ()
     expect(tokens.displayName).toBe('Ecolive & Co');
     expect(tokens.refreshToken).toBeUndefined();
     expect(tokens.expiresAt).toBeUndefined();
-    expect(decodeCredentials(tokens.accessToken)).toEqual(CREDENTIALS);
+    expect(decodeCredentials(tokens.accessToken)).toEqual({ transport: 'rest', ...CREDENTIALS });
+    expect(tokens.connectionMeta).toEqual({ method: 'approval' });
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe(

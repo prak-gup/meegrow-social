@@ -1,5 +1,7 @@
 import type {
   ConnectInputKind,
+  ConnectMethod,
+  SiteCheck,
   ProviderIdentifier,
   TokenModel,
   MediaRef,
@@ -17,6 +19,25 @@ export interface AuthTokens {
   expiresAt?: Date;
   externalId: string;
   displayName: string;
+  /**
+   * Non-secret facts about HOW the account was connected, stored in the clear on the connection
+   * (`connections.meta`) so a list can show them without decrypting anything — WordPress records
+   * `method` (`approval` | `password`) and the endpoint a login was verified at.
+   */
+  connectionMeta?: Record<string, string>;
+}
+
+/** What a site-address provider learned about an address before anyone logs in. */
+export type SiteInspection = Omit<SiteCheck, 'ticket'>;
+
+/** A username-and-password connect, bound to the endpoint the person was shown. */
+export interface PasswordConnectParams {
+  /** The address the login is sent to — from a sealed site check, never from the request body. */
+  endpoint: string;
+  username: string;
+  password: string;
+  /** What the site check established: the address as entered, and the public one if confirmed. */
+  site: { entered: string; home: string | null; name: string | null };
 }
 
 export interface GenerateAuthUrl {
@@ -87,6 +108,12 @@ export interface SocialProvider {
    * not just invites — to finish in the browser that started it.
    */
   readonly credentialInCallback?: boolean;
+  /**
+   * The ways this provider can be connected, when there is more than the one redirect. `password`
+   * means `authenticateWithPassword` exists: the person types a login into THIS app, which is only
+   * ever offered alongside `inspectSite` so they are shown where it will be sent first.
+   */
+  readonly connectMethods?: readonly ConnectMethod[];
 
   /**
    * The connect service supplies `state` (an opaque flow id); the provider embeds it in the URL.
@@ -107,6 +134,13 @@ export interface SocialProvider {
     redirectUri: string;
     callback?: Readonly<Record<string, string | undefined>>;
   }): Promise<AuthTokens>;
+  /** Look at a site address without logging in (see `SiteInspection`). */
+  inspectSite?(siteUrl: string): Promise<SiteInspection>;
+  /**
+   * Verify a typed username and password against the site and return what to store. Throws
+   * `ConnectError` with a fixed code — never text from the site, never anything submitted.
+   */
+  authenticateWithPassword?(params: PasswordConnectParams): Promise<AuthTokens>;
   /**
    * Only meaningful when `isBetweenSteps`: after auth, list the Pages/Orgs/Channels/Locations the
    * user may connect. The user picks one, then the connect service finalizes the connection.

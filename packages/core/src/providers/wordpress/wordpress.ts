@@ -9,11 +9,14 @@ import type {
   AuthTokens,
   GenerateAuthUrl,
   MetricPoint,
+  PasswordConnectParams,
   PostDetails,
   PostResult,
+  SiteInspection,
   SocialProvider,
 } from '../types.js';
 import { ConnectError, ProviderAuthError, ProviderBadRequestError } from '../../errors.js';
+import { fileStem, permalink, statusNotice, uploadExtension } from './article.js';
 import {
   decodeCredentials,
   encodeCredentials,
@@ -22,9 +25,11 @@ import {
   UPLOAD_TIMEOUT_MS,
   WordPressClient,
   type WordPressClientConfig,
-  type WordPressCredentials,
+  type WordPressRestCredentials,
   type WordPressSite,
 } from './client.js';
+import { WordPressXmlRpcClient, type XmlRpcEndpointState } from './xmlrpc-client.js';
+import { postOverXmlRpc } from './xmlrpc-publisher.js';
 
 /**
  * WordPress provider — blog articles on a self-hosted site (or any WordPress that exposes the core
@@ -32,16 +37,20 @@ import {
  * docs/dev/research/wordpress.md. NOTHING here has run against a real site; the tests replay
  * fixtures built from WordPress's documented shapes.
  *
- * Connect — there is no central WordPress login, so the flow starts with the site's address:
- *   address → discovery (`WordPressClient.discover`) → the site's own authorize-application screen
- *   → the person approves while logged in to THEIR site → WordPress redirects back with a freshly
- *   generated application password. The operator never types a password into this app.
+ * Connect — there is no central WordPress login, so the flow starts with the site's address. Two
+ * ways on from there (`connectMethods`):
+ *   approval — address → discovery (`WordPressClient.discover`) → the site's own
+ *   authorize-application screen → the person approves while logged in to THEIR site → WordPress
+ *   redirects back with a freshly generated application password. Nobody types a password here.
+ *   password — for a site where application passwords are switched off: a WordPress username and
+ *   login password, checked against the site's `xmlrpc.php` (`authenticateWithPassword`).
  *
- * Token model — `one-time`, no expiry: an application password lives until someone revokes it on
- * the site, and cannot be refreshed. A revoked one surfaces as a 401 → `ProviderAuthError` →
+ * Token model — `one-time`, no expiry: either kind of password lives until someone revokes or
+ * changes it on the site, and cannot be refreshed. A dead one surfaces as `ProviderAuthError` →
  * needs_reconnect, like a dead Facebook Page token. The "access token" this app stores is the
- * site's REST root + username + application password as one JSON string, which the connect service
- * encrypts like any other token; `externalId` is the site's public address.
+ * transport, the address it was verified at, the username and the password as one JSON string,
+ * which the connect service encrypts like any other token; `externalId` is the site's public
+ * address. `post()` dispatches on the stored transport.
  *
  * Post — `caption` is the article body in Markdown (converted and sanitised by
  * `articleMarkdownToHtml`), `options` (arm `wordpress`) carries the title and the rest, and the
@@ -52,13 +61,6 @@ type WordPressOptions = Extract<PostOptions, { kind: 'wordpress' }>;
 
 /** What `generateAuthUrl` leaves on the flow row for `authenticate` (see `GenerateAuthUrl`). */
 type FlowContext = Pick<WordPressSite, 'siteUrl' | 'home' | 'apiRoot' | 'name'>;
-
-const UPLOADABLE: Record<string, string> = {
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/gif': 'gif',
-  'image/webp': 'webp',
-};
 
 /** WordPress limits on what the callback may carry; anything longer is not something it issued. */
 const MAX_LOGIN_LENGTH = 60;
@@ -84,11 +86,109 @@ export class WordPressProvider implements SocialProvider {
   readonly maxConcurrentJobs = 2;
   readonly connectInput = 'site_url' as const;
   readonly credentialInCallback = true;
+  readonly connectMethods = ['approval', 'password'] as const;
 
   private readonly client: WordPressClient;
+  private readonly xmlrpc: WordPressXmlRpcClient;
 
   constructor(config: WordPressClientConfig | WordPressClient = {}) {
     this.client = config instanceof WordPressClient ? config : new WordPressClient(config);
+    // One way out for both transports: whatever the REST client fetches with, XML-RPC does too.
+    this.xmlrpc = new WordPressXmlRpcClient({ fetchImpl: this.client.fetchImpl });
+  }
+
+  /**
+   * What the Connect dialog shows after the address is typed: which of the two methods this site
+   * can use, why not when it cannot, which addresses WordPress goes by, and the exact `xmlrpc.php`
+   * a login would be sent to. Unauthenticated requests only.
+   */
+  async inspectSite(siteUrl: string): Promise<SiteInspection> {
+    const inspection = await this.client.inspect(siteUrl);
+    let endpoint: string | null = null;
+    let state: XmlRpcEndpointState = 'not_found';
+    const tried = new Set<string>();
+    const tryEndpoint = async (candidate: string): Promise<boolean> => {
+      if (tried.has(candidate)) return false;
+      tried.add(candidate);
+      const found = await this.xmlrpc.probe(candidate);
+      if (found === 'available' || found === 'unknown') {
+        endpoint = candidate;
+        state = found;
+        return true;
+      }
+      // Keep the most telling refusal: "switched off" says more than "nothing there".
+      if (state === 'not_found') state = found;
+      return false;
+    };
+    for (const candidate of inspection.xmlrpcCandidates) {
+      if (await tryEndpoint(candidate)) break;
+    }
+    if (endpoint === null && inspection.siteUrl === null) {
+      // The REST index could not say where WordPress lives; the page's own EditURI link can.
+      const advertised = await this.client.editUriEndpoint(inspection.entered);
+      if (advertised) await tryEndpoint(advertised);
+    }
+    return {
+      entered: inspection.entered.replace(/\/+$/, ''),
+      name: inspection.name,
+      siteAddress: inspection.siteUrl,
+      homeAddress: inspection.home,
+      separateAddresses: inspection.split,
+      approval: inspection.approve.available
+        ? { available: true }
+        : {
+            available: false,
+            reason: inspection.approve.reason,
+            message: inspection.approve.message,
+          },
+      password:
+        endpoint !== null
+          ? { available: true, endpoint }
+          : { available: false, reason: state, message: XMLRPC_UNAVAILABLE[state] },
+    };
+  }
+
+  /**
+   * Connect with a WordPress username and login password, over XML-RPC. `endpoint` is the
+   * `xmlrpc.php` the person was shown by `inspectSite` — the connect service hands it back sealed,
+   * so the password goes to that address and to no other. Verifies the login and that the user
+   * can publish, then asks the logged-in site its own name and address.
+   *
+   * Throws `ConnectError` only: a fixed sentence, never WordPress's text or anything submitted.
+   */
+  async authenticateWithPassword(params: PasswordConnectParams): Promise<AuthTokens> {
+    const { endpoint, username, password, site } = params;
+    const login = { endpoint, username, password };
+    await this.xmlrpc.verifyLogin(login);
+
+    // Best effort: a site that hides wp.getOptions is still connected, under the address typed.
+    const options = await this.xmlrpc
+      .siteOptions(login)
+      .catch(() => ({ title: '', homeUrl: null, siteUrl: null }));
+    const endpointUrl = new URL(endpoint);
+    const base = `${endpointUrl.origin}${endpointUrl.pathname.replace(/\/xmlrpc\.php$/, '')}`;
+    // An address the site reports for itself is used only where it agrees with one already
+    // confirmed: the endpoint that just accepted the login, or what the site check established.
+    const known = [endpoint, site.entered, ...(site.home ? [site.home] : [])].map(hostOf);
+    const reported = (address: string | null): string | null =>
+      address !== null && known.includes(hostOf(address)) ? address.replace(/\/+$/, '') : null;
+    const home = reported(options.homeUrl) ?? site.home ?? site.entered.replace(/\/+$/, '');
+    const siteUrl =
+      options.siteUrl !== null && hostOf(options.siteUrl) === endpointUrl.host
+        ? options.siteUrl.replace(/\/+$/, '')
+        : base;
+    return {
+      accessToken: encodeCredentials({
+        transport: 'xmlrpc',
+        siteUrl,
+        endpoint,
+        username,
+        password,
+      }),
+      externalId: home,
+      displayName: options.title || site.name || endpointUrl.host,
+      connectionMeta: { method: 'password', endpoint },
+    };
   }
 
   async generateAuthUrl(params: {
@@ -137,7 +237,8 @@ export class WordPressProvider implements SocialProvider {
     }
     if (!sameSite(siteUrl, context.siteUrl)) throw new ConnectError('site_mismatch');
 
-    const credentials: WordPressCredentials = {
+    const credentials: WordPressRestCredentials = {
+      transport: 'rest',
       siteUrl: context.siteUrl,
       apiRoot: context.apiRoot,
       username,
@@ -148,14 +249,13 @@ export class WordPressProvider implements SocialProvider {
       accessToken: encodeCredentials(credentials),
       externalId: context.home,
       displayName: context.name,
+      connectionMeta: { method: 'approval' },
     };
   }
 
-  /** Application passwords have no refresh; reaching here means a real reconnect is needed. */
+  /** Neither kind of password has a refresh; reaching here means a real reconnect is needed. */
   async refreshToken(): Promise<AuthTokens> {
-    throw new ProviderAuthError(
-      'WordPress application passwords cannot be refreshed — reconnect the site',
-    );
+    throw new ProviderAuthError('WordPress passwords cannot be refreshed — reconnect the site');
   }
 
   assertPublishable(details: PostDetails[]): void {
@@ -195,6 +295,15 @@ export class WordPressProvider implements SocialProvider {
     const [detail] = details as [PostDetails];
     const options = wordpressOptions(detail.options);
     const credentials = decodeCredentials(tokens.accessToken);
+    if (credentials.transport === 'xmlrpc') {
+      return postOverXmlRpc(
+        { xmlrpc: this.xmlrpc, images: this.client },
+        credentials,
+        detail,
+        options,
+        tokens.externalId,
+      );
+    }
 
     // Everything that can be refused is done BEFORE the article exists, so a failure here leaves
     // nothing half-published. The cost: a retry after a late failure re-uploads the image.
@@ -249,7 +358,7 @@ export class WordPressProvider implements SocialProvider {
 
   /** Category names → ids. A name the site does not have is refused, never created. */
   private async resolveCategories(
-    credentials: WordPressCredentials,
+    credentials: WordPressRestCredentials,
     wanted: ReadonlyArray<string | number>,
   ): Promise<number[]> {
     const ids: number[] = [];
@@ -271,7 +380,7 @@ export class WordPressProvider implements SocialProvider {
 
   /** Tag names → ids, creating the ones that do not exist yet (what WordPress's editor does). */
   private async resolveTags(
-    credentials: WordPressCredentials,
+    credentials: WordPressRestCredentials,
     wanted: ReadonlyArray<string | number>,
   ): Promise<number[]> {
     const ids: number[] = [];
@@ -307,7 +416,7 @@ export class WordPressProvider implements SocialProvider {
   }
 
   private async findTerm(
-    credentials: WordPressCredentials,
+    credentials: WordPressRestCredentials,
     taxonomy: 'categories' | 'tags',
     name: string,
   ): Promise<number | null> {
@@ -322,7 +431,7 @@ export class WordPressProvider implements SocialProvider {
   }
 
   private async uploadFeaturedImage(
-    credentials: WordPressCredentials,
+    credentials: WordPressRestCredentials,
     media: MediaRef,
     title: string,
   ): Promise<number> {
@@ -330,13 +439,7 @@ export class WordPressProvider implements SocialProvider {
       throw new ProviderBadRequestError(`media ${media.mediaId} has no stored url`);
     }
     const image = await this.client.download(media.url);
-    const extension = UPLOADABLE[image.contentType];
-    if (!extension) {
-      throw new ProviderBadRequestError(
-        `The featured image is ${image.contentType || 'of an unknown type'}; ` +
-          'WordPress takes JPEG, PNG, GIF or WebP.',
-      );
-    }
+    const extension = uploadExtension(image.contentType);
     const uploaded = await this.client.request<{ id?: unknown }>(credentials, '/wp/v2/media', {
       method: 'POST',
       upload: {
@@ -384,43 +487,23 @@ function parseFlowContext(stored: string | undefined): FlowContext {
   throw new ConnectError('invalid_state');
 }
 
-/** A filename WordPress will keep as-is: the article's title, reduced to a slug. */
-function fileStem(title: string): string {
-  const stem = title
-    .normalize('NFKD')
-    .replace(/[^\x20-\x7e]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
-  return stem || 'featured-image';
-}
-
-/** The article's own URL as WordPress reports it; its `?p=` short form if that is unusable. */
-function permalink(link: unknown, home: string, id: number): string {
-  if (typeof link === 'string') {
-    try {
-      const url = new URL(link);
-      if (url.protocol === 'https:' || url.protocol === 'http:') return url.toString();
-    } catch {
-      // Fall through to the short form.
-    }
-  }
-  return `${home.replace(/\/+$/, '')}/?p=${id}`;
-}
-
-const STATUS_WORDS: Record<string, string> = {
-  draft: 'a draft',
-  pending: 'pending review',
-  private: 'private',
-  future: 'scheduled',
+const XMLRPC_UNAVAILABLE: Record<XmlRpcEndpointState, string> = {
+  available: '',
+  unknown: '',
+  disabled:
+    'XML-RPC is switched off on this site — by WordPress, a security plugin or the host — so a ' +
+    'username and password cannot be used.',
+  blocked:
+    'A firewall or security plugin on the site is blocking XML-RPC requests from this server.',
+  not_found: 'No xmlrpc.php was found at this address.',
+  unreachable: 'The site’s xmlrpc.php did not answer.',
 };
 
-/** Said on the event log when "published" here does not mean "public on the site". */
-function statusNotice(actual: string, asked: string): string {
-  const state = STATUS_WORDS[actual] ?? `"${actual}"`;
-  return actual === asked
-    ? `Created on WordPress as ${state}, as asked — it is not public until someone publishes it there.`
-    : `WordPress saved this as ${state} instead of "${asked}" — it is not public until someone ` +
-        'publishes it there.';
+/** The host of an address, or '' for one that does not parse (which then matches nothing). */
+function hostOf(address: string): string {
+  try {
+    return new URL(address).host;
+  } catch {
+    return '';
+  }
 }
