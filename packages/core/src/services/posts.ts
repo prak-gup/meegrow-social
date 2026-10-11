@@ -350,6 +350,44 @@ export async function updatePost(
   return toView(result.updated);
 }
 
+/**
+ * Copy one post into a NEW post-group as a draft (D1 `duplicate_post`). Carries the source's own
+ * caption/media/options — the per-platform values, not the group's — onto the same connection.
+ *
+ * Always a draft, whatever the source's status or schedule: duplicating a published or scheduled
+ * post must never publish by itself. Any status may be duplicated (reposting a published post is
+ * the main use). Goes through `createPost`, so the provider's rules and idempotency apply as usual.
+ */
+export async function duplicatePost(
+  workspaceId: string,
+  postId: string,
+  meta: CreatePostMeta = {},
+): Promise<PostView | null> {
+  const source = await withWorkspace(workspaceId, async (tx) => {
+    const [row] = await tx.select().from(schema.posts).where(eq(schema.posts.id, postId)).limit(1);
+    return row ?? null;
+  });
+  if (!source) return null;
+
+  const [copy] = await createPost(
+    workspaceId,
+    {
+      caption: source.caption,
+      media: (source.media as MediaRef[] | null) ?? [],
+      variants: [
+        {
+          connectionId: source.connectionId,
+          provider: source.provider as PostView['provider'],
+          options: parseStoredOptions(source.options) ?? undefined,
+        },
+      ],
+      schedule: { type: 'draft' },
+    },
+    meta,
+  );
+  return copy ?? null;
+}
+
 /** Day-bucketed posts for a month window in the requested timezone (PRD F3.6 calendar). */
 export async function calendarPosts(
   workspaceId: string,

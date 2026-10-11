@@ -29,6 +29,13 @@ export const mediaView = z.object({
 });
 export type MediaView = z.infer<typeof mediaView>;
 
+/** Media library page (D1 `list_media`). Newest first; offset pagination like `listPostsQuery`. */
+export const listMediaQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type ListMediaQuery = z.infer<typeof listMediaQuery>;
+
 /** MCP tool + REST input for registering media antidote (or another producer) already hosts. */
 export const registerMediaFromUrlInput = z.object({
   url: z.string().url(),

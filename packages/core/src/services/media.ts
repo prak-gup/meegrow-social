@@ -1,10 +1,12 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
-import { eq, inArray } from 'drizzle-orm';
+import { desc, eq, inArray } from 'drizzle-orm';
 import { schema, withWorkspace, type Tx } from '@meegrow-social/db';
 import {
+  listMediaQuery,
   registerMediaFromUrlInput as registerMediaFromUrlSchema,
+  type ListMediaQuery,
   type MediaKind,
   type MediaMeta,
   type MediaRef,
@@ -149,6 +151,25 @@ export async function getMedia(workspaceId: string, mediaId: string): Promise<Me
   return withWorkspace(workspaceId, async (tx) => {
     const [row] = await tx.select().from(schema.media).where(eq(schema.media.id, mediaId)).limit(1);
     return row ? toView(row) : null;
+  });
+}
+
+/**
+ * One page of the workspace's media, newest first (D1 `list_media`). Ordered by createdAt then id
+ * so offset pagination is deterministic. RLS scopes to this workspace — no explicit predicate.
+ */
+export async function listMedia(
+  workspaceId: string,
+  query: ListMediaQuery = listMediaQuery.parse({}),
+): Promise<MediaView[]> {
+  return withWorkspace(workspaceId, async (tx) => {
+    const rows = await tx
+      .select()
+      .from(schema.media)
+      .orderBy(desc(schema.media.createdAt), desc(schema.media.id))
+      .limit(query.limit)
+      .offset(query.offset);
+    return rows.map(toView);
   });
 }
 
