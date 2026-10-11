@@ -13,7 +13,20 @@ import type {
 import { getProvider } from '../providers/registry.js';
 import { METRIC_RETENTION_DAYS } from './metrics-retention.js';
 import type { AuthTokens } from '../providers/types.js';
-import { decryptToken, encryptToken, verifyConnectFlowProof } from '../crypto.js';
+import {
+  decryptToken,
+  encryptToken,
+  signConnectFlow,
+  signConnectOutcome,
+  verifyConnectFlowProof,
+  verifyConnectOutcome,
+} from '../crypto.js';
+import {
+  ConnectError,
+  connectFailureCode,
+  connectFailureMessage,
+  type ConnectFailureCode,
+} from '../errors.js';
 
 /** How long a started flow waits for the platform's redirect back (login + consent screens). */
 const FLOW_TTL_MS = 10 * 60 * 1000;
@@ -42,7 +55,11 @@ export class ConnectionNotFoundError extends Error {}
  * Thrown when a flow's connect invite stopped being usable while the flow was in flight: an
  * operator cancelled the link, or another flow already connected an account through it.
  */
-export class InviteClosedError extends Error {}
+export class InviteClosedError extends ConnectError {
+  constructor(message?: string) {
+    super('invite_closed', message);
+  }
+}
 
 function callbackUri(appUrl: string): string {
   return `${appUrl.replace(/\/$/, '')}/connect/callback`;
@@ -132,16 +149,31 @@ export function describeConnectionHealth(conn: {
   };
 }
 
+/** What the person supplied before the redirect, for providers that ask (`connectInput`). */
+export interface StartConnectAnswers {
+  siteUrl?: string;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Step 1: create a single-use flow row and return the provider auth URL to redirect the user to.
  * `inviteId` marks a flow started from a connect invite (see `handleCallback`).
+ *
+ * `proof` is returned when the flow must finish in the browser that started it — the provider's
+ * callback carries a credential (`credentialInCallback`). The caller sets it as that browser's
+ * cookie, exactly as the invite path does for its own flows.
+ *
+ * A provider that asks for input validates it itself and throws `ProviderBadRequestError` with
+ * words for the person who typed it; the flow row is then burned rather than left pending.
  */
 export async function startConnect(
   workspaceId: string,
   provider: ProviderIdentifier,
   appUrl: string,
   inviteId?: string,
-): Promise<{ url: string; flowId: string }> {
+  answers: StartConnectAnswers = {},
+): Promise<{ url: string; flowId: string; proof?: string }> {
   const impl = getProvider(provider);
   const redirectUri = callbackUri(appUrl);
   const [flow] = await db()
@@ -157,14 +189,32 @@ export async function startConnect(
     .returning();
   if (!flow) throw new Error('failed to create oauth flow');
 
-  const { url, codeVerifier } = await impl.generateAuthUrl({ redirectUri, state: flow.id });
+  let generated: Awaited<ReturnType<typeof impl.generateAuthUrl>>;
+  try {
+    generated = await impl.generateAuthUrl({
+      redirectUri,
+      state: flow.id,
+      ...(impl.connectInput === 'site_url' ? { siteUrl: answers.siteUrl } : {}),
+    });
+  } catch (err) {
+    await db()
+      .update(schema.oauthFlows)
+      .set({ status: 'consumed' })
+      .where(eq(schema.oauthFlows.id, flow.id));
+    throw err;
+  }
+  const { url, codeVerifier } = generated;
   if (codeVerifier) {
     await db()
       .update(schema.oauthFlows)
       .set({ codeVerifier })
       .where(eq(schema.oauthFlows.id, flow.id));
   }
-  return { url, flowId: flow.id };
+  return {
+    url,
+    flowId: flow.id,
+    ...(impl.credentialInCallback ? { proof: signConnectFlow(flow.id) } : {}),
+  };
 }
 
 /**
@@ -176,39 +226,70 @@ export async function startConnect(
  * `proof` is that browser's cookie (see `signConnectFlow`). Without it the code is never exchanged
  * and the flow is burned — otherwise someone holding an invite link could start a flow, send the
  * platform's consent URL to a person who manages the account, and take over once they approved.
+ *
+ * A provider whose callback carries the credential itself (`credentialInCallback` — WordPress hands
+ * back an application password in the query string) is held to more, because there is no code
+ * exchange for a forged callback to fail at:
+ *  - EVERY flow needs the starting browser's proof, dashboard-started ones included, so knowing a
+ *    flow id (it is in the URL the site was sent) is not enough to finish the flow;
+ *  - the flow is claimed atomically BEFORE the provider is asked anything, so it gets exactly one
+ *    attempt: a replayed, raced or guessed-again callback finds nothing to act on.
+ * `callback` is the redirect's query, passed through for such providers to validate.
  */
 export async function handleCallback(
   state: string,
   code: string,
   proof?: string | null,
+  callback?: Readonly<Record<string, string | undefined>>,
 ): Promise<CallbackResult> {
+  // Checked before the lookup: `state` is a stranger's text, and only a uuid can name a flow.
+  if (!UUID.test(state)) {
+    throw new ConnectError('invalid_state', 'invalid, already-used, or unknown connect state');
+  }
   const [flow] = await db()
     .select()
     .from(schema.oauthFlows)
     .where(and(eq(schema.oauthFlows.id, state), eq(schema.oauthFlows.status, 'pending')))
     .limit(1);
-  if (!flow) throw new Error('invalid, already-used, or unknown connect state');
-  if (flow.expiresAt.getTime() < Date.now()) throw new Error('connect flow expired');
-  if (flow.inviteId) {
+  if (!flow) {
+    throw new ConnectError('invalid_state', 'invalid, already-used, or unknown connect state');
+  }
+  if (flow.expiresAt.getTime() < Date.now())
+    throw new ConnectError('expired', 'connect flow expired');
+  const impl = getProvider(flow.provider as ProviderIdentifier);
+  if (flow.inviteId || impl.credentialInCallback) {
     if (!verifyConnectFlowProof(flow.id, proof)) {
       await db()
         .update(schema.oauthFlows)
         .set({ status: 'consumed' })
         .where(eq(schema.oauthFlows.id, flow.id));
-      throw new Error(
-        'this approval was opened in a different browser from the one the link was opened in',
+      throw new ConnectError(
+        'different_browser',
+        flow.inviteId
+          ? 'this approval was opened in a different browser from the one the link was opened in'
+          : undefined,
       );
     }
-    if ((await inviteClosed(flow.inviteId)) !== null) {
-      throw new InviteClosedError('this invite link is no longer valid');
+  }
+  if (flow.inviteId && (await inviteClosed(flow.inviteId)) !== null) {
+    throw new InviteClosedError('this invite link is no longer valid');
+  }
+  if (impl.credentialInCallback) {
+    const claimed = await db()
+      .update(schema.oauthFlows)
+      .set({ status: 'consumed' })
+      .where(and(eq(schema.oauthFlows.id, flow.id), eq(schema.oauthFlows.status, 'pending')))
+      .returning({ id: schema.oauthFlows.id });
+    if (claimed.length === 0) {
+      throw new ConnectError('invalid_state', 'invalid, already-used, or unknown connect state');
     }
   }
 
-  const impl = getProvider(flow.provider as ProviderIdentifier);
   const tokens = await impl.authenticate({
     code,
     codeVerifier: flow.codeVerifier ?? undefined,
     redirectUri: flow.redirectUri,
+    ...(callback ? { callback } : {}),
   });
 
   if (impl.isBetweenSteps) {
@@ -232,6 +313,67 @@ export async function handleCallback(
     tokens.displayName,
   );
   return { status: 'connected', connectionId };
+}
+
+/**
+ * True when a callback's query carries a credential rather than a one-time code. The API must then
+ * answer with a redirect, never a page: the secret is in the address bar, and a page rendered at
+ * that URL leaves it in the tab's history and hands it to anything the page loads.
+ */
+export function callbackCarriesCredential(
+  query: Readonly<Record<string, string | undefined>>,
+): boolean {
+  return query.password !== undefined || query.user_login !== undefined;
+}
+
+/**
+ * `handleCallback` for a credential-bearing callback, reduced to a query string for the redirect
+ * that reports it (`/connect/done?…`). Never throws: every failure becomes a `reason` code. The
+ * string is sealed, so the public page it is sent to cannot be made to announce a result this
+ * server did not produce — and it carries nothing from the callback itself.
+ */
+export async function completeCredentialCallback(
+  query: Readonly<Record<string, string | undefined>>,
+  proof?: string | null,
+): Promise<string> {
+  let outcome: { status: 'connected'; connectionId: string } | { status: 'error'; reason: string };
+  try {
+    if (!query.state) throw new ConnectError('invalid_state');
+    const result = await handleCallback(query.state, query.code ?? '', proof, query);
+    // A credential-bearing callback is single-step by construction; anything else is a bug.
+    outcome =
+      result.status === 'connected'
+        ? { status: 'connected', connectionId: result.connectionId }
+        : { status: 'error', reason: 'failed' satisfies ConnectFailureCode };
+  } catch (err) {
+    outcome = { status: 'error', reason: connectFailureCode(err) };
+  }
+  const detail = outcome.status === 'connected' ? outcome.connectionId : outcome.reason;
+  return new URLSearchParams({
+    status: outcome.status,
+    detail,
+    seal: signConnectOutcome(`${outcome.status}:${detail}`),
+  }).toString();
+}
+
+/**
+ * Read a sealed outcome back off the result page's query, as the `CallbackResult`-shaped payload
+ * the popup page already knows how to show. An unsealed or altered query is a plain failure.
+ */
+export function openCallbackOutcome(
+  query: Readonly<Record<string, unknown>>,
+): { status: 'connected'; connectionId: string } | { status: 'error'; error: string } {
+  const { status, detail, seal } = query;
+  if (
+    typeof status !== 'string' ||
+    typeof detail !== 'string' ||
+    !verifyConnectOutcome(`${status}:${detail}`, seal)
+  ) {
+    return { status: 'error', error: connectFailureMessage('failed') };
+  }
+  return status === 'connected'
+    ? { status: 'connected', connectionId: detail }
+    : { status: 'error', error: connectFailureMessage(detail) };
 }
 
 /** Step 3 (two-phase only): the user picked an account; finalize the connection. */

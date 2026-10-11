@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { connectionHealth, providerIdentifier, tokenModel } from './providers.js';
+import { connectInputKind, connectionHealth, providerIdentifier, tokenModel } from './providers.js';
 
 export const connectionView = z.object({
   id: z.string().uuid(),
@@ -77,6 +77,11 @@ export const providerView = z.object({
   displayName: z.string(),
   /** True when the user must pick an account (Page/Org/Channel/Location) after authorizing. */
   isBetweenSteps: z.boolean(),
+  /**
+   * Set when connecting starts with a question (`POST /v1/connections/:provider/start`) rather than
+   * a bare redirect. Absent for every OAuth platform.
+   */
+  connectInput: connectInputKind.optional(),
 });
 export type ProviderView = z.infer<typeof providerView>;
 
@@ -96,3 +101,18 @@ export const finishConnectInput = z.object({
   externalId: z.string(),
 });
 export type FinishConnectInput = z.infer<typeof finishConnectInput>;
+
+/**
+ * Body of `POST /v1/connections/:provider/start` (and of the public invite start). `siteUrl` is
+ * required by providers whose `connectInput` is `site_url` and ignored by the rest. It is only
+ * shape-checked here: whether the address may be contacted at all is decided in core, by the one
+ * SSRF guard (`safeFetch`), never by a regex in a contract.
+ */
+export const startConnectInput = z.object({
+  siteUrl: z.string().trim().min(1).max(2048).optional(),
+});
+export type StartConnectInput = z.infer<typeof startConnectInput>;
+
+/** Where to send the person next. The same shape `GET …/auth-url` has always answered with. */
+export const startConnectResult = z.object({ url: z.string().url() });
+export type StartConnectResult = z.infer<typeof startConnectResult>;

@@ -11,6 +11,7 @@ import { providerVisible } from '../lib/devProviders';
 import { platformMeta } from '../lib/platforms';
 import { missingAccountHelp } from '../lib/connectHelp';
 import { InviteLinkRow, useInviteLinks } from '../components/InviteLinks';
+import { ConnectSiteDialog } from '../components/ConnectSiteDialog';
 import { connectionChip, type ChipStatus } from '../lib/statusChip';
 import { canReconnect, expiryLabel, filterConnections, shortDate } from '../lib/connectionRows';
 import { clientHue } from '../lib/clientHue';
@@ -84,6 +85,8 @@ export function Connections() {
     null,
   );
   const [copied, setCopied] = useState(false);
+  /** The provider whose connect starts with a question (a site address), and any known answer. */
+  const [asking, setAsking] = useState<{ provider: ProviderView; address?: string } | null>(null);
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState<ChipStatus | ''>('');
   const [platformFilter, setPlatformFilter] = useState('');
@@ -131,9 +134,14 @@ export function Connections() {
     return () => window.removeEventListener('message', onMessage);
   }, [load]);
 
-  const connect = async (p: ProviderView) => {
+  const connect = async (p: ProviderView, address?: string) => {
     setMsg(null);
     connecting.current = p;
+    if (p.connectInput === 'site_url') {
+      // No login to redirect to until we know which site: ask for its address first.
+      setAsking({ provider: p, address });
+      return;
+    }
     try {
       const { url } = await api.authUrl(p.identifier);
       window.open(url, '_blank', 'width=600,height=700');
@@ -384,7 +392,7 @@ export function Connections() {
                             {
                               label: 'Reconnect',
                               icon: <ArrowClockwise size={14} />,
-                              onSelect: () => void connect(provider),
+                              onSelect: () => void connect(provider, c.externalId),
                             },
                           ]
                         : []),
@@ -473,8 +481,9 @@ export function Connections() {
         <Modal title={`Invite link — ${invite.label}`} onClose={() => setInvite(null)}>
           <p className="mb-3 text-sm text-muted">
             Send this to {activeName}. They open it, sign into their {invite.label}, and approve —
-            the account connects here. Their password never touches you. (External sign-in needs
-            Meta App Review, issue&nbsp;#53; you can already use it for accounts you can reach.)
+            the account connects here. Their password never touches you.
+            {(invite.provider === 'facebook' || invite.provider === 'instagram') &&
+              ' (External sign-in needs Meta App Review, issue #53; you can already use it for accounts you can reach.)'}
           </p>
           <div className="flex items-center gap-2.5 rounded-sm border border-hairline bg-surface-soft px-3 py-2">
             <LinkSimple size={16} className="text-muted" />
@@ -494,6 +503,22 @@ export function Connections() {
             </Button>
           </div>
         </Modal>
+      )}
+
+      {/* a platform that needs a site address before it can send anyone anywhere */}
+      {asking && (
+        <ConnectSiteDialog
+          provider={asking.provider}
+          clientName={activeName}
+          initialAddress={asking.address}
+          onStarted={() => {
+            setAsking(null);
+            setMsg(
+              'Approve in the new window. This page updates when you are done — if it does not, press Refresh.',
+            );
+          }}
+          onClose={() => setAsking(null)}
+        />
       )}
 
       {/* two-phase account picker */}

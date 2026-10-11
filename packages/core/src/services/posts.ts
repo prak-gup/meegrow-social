@@ -8,6 +8,7 @@ import {
   type CreatePostInput,
   type ListPostGroupsQuery,
   type ListPostsQuery,
+  captionLimitForProvider,
   optionsArmForProvider,
   parseStoredOptions,
   type MediaRef,
@@ -85,6 +86,13 @@ export function assertVariantPublishable(input: CreatePostInput, v: PostVariant)
  */
 function assertPatchPublishable(row: PostRow, patch: UpdatePostInput): void {
   const provider = row.provider as PostView['provider'];
+  // `updatePostInput` only bounds a caption at the article-body limit: the patch names no provider.
+  const limit = captionLimitForProvider(provider);
+  if (patch.caption !== undefined && patch.caption.length > limit) {
+    throw new ProviderBadRequestError(
+      `caption is ${patch.caption.length} characters; "${provider}" takes at most ${limit}`,
+    );
+  }
   if (patch.options !== undefined) {
     const arm = optionsArmForProvider(provider);
     if (!arm) {

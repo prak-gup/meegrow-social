@@ -66,3 +66,4 @@ export {
   SidebarSimple,
 } from '@phosphor-icons/react';
 export type { Icon as IconComponent } from '@phosphor-icons/react';
+export { WordpressLogo } from './WordpressLogo';

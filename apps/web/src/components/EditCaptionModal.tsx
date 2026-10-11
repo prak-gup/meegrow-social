@@ -5,6 +5,7 @@ import { plural } from '../lib/composer';
 import { distinctCaptions } from '../lib/postGroups';
 import { CAPTION_MAX } from '../lib/postList';
 import { partialFailureText, runOnPosts } from '../lib/postOps';
+import { ARTICLE_BODY_MAX, isArticleProvider } from '../lib/wordpress';
 import { Modal } from './ui/Modal';
 import { Button } from './ui/Button';
 import { Label } from './ui/Label';
@@ -86,10 +87,14 @@ export function EditCaptionModal({
   };
 
   const unchanged = caption === original;
-  const over = caption.length > CAPTION_MAX;
+  // An article's "caption" is its body, with its own limit (the server applies it per provider).
+  const article = targets.length > 0 && targets.every((p) => isArticleProvider(p.provider));
+  const limit = article ? ARTICLE_BODY_MAX : CAPTION_MAX;
+  const fieldLabel = article ? 'Article body (Markdown)' : 'Caption';
+  const over = caption.length > limit;
 
   return (
-    <Modal title="Edit caption" onClose={guardedClose}>
+    <Modal title={article ? 'Edit article body' : 'Edit caption'} onClose={guardedClose}>
       <div className="space-y-2">
         {tailored && (
           <div className="space-y-1.5">
@@ -111,7 +116,7 @@ export function EditCaptionModal({
             </p>
           </div>
         )}
-        <Label htmlFor="edit-caption">Caption</Label>
+        <Label htmlFor="edit-caption">{fieldLabel}</Label>
         <Textarea
           id="edit-caption"
           ref={fieldRef}
@@ -126,7 +131,7 @@ export function EditCaptionModal({
           id="edit-caption-count"
           className={over ? 'tnum text-caption text-error' : 'tnum text-caption text-muted'}
         >
-          {caption.length.toLocaleString()} / {CAPTION_MAX.toLocaleString()} characters
+          {caption.length.toLocaleString()} / {limit.toLocaleString()} characters
           {over && ' (too long)'}
           {!tailored && targets.length > 1 && ` · applies to ${plural(targets.length, 'account')}`}
         </p>

@@ -4,6 +4,9 @@ import type { InviteView } from '@meegrow-social/contracts';
 import { api } from '../lib/api';
 import { Logo } from '../components/Logo';
 import { PRODUCT_NAME, signInName } from '../lib/platforms';
+import { siteAddressProblem } from '../lib/wordpress';
+import { Input } from '../components/ui/Input';
+import { Label } from '../components/ui/Label';
 import { pickOnlyThisBusiness } from '../lib/connectHelp';
 import {
   FacebookLogo,
@@ -12,6 +15,7 @@ import {
   YoutubeLogo,
   XLogo,
   GoogleLogo,
+  WordpressLogo,
   Plugs,
 } from '../lib/icons';
 
@@ -45,6 +49,7 @@ export const BRAND: Record<string, { Icon: typeof FacebookLogo; bg: string }> = 
   'linkedin-page': { Icon: LinkedinLogo, bg: 'bg-brand-linkedin' },
   x: { Icon: XLogo, bg: 'bg-brand-x' },
   youtube: { Icon: YoutubeLogo, bg: 'bg-brand-youtube' },
+  wordpress: { Icon: WordpressLogo, bg: 'bg-brand-wordpress' },
 };
 
 /** The card every public invite screen sits in — the client never sees the dashboard chrome. */
@@ -96,6 +101,8 @@ export function Invite() {
   const [invite, setInvite] = useState<InviteView | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'invalid' | 'starting'>('loading');
   const [err, setErr] = useState<string | null>(null);
+  // Only an invite for a site-address platform (WordPress) asks for this.
+  const [siteAddress, setSiteAddress] = useState('');
 
   useEffect(() => {
     void (async () => {
@@ -108,11 +115,20 @@ export function Invite() {
     })();
   }, [token]);
 
+  const needsSite = invite?.connectInput === 'site_url';
+
   const start = async () => {
+    if (needsSite) {
+      const problem = siteAddressProblem(siteAddress);
+      if (problem) {
+        setErr(problem);
+        return;
+      }
+    }
     setState('starting');
     setErr(null);
     try {
-      const { url } = await api.startInvite(token);
+      const { url } = await api.startInvite(token, needsSite ? siteAddress.trim() : undefined);
       rememberInviteToken(token);
       window.location.href = url; // full-page redirect to the platform's consent screen
     } catch (e) {
@@ -139,25 +155,79 @@ export function Invite() {
         <>
           <InviteHeading
             provider={invite.provider}
-            title={`Connect your ${invite.providerDisplayName}`}
+            title={
+              needsSite
+                ? `Connect your ${invite.providerDisplayName} site`
+                : `Connect your ${invite.providerDisplayName}`
+            }
             subtitle={`Requested for ${invite.workspaceName}, through ${PRODUCT_NAME}`}
           />
-          <ul className="mb-6 space-y-2 text-sm text-body-ink">
-            <li>• You’ll sign in with {signInName(invite)} and approve access.</li>
-            {pickOnlyThisBusiness(invite) && <li>• {pickOnlyThisBusiness(invite)}</li>}
-            <li>
-              • The team that manages social media for {invite.workspaceName} uses {PRODUCT_NAME} to
-              publish posts and read insights for this account — nothing else.
-            </li>
-            <li>• Your password is never shared, and you can revoke access anytime.</li>
-          </ul>
-          {err && <p className="mb-4 text-sm text-error">{err}</p>}
+          {needsSite ? (
+            <>
+              <ul className="mb-5 space-y-2 text-sm text-body-ink">
+                <li>• You’ll log in to your own WordPress site and approve access there.</li>
+                <li>
+                  • The team that manages content for {invite.workspaceName} uses {PRODUCT_NAME} to
+                  publish blog articles to this site — nothing else.
+                </li>
+                <li>
+                  • WordPress makes a separate password just for this. Your own password is never
+                  shared, and you can remove access anytime from your WordPress profile (Application
+                  Passwords).
+                </li>
+              </ul>
+              <div className="mb-5 space-y-1.5">
+                <Label htmlFor="invite-site">Your site’s address</Label>
+                <Input
+                  id="invite-site"
+                  type="url"
+                  inputMode="url"
+                  autoComplete="url"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  placeholder="https://example.com"
+                  value={siteAddress}
+                  onChange={(e) => {
+                    setSiteAddress(e.target.value);
+                    setErr(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void start();
+                  }}
+                  disabled={state === 'starting'}
+                  aria-invalid={Boolean(err)}
+                  aria-describedby={err ? 'invite-error' : undefined}
+                />
+              </div>
+            </>
+          ) : (
+            <ul className="mb-6 space-y-2 text-sm text-body-ink">
+              <li>• You’ll sign in with {signInName(invite)} and approve access.</li>
+              {pickOnlyThisBusiness(invite) && <li>• {pickOnlyThisBusiness(invite)}</li>}
+              <li>
+                • The team that manages social media for {invite.workspaceName} uses {PRODUCT_NAME}{' '}
+                to publish posts and read insights for this account — nothing else.
+              </li>
+              <li>• Your password is never shared, and you can revoke access anytime.</li>
+            </ul>
+          )}
+          {err && (
+            <p id="invite-error" role="alert" className="mb-4 text-sm text-error">
+              {err}
+            </p>
+          )}
           <button
             onClick={() => void start()}
             disabled={state === 'starting'}
             className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-sm bg-rausch px-4 text-body font-medium text-white hover:bg-rausch-active disabled:opacity-60"
           >
-            {state === 'starting' ? 'Redirecting…' : `Continue with ${signInName(invite)}`}
+            {state === 'starting'
+              ? needsSite
+                ? 'Checking the site…'
+                : 'Redirecting…'
+              : needsSite
+                ? 'Continue to WordPress'
+                : `Continue with ${signInName(invite)}`}
           </button>
         </>
       )}

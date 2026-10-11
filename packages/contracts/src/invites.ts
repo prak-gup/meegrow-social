@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { providerAccount } from './connections.js';
-import { providerIdentifier } from './providers.js';
+import { connectInputKind, providerIdentifier } from './providers.js';
 
 /**
  * Per-platform connect invites (client onboarding link). An operator mints a link for one client +
@@ -29,6 +29,8 @@ export const inviteView = z.object({
   workspaceName: z.string(),
   provider: providerIdentifier,
   providerDisplayName: z.string(),
+  /** Set when the landing page must ask something (a site address) before Connect can work. */
+  connectInput: connectInputKind.optional(),
 });
 export type InviteView = z.infer<typeof inviteView>;
 

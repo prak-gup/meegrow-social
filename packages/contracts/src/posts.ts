@@ -93,7 +93,46 @@ const youtubeOptions = z.object({
   madeForKids: z.boolean().default(false),
 });
 
-export const postOptions = z.discriminatedUnion('kind', [metaOptions, gmbOptions, youtubeOptions]);
+/** A category or tag: its WordPress term id, or its name as the site shows it. */
+const wordpressTerm = z.union([z.number().int().positive(), z.string().trim().min(1).max(200)]);
+
+/**
+ * A WordPress article. The variant's `caption` is the article BODY, written in Markdown (the
+ * provider converts it to HTML and escapes any raw HTML — see providers/wordpress/markdown.ts);
+ * the first image in `media` is the featured image. Everything an article has that a social post
+ * does not lives here.
+ */
+const wordpressOptions = z.object({
+  kind: z.literal('wordpress'),
+  /** Mandatory, for YouTube's reason: there is no honest way to make a headline out of a body. */
+  title: z.string().trim().min(1).max(300),
+  /** Hand-written summary. Omitted, WordPress derives one from the body when a theme asks. */
+  excerpt: z.string().max(2000).optional(),
+  /** The URL segment. Omitted, WordPress derives it from the title. */
+  slug: z
+    .string()
+    .max(200)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'lowercase letters, digits and single hyphens only')
+    .optional(),
+  /** Must already exist on the site — a mistyped category must not quietly become a new one. */
+  categories: z.array(wordpressTerm).max(20).optional(),
+  /** A tag that does not exist yet is created, as WordPress's own editor does. */
+  tags: z.array(wordpressTerm).max(50).optional(),
+  /**
+   * The state the article is created in ON WORDPRESS, at the moment this post publishes. `draft`
+   * and `pending` hand it to the site's own editors and nothing goes public. WHEN it is sent is
+   * this app's schedule, as for every platform — which is why WordPress's own `future` status is
+   * deliberately not offered.
+   */
+  status: z.enum(['publish', 'draft', 'pending', 'private']).default('publish'),
+});
+
+export const postOptions = z.discriminatedUnion('kind', [
+  metaOptions,
+  gmbOptions,
+  youtubeOptions,
+  wordpressOptions,
+]);
 export type PostOptions = z.infer<typeof postOptions>;
 
 /**
@@ -111,10 +150,29 @@ const OPTIONS_ARM: Partial<Record<ProviderIdentifier, PostOptions['kind']>> = {
   facebook: 'meta',
   gmb: 'gmb',
   youtube: 'youtube',
+  wordpress: 'wordpress',
 };
 
 /** Providers whose options carry a field with no sensible default, so the post is invalid without. */
-const OPTIONS_REQUIRED: ReadonlySet<ProviderIdentifier> = new Set(['youtube']);
+const OPTIONS_REQUIRED: ReadonlySet<ProviderIdentifier> = new Set(['youtube', 'wordpress']);
+
+/** The longest caption a social post takes. */
+export const CAPTION_MAX = 5000;
+/**
+ * The longest article body. An article does not fit in a social caption, so a provider listed in
+ * `LONG_BODY` may carry up to this much — in the VARIANT's own `caption`. The group caption stays at
+ * `CAPTION_MAX`, since every variant without its own caption inherits it.
+ */
+export const ARTICLE_BODY_MAX = 100_000;
+const LONG_BODY: ReadonlySet<ProviderIdentifier> = new Set(['wordpress']);
+
+/**
+ * The longest caption one post on this provider may carry. Exported for `updatePost`, which has to
+ * apply it to a STORED post for the same reason as `optionsArmForProvider`.
+ */
+export function captionLimitForProvider(provider: ProviderIdentifier): number {
+  return LONG_BODY.has(provider) ? ARTICLE_BODY_MAX : CAPTION_MAX;
+}
 
 /**
  * Which options arm a provider takes, or undefined if it takes none. Exported so `updatePost` can
@@ -135,21 +193,32 @@ export const postVariant = z
   .object({
     connectionId: z.string().uuid(),
     provider: providerIdentifier,
-    /** Overrides the group caption when set. */
-    caption: z.string().max(5000).optional(),
+    /**
+     * Overrides the group caption when set. At most `captionLimitForProvider` characters — 5000,
+     * or 100000 for a WordPress article body (checked below, where the provider is known).
+     */
+    caption: z.string().max(ARTICLE_BODY_MAX).optional(),
     /** Overrides the group media when set. Array order = carousel / thread order. */
     media: z.array(mediaRef).max(10).optional(),
     /** Per-platform options (#44). Required for providers in `OPTIONS_REQUIRED`. */
     options: postOptions.optional(),
   })
   .superRefine((variant, ctx) => {
+    const limit = captionLimitForProvider(variant.provider);
+    if (variant.caption !== undefined && variant.caption.length > limit) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['caption'],
+        message: `String must contain at most ${limit} character(s)`,
+      });
+    }
     const arm = OPTIONS_ARM[variant.provider];
     if (!variant.options) {
       if (OPTIONS_REQUIRED.has(variant.provider)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['options'],
-          message: `"${variant.provider}" posts require options (a YouTube post has no title without them)`,
+          message: `"${variant.provider}" posts require options (the post has no title without them)`,
         });
       }
       return;
@@ -180,7 +249,7 @@ export type ScheduleMode = z.infer<typeof scheduleMode>;
 
 /** Input to create a post-group (one call → one group → N per-platform posts). API + MCP share this. */
 export const createPostInput = z.object({
-  caption: z.string().max(5000).default(''),
+  caption: z.string().max(CAPTION_MAX).default(''),
   media: z.array(mediaRef).max(10).default([]),
   variants: z.array(postVariant).min(1),
   schedule: scheduleMode.default({ type: 'draft' }),
@@ -231,7 +300,11 @@ export type PostView = z.infer<typeof postView>;
  * Rejected once the post is publishing/published/failed/cancelled.
  */
 export const updatePostInput = z.object({
-  caption: z.string().max(5000).optional(),
+  /**
+   * The patch does not carry the provider, so only the outer bound is checked here; `updatePost`
+   * applies `captionLimitForProvider` against the stored row.
+   */
+  caption: z.string().max(ARTICLE_BODY_MAX).optional(),
   media: z.array(mediaRef).max(10).optional(),
   publishAt: z.coerce.date().nullable().optional(),
   /**

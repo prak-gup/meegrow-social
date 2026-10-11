@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { and, desc, eq, gt, inArray, isNull, max } from 'drizzle-orm';
 import { db, schema } from '@meegrow-social/db';
-import type { ProviderIdentifier } from '@meegrow-social/contracts';
+import type { ConnectInputKind, ProviderIdentifier } from '@meegrow-social/contracts';
 import { getProvider } from '../providers/registry.js';
 import { signConnectFlow } from '../crypto.js';
-import { startConnect } from './connections.js';
+import { startConnect, type StartConnectAnswers } from './connections.js';
 
 /**
  * Per-platform connect invites (client onboarding). The operator mints a link for a
@@ -56,6 +56,8 @@ export interface RedeemedInvite {
   workspaceName: string;
   provider: ProviderIdentifier;
   providerDisplayName: string;
+  /** What the landing page must ask before Connect can work (WordPress: the site's address). */
+  connectInput?: ConnectInputKind;
 }
 
 /** Look up a live (unused, uncancelled, unexpired) invite by token — for the public landing page. */
@@ -82,12 +84,14 @@ export async function getConnectInvite(token: string): Promise<RedeemedInvite | 
   if (!row) return null;
   if (row.expiresAt.getTime() < Date.now()) return null;
   const providerId = row.provider as ProviderIdentifier;
+  const impl = getProvider(providerId);
   return {
     id: row.id,
     workspaceId: row.workspaceId,
     workspaceName: row.workspaceName,
     provider: providerId,
-    providerDisplayName: getProvider(providerId).displayName,
+    providerDisplayName: impl.displayName,
+    ...(impl.connectInput ? { connectInput: impl.connectInput } : {}),
   };
 }
 
@@ -99,6 +103,7 @@ export async function getConnectInvite(token: string): Promise<RedeemedInvite | 
 export async function startInviteConnect(
   token: string,
   appUrl: string,
+  answers: StartConnectAnswers = {},
 ): Promise<{ url: string; flowId: string; proof: string } | null> {
   const invite = await getConnectInvite(token);
   if (!invite) return null;
@@ -107,6 +112,7 @@ export async function startInviteConnect(
     invite.provider,
     appUrl,
     invite.id,
+    answers,
   );
   return { url, flowId, proof: signConnectFlow(flowId) };
 }

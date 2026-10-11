@@ -1,4 +1,5 @@
 import type {
+  ConnectInputKind,
   ProviderIdentifier,
   TokenModel,
   MediaRef,
@@ -15,7 +16,11 @@ export interface AuthTokens {
 
 export interface GenerateAuthUrl {
   url: string;
-  /** Provider-generated PKCE verifier, persisted by the connect service for the callback. */
+  /**
+   * Whatever the provider needs back at the callback: a PKCE verifier, or (WordPress) which site
+   * this flow was started for. Opaque to the connect service, which persists it on the flow row
+   * and hands it to `authenticate` untouched.
+   */
   codeVerifier?: string;
 }
 
@@ -65,13 +70,37 @@ export interface SocialProvider {
   readonly isBetweenSteps: boolean;
   readonly tokenModel: TokenModel;
   readonly maxConcurrentJobs: number;
+  /**
+   * What must be asked BEFORE the person can be sent anywhere (see `generateAuthUrl`'s `siteUrl`).
+   * Absent for OAuth platforms.
+   */
+  readonly connectInput?: ConnectInputKind;
+  /**
+   * True when the redirect back carries a long-lived credential itself rather than a one-time code
+   * that only this server can exchange (WordPress hands over an application password in the query
+   * string). The connect service then requires EVERY flow of this provider — dashboard ones too,
+   * not just invites — to finish in the browser that started it.
+   */
+  readonly credentialInCallback?: boolean;
 
-  /** The connect service supplies `state` (an opaque flow id); the provider embeds it in the URL. */
-  generateAuthUrl(params: { redirectUri: string; state: string }): Promise<GenerateAuthUrl>;
+  /**
+   * The connect service supplies `state` (an opaque flow id); the provider embeds it in the URL.
+   * `siteUrl` is the person's answer when `connectInput` is `site_url` — unvalidated user input.
+   */
+  generateAuthUrl(params: {
+    redirectUri: string;
+    state: string;
+    siteUrl?: string;
+  }): Promise<GenerateAuthUrl>;
+  /**
+   * `callback` is the redirect's whole query string, for providers that are not handed a `code`.
+   * It is as trustworthy as any URL a stranger can type: validate everything in it.
+   */
   authenticate(params: {
     code: string;
     codeVerifier?: string;
     redirectUri: string;
+    callback?: Readonly<Record<string, string | undefined>>;
   }): Promise<AuthTokens>;
   /**
    * Only meaningful when `isBetweenSteps`: after auth, list the Pages/Orgs/Channels/Locations the

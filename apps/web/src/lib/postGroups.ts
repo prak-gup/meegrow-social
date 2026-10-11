@@ -7,6 +7,7 @@ import type {
 import { groupDisplayStatus } from '@meegrow-social/contracts/group-status';
 import { TIME_NOT_RECORDED, parsePublishAt } from './postDate';
 import { safeExternalUrl } from './postList';
+import { postHeadline } from './wordpress';
 import { canCancelPost, canEditPost } from './postStatus';
 
 /**
@@ -179,10 +180,11 @@ export function groupThumb(group: PostGroup): Thumb | null {
 
 /**
  * The caption a card shows: the first variant's, because that is the text that goes out and the
- * one an edit changes. The group's own caption is only what it was created with.
+ * one an edit changes. The group's own caption is only what it was created with. For an article
+ * (WordPress) that is its title — its caption is the whole body.
  */
 export function groupCaption(group: Pick<PostGroup, 'caption' | 'posts'>): string {
-  return group.posts[0]?.caption ?? group.caption;
+  return group.posts[0] ? postHeadline(group.posts[0]) : group.caption;
 }
 
 // --- Dates ---
@@ -296,7 +298,7 @@ export function dayEntries(posts: readonly PostView[]): CalendarEntry[] {
   return [...byGroup]
     .map(([id, variants]) => ({
       id,
-      caption: variants[0]!.caption,
+      caption: postHeadline(variants[0]),
       media: [],
       status: groupDisplayStatus(variants.map((p) => p.status)),
       posts: variants,

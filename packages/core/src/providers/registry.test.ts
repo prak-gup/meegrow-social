@@ -100,3 +100,21 @@ describe('registerConfiguredProviders — Google', () => {
     expect(listConnectableProviders().some((p) => p.identifier === 'youtube')).toBe(true);
   });
 });
+
+describe('registerConfiguredProviders — WordPress', () => {
+  it('stays out of the registry unless WORDPRESS_ENABLED is exactly "true"', () => {
+    for (const value of ['', '1', 'TRUE', 'yes', 'false']) {
+      vi.stubEnv('WORDPRESS_ENABLED', value);
+      registerConfiguredProviders();
+      expect(tryGetProvider('wordpress')).toBeUndefined();
+    }
+    vi.stubEnv('WORDPRESS_ENABLED', 'true');
+    registerConfiguredProviders();
+    const wordpress = tryGetProvider('wordpress');
+    expect(wordpress?.identifier).toBe('wordpress');
+    // A real platform, not a test fixture: shown in production once it is switched on.
+    expect(isTestOnlyProvider('wordpress')).toBe(false);
+    vi.stubEnv('NODE_ENV', 'production');
+    expect(listConnectableProviders().some((p) => p.identifier === 'wordpress')).toBe(true);
+  });
+});

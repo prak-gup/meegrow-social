@@ -40,6 +40,7 @@ export default {
           linkedin: 'hsl(var(--brand-linkedin) / <alpha-value>)',
           x: 'hsl(var(--brand-x) / <alpha-value>)',
           youtube: 'hsl(var(--brand-youtube) / <alpha-value>)',
+          wordpress: 'hsl(var(--brand-wordpress) / <alpha-value>)',
         },
         chart: {
           1: 'hsl(var(--chart-1) / <alpha-value>)',
