@@ -193,6 +193,81 @@ function withTimeout<T>(op: Promise<T>): Promise<T> {
 const retryAfterSeconds = (hit: AttemptCount): number =>
   Math.max(1, Math.ceil(hit.resetInMs / 1000));
 
+/**
+ * Limits for checking a username and password against SOMEBODY ELSE'S site (connecting a
+ * WordPress site by login, `connectWithPassword`). The danger is different from our own login:
+ * here this server is the one doing the guessing, from its own address, at a site that never
+ * asked to be tested. So three things are counted, and a success gives back only its own attempt
+ * — it never clears a counter, or one known login would wipe the slate between guesses at another:
+ *
+ * - per site (the host the login is sent to), from everyone together: 5 wrong logins an hour. A
+ *   person mistyping has room; nobody gets more than 120 guesses a day at one site through us.
+ * - per caller (the signed-in user, or the API key's client): 10 an hour across all sites, so one
+ *   account cannot spray a common password over many sites.
+ * - per client address: 20 an hour, above the per-caller figure because an office shares one.
+ */
+export const SITE_LOGIN_LIMIT = {
+  windowMs: 60 * 60 * 1000,
+  perSite: 5,
+  perActor: 10,
+  perIp: 20,
+} as const;
+
+export interface SiteLoginSubject {
+  /** The real client address, as for `beginAuthAttempt`. */
+  ip: string;
+  /** Who is asking: a user id, or the workspace of an API key. */
+  actor: string;
+  /** The host the login would be sent to. */
+  site: string;
+}
+
+function siteLoginKey(dimension: 'ip' | 'actor' | 'site', value: string): string {
+  const digest = createHash('sha256').update(value).digest('hex').slice(0, 32);
+  return `mgs:auth-attempts:site-login:${dimension}:${digest}`;
+}
+
+async function countSiteLogin(
+  store: AttemptStore,
+  keys: ReadonlyArray<readonly [key: string, max: number]>,
+  windowMs: number,
+): Promise<AttemptGate> {
+  // In order, stopping at the first refusal: a blocked address or caller must not be able to
+  // spend the guesses of a site it names.
+  for (const [key, max] of keys) {
+    const hit = await store.hit(key, windowMs);
+    if (hit.count > max) return { allowed: false, retryAfterSeconds: retryAfterSeconds(hit) };
+  }
+  return {
+    allowed: true,
+    async settle(result) {
+      if (result === 'failed') return;
+      await withTimeout(Promise.all(keys.map(([key]) => store.unhit(key)))).catch(() => undefined);
+    },
+  };
+}
+
+/**
+ * Count one login attempt against a third-party site, then say whether it may go ahead. Same
+ * contract as `beginAuthAttempt`: an allowed caller MUST `settle`, and an attempt never settled
+ * stays counted as a wrong guess. Falls back to in-process counting if the store is unreachable.
+ */
+export async function beginSiteLoginAttempt(
+  subject: SiteLoginSubject,
+  limit: { windowMs: number; perSite: number; perActor: number; perIp: number } = SITE_LOGIN_LIMIT,
+): Promise<AttemptGate> {
+  const keys = [
+    [siteLoginKey('ip', clientAddressBucket(subject.ip)), limit.perIp],
+    [siteLoginKey('actor', subject.actor), limit.perActor],
+    [siteLoginKey('site', subject.site.trim().toLowerCase()), limit.perSite],
+  ] as const;
+  try {
+    return await withTimeout(countSiteLogin(_store, keys, limit.windowMs));
+  } catch {
+    return countSiteLogin(_fallback, keys, limit.windowMs);
+  }
+}
+
 async function countAttempt(
   store: AttemptStore,
   ipKey: string,

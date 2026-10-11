@@ -3,6 +3,7 @@ import {
   ATTEMPT_STORE_TIMEOUT_MS,
   AUTH_ATTEMPT_LIMITS,
   beginAuthAttempt,
+  beginSiteLoginAttempt,
   clientAddressBucket,
   MemoryAttemptStore,
   resetAttemptStore,
@@ -268,5 +269,123 @@ describe('beginAuthAttempt — when the shared store is down', () => {
     const gate = await beginAuthAttempt('login', { ip: '10.0.0.1', account: 'ann@x.test' }, limit);
     expect(gate.allowed).toBe(true);
     if (gate.allowed) await expect(gate.settle('succeeded')).resolves.toBeUndefined();
+  });
+});
+
+describe('beginSiteLoginAttempt — logins this server tries at somebody else’s site', () => {
+  const siteLimit = { windowMs: 60 * MINUTE, perSite: 3, perActor: 5, perIp: 7 };
+  const tryLogin = async (
+    over: Partial<{ ip: string; actor: string; site: string }> = {},
+    result: AttemptResult = 'failed',
+  ): Promise<AttemptGate> => {
+    const gate = await beginSiteLoginAttempt(
+      { ip: '203.0.113.1', actor: 'user-1', site: 'blog.example.com', ...over },
+      siteLimit,
+    );
+    if (gate.allowed) await gate.settle(result);
+    return gate;
+  };
+  /** A caller and address nobody has used yet, so only the site's count can refuse. */
+  let fresh = 0;
+  const stranger = () => ({ ip: `198.51.100.${++fresh}`, actor: `stranger-${fresh}` });
+
+  it('limits wrong logins per site across every caller and address', async () => {
+    for (let i = 0; i < siteLimit.perSite; i++)
+      expect((await tryLogin(stranger())).allowed).toBe(true);
+    const refused = await tryLogin(stranger());
+    expect(refused).toEqual({ allowed: false, retryAfterSeconds: 3600 });
+    // Another site is unaffected, and the host is compared without regard to case.
+    expect((await tryLogin({ ...stranger(), site: 'other.example.com' })).allowed).toBe(true);
+    expect((await tryLogin({ ...stranger(), site: 'BLOG.example.com' })).allowed).toBe(false);
+  });
+
+  it('limits one caller across sites, and one address across callers', async () => {
+    for (let i = 0; i < siteLimit.perActor; i++) {
+      const gate = await tryLogin({ ip: `198.51.100.${i}`, site: `site-${i}.example.com` });
+      expect(gate.allowed).toBe(true);
+    }
+    expect((await tryLogin({ ip: '198.51.100.200', site: 'fresh.example.com' })).allowed).toBe(
+      false,
+    );
+
+    for (let i = 0; i < siteLimit.perIp; i++) {
+      const gate = await tryLogin({
+        ip: '192.0.2.44',
+        actor: `a-${i}`,
+        site: `ip-${i}.example.com`,
+      });
+      expect(gate.allowed).toBe(true);
+    }
+    expect(
+      (await tryLogin({ ip: '192.0.2.44', actor: 'a-new', site: 'ip-new.example.com' })).allowed,
+    ).toBe(false);
+  });
+
+  it('gives a success its own attempt back and never resets the site', async () => {
+    for (let i = 0; i < 20; i++) expect((await tryLogin({}, 'succeeded')).allowed).toBe(true);
+    for (let i = 0; i < siteLimit.perSite - 1; i++) await tryLogin(stranger());
+    expect((await tryLogin(stranger(), 'succeeded')).allowed).toBe(true);
+    expect((await tryLogin(stranger())).allowed).toBe(true);
+    expect((await tryLogin(stranger())).allowed).toBe(false);
+  });
+
+  it('a refused address cannot spend the guesses of a site it names', async () => {
+    for (let i = 0; i < siteLimit.perIp; i++) {
+      await tryLogin({ ip: '192.0.2.77', actor: `b-${i}`, site: `burn-${i}.example.com` });
+    }
+    // Refused at the address, over and over, naming one site.
+    for (let i = 0; i < 10; i++) {
+      expect(
+        (await tryLogin({ ip: '192.0.2.77', actor: `c-${i}`, site: 'target.example.com' })).allowed,
+      ).toBe(false);
+    }
+    expect((await tryLogin({ ...stranger(), site: 'target.example.com' })).allowed).toBe(true);
+  });
+
+  it('opens again when the window closes, and is not extended by attempts made while refused', async () => {
+    for (let i = 0; i < siteLimit.perSite; i++) await tryLogin(stranger());
+    now += 59 * MINUTE;
+    expect((await tryLogin(stranger())).allowed).toBe(false);
+    now += 2 * MINUTE;
+    expect((await tryLogin(stranger())).allowed).toBe(true);
+  });
+
+  it('falls back to counting in-process when the store is unreachable — never to no limit', async () => {
+    const broken: AttemptStore = {
+      hit: async () => {
+        throw new Error('redis is down');
+      },
+      unhit: async () => undefined,
+      reset: async () => undefined,
+    };
+    setAttemptStore(broken);
+    for (let i = 0; i < siteLimit.perSite; i++)
+      expect((await tryLogin(stranger())).allowed).toBe(true);
+    expect((await tryLogin(stranger())).allowed).toBe(false);
+  });
+
+  it('keeps hosts, callers and addresses out of the store’s keys', async () => {
+    const keys: string[] = [];
+    const spy = new MemoryAttemptStore(clock);
+    setAttemptStore({
+      hit: (key, windowMs) => {
+        keys.push(key);
+        return spy.hit(key, windowMs);
+      },
+      unhit: (key) => spy.unhit(key),
+      reset: (key) => spy.reset(key),
+    });
+    await tryLogin({
+      ip: '203.0.113.9',
+      actor: 'user-secret-id',
+      site: 'private-client.example.com',
+    });
+    expect(keys).toHaveLength(3);
+    for (const key of keys) {
+      expect(key).toMatch(/^mgs:auth-attempts:site-login:(ip|actor|site):[0-9a-f]{32}$/);
+      expect(key).not.toContain('private-client');
+      expect(key).not.toContain('user-secret-id');
+      expect(key).not.toContain('203.0.113.9');
+    }
   });
 });
