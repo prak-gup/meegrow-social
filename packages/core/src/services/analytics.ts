@@ -462,6 +462,11 @@ export const ANALYTICS_CADENCE: AnalyticsStatusView['cadence'] = {
   freshPostIntervalMs: FRESH_POST_POLL_INTERVAL_MS,
   postIntervalMs: POST_POLL_INTERVAL_MS,
   accountIntervalMs: ACCOUNT_POLL_INTERVAL_MS,
+  // The tiers past the daily one: each starts where the tier before it ends.
+  olderPosts: POST_POLL_TIERS.slice(2).map((tier, i) => ({
+    afterMs: POST_POLL_TIERS[i + 1]!.maxAgeMs,
+    intervalMs: tier.intervalMs,
+  })),
 };
 
 const earliest = (a: Date | null, b: Date | null): Date | null => (!a ? b : !b ? a : a < b ? a : b);

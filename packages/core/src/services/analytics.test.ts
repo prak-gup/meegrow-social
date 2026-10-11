@@ -176,6 +176,10 @@ describe('ANALYTICS_CADENCE', () => {
       freshPostIntervalMs: HOUR,
       postIntervalMs: DAY,
       accountIntervalMs: DAY,
+      olderPosts: [
+        { afterMs: 30 * DAY, intervalMs: 7 * DAY },
+        { afterMs: 90 * DAY, intervalMs: 28 * DAY },
+      ],
     });
     expect(ANALYTICS_SWEEP_INTERVAL_MS).toBeLessThanOrEqual(ANALYTICS_CADENCE.freshPostIntervalMs);
   });

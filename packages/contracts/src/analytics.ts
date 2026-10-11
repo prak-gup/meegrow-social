@@ -76,6 +76,18 @@ export const analyticsStatusView = z.object({
     freshPostIntervalMs: z.number().int().positive(),
     postIntervalMs: z.number().int().positive(),
     accountIntervalMs: z.number().int().positive(),
+    /**
+     * Posts older than `afterMs` are polled every `intervalMs` instead of `postIntervalMs`, oldest
+     * rule last. Optional so an older payload still parses; absent means no such rule.
+     */
+    olderPosts: z
+      .array(
+        z.object({
+          afterMs: z.number().int().positive(),
+          intervalMs: z.number().int().positive(),
+        }),
+      )
+      .optional(),
   }),
 });
 export type AnalyticsStatusView = z.infer<typeof analyticsStatusView>;
