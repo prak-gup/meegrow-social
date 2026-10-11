@@ -501,7 +501,7 @@ function PostList({
         {
           key: 'when',
           header: 'When',
-          className: 'hidden md:table-cell md:min-w-40',
+          className: 'hidden md:table-cell md:min-w-40 xl:whitespace-nowrap',
           cell: (p) => <When post={p} />,
         },
       ]}

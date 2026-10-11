@@ -111,7 +111,9 @@ export function Table<T>({
                     </td>
                   ))}
                   {rowActions && (
-                    <td className={pad}>
+                    // A `w-full` column elsewhere squeezes this one to its narrowest content, which
+                    // for a two-word button is one word per line. Actions never wrap.
+                    <td className={cn(pad, 'whitespace-nowrap')}>
                       <div className="flex items-center justify-end gap-2">{rowActions(row)}</div>
                     </td>
                   )}
