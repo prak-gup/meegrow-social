@@ -1,17 +1,17 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { closeDb, db, schema } from '@meegrow-social/db';
+import { closeDb, db, schema, withWorkspace } from '@meegrow-social/db';
 import {
   createConnection,
   createWorkspace,
   resetDb,
   useRecordingScheduler,
 } from '@meegrow-social/testing';
-import { ProviderAuthError, ProviderBadRequestError } from '../errors.js';
+import { ProviderAuthError, ProviderBadRequestError, ProviderTransientError } from '../errors.js';
 import { registerProvider } from '../providers/registry.js';
 import type { AuthTokens, PostResult, SocialProvider } from '../providers/types.js';
 import { createPost, getPost, PostStateError, retryPost } from './posts.js';
-import { publishPost } from './publish.js';
+import { publishPost, recordPublishExhaustion } from './publish.js';
 import { setScheduler } from './scheduler.js';
 
 beforeAll(() => {
@@ -266,5 +266,111 @@ describe('retryPost', () => {
       .from(schema.connections)
       .where(eq(schema.connections.id, conn));
     expect(row?.needsReconnect).toBe(true);
+  });
+});
+
+/**
+ * A transient platform error on every attempt. `publishPost` rethrows it and its transaction rolls
+ * back, so the post still reads `scheduled`; the job runner then reports the exhaustion.
+ */
+describe('recordPublishExhaustion', () => {
+  const exhaustion = (ws: string, postId: string) => ({
+    workspaceId: ws,
+    postId,
+    queue: 'publish',
+    payload: { workspaceId: ws, postId },
+    error: 'platform returned 503',
+    attempts: 3,
+  });
+
+  async function seedExhaustedPost(ws: string) {
+    const conn = await createConnection(ws, 'x', 'Flaky Account');
+    const [post] = await createPost(ws, {
+      caption: 'will FAIL',
+      variants: [{ connectionId: conn, provider: 'x' }],
+      schedule: { type: 'now' },
+    });
+    failWith = new ProviderTransientError('platform returned 503');
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await expect(publishPost(ws, post!.id)).rejects.toThrow('platform returned 503');
+    }
+    return post!.id;
+  }
+
+  it('a transient failure alone leaves the post scheduled — intermediate attempts change nothing', async () => {
+    useRecordingScheduler();
+    const ws = await createWorkspace();
+    const postId = await seedExhaustedPost(ws);
+    expect(await getPost(ws, postId)).toMatchObject({ status: 'scheduled', error: null });
+  });
+
+  it('marks the exhausted post failed with the reason, logs it, and writes the DLQ row', async () => {
+    useRecordingScheduler();
+    const ws = await createWorkspace();
+    const postId = await seedExhaustedPost(ws);
+
+    expect(await recordPublishExhaustion(exhaustion(ws, postId))).toEqual({
+      postMarkedFailed: true,
+      dlqRecorded: true,
+    });
+
+    expect(await getPost(ws, postId)).toMatchObject({
+      status: 'failed',
+      error: 'Publishing failed after 3 attempts: platform returned 503',
+    });
+    const { dlq, logs } = await withWorkspace(ws, async (tx) => ({
+      dlq: await tx.select().from(schema.jobsDlq),
+      logs: await tx.select().from(schema.eventLogs),
+    }));
+    expect(dlq).toHaveLength(1);
+    expect(dlq[0]).toMatchObject({
+      queue: 'publish',
+      payload: { workspaceId: ws, postId },
+      error: 'platform returned 503',
+    });
+    expect(logs.filter((l) => l.kind === 'publish' && l.status === 'failed')).toMatchObject([
+      { platform: 'x', account: 'Flaky Account' },
+    ]);
+  });
+
+  it('the failed post is then retryable, and publishes exactly once', async () => {
+    useRecordingScheduler();
+    const ws = await createWorkspace();
+    const postId = await seedExhaustedPost(ws);
+    await recordPublishExhaustion(exhaustion(ws, postId));
+
+    failWith = null;
+    const { calls } = useRecordingScheduler();
+    expect(await retryPost(ws, postId)).toMatchObject({ status: 'scheduled', error: null });
+    expect(calls).toEqual([{ postId, when: 'now' }]);
+    expect((await publishPost(ws, postId)).status).toBe('published');
+    expect(sent).toEqual(['will FAIL']);
+  });
+
+  it.each(['published', 'cancelled', 'draft'])(
+    'never touches a %s post: it stays as it is and stays un-retryable',
+    async (status) => {
+      useRecordingScheduler();
+      const ws = await createWorkspace();
+      const postId = await seedExhaustedPost(ws);
+      await setStatus(postId, status);
+
+      expect(await recordPublishExhaustion(exhaustion(ws, postId))).toEqual({
+        postMarkedFailed: false,
+        dlqRecorded: true,
+      });
+      expect(await getPost(ws, postId)).toMatchObject({ status, error: null });
+      await expect(retryPost(ws, postId)).rejects.toBeInstanceOf(PostStateError);
+    },
+  );
+
+  it("cannot reach another workspace's post", async () => {
+    useRecordingScheduler();
+    const mine = await createWorkspace('Mine');
+    const theirs = await createWorkspace('Theirs');
+    const postId = await seedExhaustedPost(theirs);
+
+    expect((await recordPublishExhaustion(exhaustion(mine, postId))).postMarkedFailed).toBe(false);
+    expect(await getPost(theirs, postId)).toMatchObject({ status: 'scheduled' });
   });
 });
