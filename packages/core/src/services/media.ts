@@ -173,6 +173,19 @@ export async function listMedia(
   });
 }
 
+/** The workspace's media rows for `mediaIds`, keyed by id; ids it does not have are just absent. */
+export async function getMediaByIds(
+  workspaceId: string,
+  mediaIds: readonly string[],
+): Promise<Map<string, MediaView>> {
+  const wanted = [...new Set(mediaIds)];
+  if (wanted.length === 0) return new Map();
+  return withWorkspace(workspaceId, async (tx) => {
+    const rows = await tx.select().from(schema.media).where(inArray(schema.media.id, wanted));
+    return new Map(rows.map((r) => [r.id, toView(r)]));
+  });
+}
+
 /** Runs the pure per-platform spec check (media/validate.ts) against previously-captured meta. */
 export async function validateMediaAgainstPlatform(
   workspaceId: string,

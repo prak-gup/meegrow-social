@@ -15,11 +15,12 @@ import {
   updateQueue,
   deleteQueue,
   nextFreeSlotForQueue,
+  previewQueueSlots,
   QueueNotFoundError,
   QueueInactiveError,
   type Clock,
 } from './queues.js';
-import { createPost } from './posts.js';
+import { cancelPost, createPost, listPosts } from './posts.js';
 
 beforeAll(() => {
   process.env.DATABASE_URL ??= 'postgres://mgs:mgs@localhost:5433/meegrow_social';
@@ -213,5 +214,141 @@ describe('nextFreeSlotForQueue — DST-safe against a real queue row', () => {
       clockAt('2026-03-09T08:00:00', 'America/New_York'),
     );
     expect(DateTime.fromJSDate(after.publishAt, { zone: 'America/New_York' }).offset).toBe(-240); // EDT
+  });
+});
+
+describe('previewQueueSlots — the preview is what add-to-queue then assigns', () => {
+  // Every day at 23:59 IST: deterministic whatever day the suite runs, and no DST.
+  const daily: WeeklySlot[] = Array.from({ length: 7 }, (_, dow) => ({ dow, time: '23:59' }));
+  const addToQueue = async (ws: string, connectionId: string, queueId: string) =>
+    (
+      await createPost(ws, {
+        caption: 'queued',
+        media: [],
+        variants: [{ connectionId, provider: 'fake' }],
+        schedule: { type: 'queue', queueId },
+      })
+    )[0]!;
+
+  it('previews, in order, exactly the slots the next N add-to-queue calls receive', async () => {
+    useRecordingScheduler();
+    const ws = await createWorkspace();
+    const connectionId = await createConnection(ws, 'fake');
+    const queue = await createQueue(ws, {
+      name: 'Daily',
+      timezone: 'Asia/Kolkata',
+      slots: daily,
+      active: true,
+    });
+
+    const preview = await previewQueueSlots(ws, queue.id, 4);
+    expect(preview).toMatchObject({ queueId: queue.id, timezone: 'Asia/Kolkata' });
+    expect(preview.slots).toHaveLength(4);
+
+    const assigned: Array<Date | null> = [];
+    for (let i = 0; i < 4; i++) {
+      assigned.push((await addToQueue(ws, connectionId, queue.id)).publishAt);
+    }
+    expect(assigned).toEqual(preview.slots.map((s) => s.publishAt));
+  });
+
+  it('takes nothing: previewing twice gives the same answer and creates no post', async () => {
+    const ws = await createWorkspace();
+    const queue = await createQueue(ws, {
+      name: 'Daily',
+      timezone: 'Asia/Kolkata',
+      slots: daily,
+      active: true,
+    });
+    const first = await previewQueueSlots(ws, queue.id, 5);
+    const second = await previewQueueSlots(ws, queue.id, 5);
+    expect(second).toEqual(first);
+    expect(await listPosts(ws)).toHaveLength(0);
+  });
+
+  it("starts after the slots already held, and gives a cancelled post's slot back", async () => {
+    useRecordingScheduler();
+    const ws = await createWorkspace();
+    const connectionId = await createConnection(ws, 'fake');
+    const queue = await createQueue(ws, {
+      name: 'Daily',
+      timezone: 'Asia/Kolkata',
+      slots: daily,
+      active: true,
+    });
+    const empty = await previewQueueSlots(ws, queue.id, 3);
+
+    const held = await addToQueue(ws, connectionId, queue.id);
+    const afterOne = await previewQueueSlots(ws, queue.id, 2);
+    expect(afterOne.slots).toEqual(empty.slots.slice(1));
+
+    await cancelPost(ws, held.id);
+    expect(await previewQueueSlots(ws, queue.id, 3)).toEqual(empty);
+  });
+
+  it('reports each slot as an instant and as wall-clock time in the queue timezone', async () => {
+    const ws = await createWorkspace();
+    const queue = await createQueue(ws, {
+      name: 'IST',
+      timezone: 'Asia/Kolkata',
+      slots: [{ dow: 1, time: '09:00' }], // Monday
+      active: true,
+    });
+    const preview = await previewQueueSlots(
+      ws,
+      queue.id,
+      2,
+      clockAt('2026-07-05T10:00:00', 'Asia/Kolkata'), // a Sunday
+    );
+    expect(preview.slots).toEqual([
+      {
+        publishAt: new Date('2026-07-06T03:30:00.000Z'),
+        localTime: '2026-07-06T09:00:00.000+05:30',
+      },
+      {
+        publishAt: new Date('2026-07-13T03:30:00.000Z'),
+        localTime: '2026-07-13T09:00:00.000+05:30',
+      },
+    ]);
+  });
+
+  it('agrees with nextFreeSlotForQueue for the first slot, under the same clock', async () => {
+    const ws = await createWorkspace();
+    const queue = await createQueue(ws, {
+      name: 'NYC',
+      timezone: 'America/New_York',
+      slots: daily,
+      active: true,
+    });
+    const clock = clockAt('2026-03-06T08:00:00', 'America/New_York');
+    const preview = await previewQueueSlots(ws, queue.id, 1, clock);
+    const { publishAt } = await nextFreeSlotForQueue(ws, queue.id, clock);
+    expect(preview.slots[0]?.publishAt).toEqual(publishAt);
+  });
+
+  it('rejects an inactive queue with QueueInactiveError, like add-to-queue', async () => {
+    const ws = await createWorkspace();
+    const queue = await createQueue(ws, {
+      name: 'Paused',
+      timezone: 'Asia/Kolkata',
+      slots: daily,
+      active: false,
+    });
+    await expect(previewQueueSlots(ws, queue.id, 5)).rejects.toThrow(QueueInactiveError);
+  });
+
+  it("rejects an unknown queue, and another workspace's queue, with QueueNotFoundError", async () => {
+    const mine = await createWorkspace('Mine');
+    const theirs = await createWorkspace('Theirs');
+    const theirQueue = await createQueue(theirs, {
+      name: 'Theirs',
+      timezone: 'Asia/Kolkata',
+      slots: daily,
+      active: true,
+    });
+    await expect(
+      previewQueueSlots(mine, '00000000-0000-0000-0000-000000000000', 5),
+    ).rejects.toThrow(QueueNotFoundError);
+    await expect(previewQueueSlots(mine, theirQueue.id, 5)).rejects.toThrow(QueueNotFoundError);
   });
 });

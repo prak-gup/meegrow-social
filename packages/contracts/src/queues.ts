@@ -38,3 +38,28 @@ export const queueView = z.object({
   createdAt: z.coerce.date(),
 });
 export type QueueView = z.infer<typeof queueView>;
+
+/** `GET /v1/queues/:id/slots` — how many upcoming slots to preview. */
+export const queueSlotsQuery = z.object({
+  count: z.coerce.number().int().min(1).max(50).default(5),
+});
+export type QueueSlotsQuery = z.infer<typeof queueSlotsQuery>;
+
+export const queueSlot = z.object({
+  publishAt: z.coerce.date(),
+  /** The same instant as wall-clock time in the queue's `timezone` (ISO 8601 with offset). */
+  localTime: z.string(),
+});
+export type QueueSlot = z.infer<typeof queueSlot>;
+
+/**
+ * The next slots a queue would hand out, in order: the first is what the next add-to-queue gets,
+ * the second what the one after it gets, and so on. A snapshot — nothing is reserved. May hold
+ * fewer than asked when the queue runs out of free slots inside its look-ahead window.
+ */
+export const queueSlotsView = z.object({
+  queueId: z.string().uuid(),
+  timezone: z.string(),
+  slots: z.array(queueSlot),
+});
+export type QueueSlotsView = z.infer<typeof queueSlotsView>;

@@ -70,4 +70,29 @@ describe('createBullScheduler against real BullMQ', () => {
       scheduler.cancelPublish({ postId: '44444444-4444-4444-8444-444444444444' }),
     ).resolves.not.toThrow();
   });
+
+  // What retry relies on: publish job ids are deterministic per post, and BullMQ silently drops an
+  // add() whose id still exists. The recording scheduler would accept the second add either way.
+  it('re-adds a post after its job is cancelled — the cancel-then-schedule a retry does', async () => {
+    const scheduler = createBullScheduler(REDIS_URL);
+    const postId = '55555555-5555-4555-8555-555555555555';
+
+    await scheduler.schedulePublish({
+      workspaceId: 'ws-1',
+      postId,
+      when: new Date(Date.now() + 3_600_000),
+    });
+    const first = await queue.getJob(publishJobId(postId));
+    expect(first!.opts.delay).toBeGreaterThan(0);
+
+    // Without the cancel the second add is ignored and the hour-long delay stands.
+    await scheduler.schedulePublish({ workspaceId: 'ws-1', postId, when: 'now' });
+    expect((await queue.getJob(publishJobId(postId)))!.opts.delay).toBeGreaterThan(0);
+
+    await scheduler.cancelPublish({ postId });
+    await scheduler.schedulePublish({ workspaceId: 'ws-1', postId, when: 'now' });
+    const retried = await queue.getJob(publishJobId(postId));
+    expect(retried).toBeDefined();
+    expect(retried!.opts.delay).toBe(0);
+  });
 });

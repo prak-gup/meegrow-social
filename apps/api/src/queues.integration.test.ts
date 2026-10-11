@@ -165,4 +165,103 @@ describe('queues REST (PRD F3.4)', () => {
     });
     expect(res.statusCode).toBe(404);
   });
+
+  it('GET /v1/queues/:id/slots previews the slot the next add-to-queue then gets', async () => {
+    const ws = await createWorkspace();
+    const auth = await authFor(ws);
+    const connectionId = await createConnection(ws, 'fake');
+    const { queue } = (
+      await app.inject({
+        method: 'POST',
+        url: '/v1/queues',
+        headers: auth,
+        payload: {
+          name: 'Daily',
+          timezone: 'Asia/Kolkata',
+          slots: Array.from({ length: 7 }, (_, dow) => ({ dow, time: '23:59' })),
+        },
+      })
+    ).json<{ queue: { id: string } }>();
+
+    const bare = await app.inject({
+      method: 'GET',
+      url: `/v1/queues/${queue.id}/slots`,
+      headers: auth,
+    });
+    expect(bare.statusCode).toBe(200);
+    const preview = bare.json<{
+      queueId: string;
+      timezone: string;
+      slots: Array<{ publishAt: string; localTime: string }>;
+    }>();
+    expect(preview.queueId).toBe(queue.id);
+    expect(preview.timezone).toBe('Asia/Kolkata');
+    expect(preview.slots).toHaveLength(5); // the default
+    expect(preview.slots[0]!.localTime).toMatch(/T23:59:00\.000\+05:30$/);
+
+    const three = await app.inject({
+      method: 'GET',
+      url: `/v1/queues/${queue.id}/slots?count=3`,
+      headers: auth,
+    });
+    expect(three.json<{ slots: unknown[] }>().slots).toEqual(preview.slots.slice(0, 3));
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/v1/posts',
+      headers: auth,
+      payload: {
+        caption: 'queued via REST',
+        variants: [{ connectionId, provider: 'fake' }],
+        schedule: { type: 'queue', queueId: queue.id },
+      },
+    });
+    const { posts } = created.json<{ posts: Array<{ publishAt: string }> }>();
+    expect(posts[0]!.publishAt).toBe(preview.slots[0]!.publishAt);
+
+    // The slot is now held, so the preview moves on by one.
+    const after = await app.inject({
+      method: 'GET',
+      url: `/v1/queues/${queue.id}/slots?count=2`,
+      headers: auth,
+    });
+    expect(after.json<{ slots: unknown[] }>().slots).toEqual(preview.slots.slice(1, 3));
+  });
+
+  it('GET /v1/queues/:id/slots: 400 inactive, 400 count out of range, 404 unknown or foreign', async () => {
+    const ws = await createWorkspace();
+    const auth = await authFor(ws);
+    const other = await createWorkspace('Other');
+    const otherAuth = await authFor(other);
+    const make = async (headers: { authorization: string }, active: boolean) =>
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/v1/queues',
+          headers,
+          payload: {
+            name: 'Q',
+            timezone: 'Asia/Kolkata',
+            slots: [{ dow: 1, time: '09:00' }],
+            active,
+          },
+        })
+      ).json<{ queue: { id: string } }>().queue.id;
+    const paused = await make(auth, false);
+    const live = await make(auth, true);
+    const foreign = await make(otherAuth, true);
+    const slots = (id: string, query = '') =>
+      app.inject({ method: 'GET', url: `/v1/queues/${id}/slots${query}`, headers: auth });
+
+    const inactive = await slots(paused);
+    expect(inactive.statusCode).toBe(400);
+    expect(inactive.json<{ error: string }>().error).toMatch(/is not active/);
+
+    expect((await slots(live, '?count=51')).statusCode).toBe(400);
+    expect((await slots(live, '?count=0')).statusCode).toBe(400);
+    expect((await slots(live, '?count=50')).statusCode).toBe(200);
+
+    expect((await slots('00000000-0000-0000-0000-000000000000')).statusCode).toBe(404);
+    expect((await slots(foreign)).statusCode).toBe(404);
+  });
 });

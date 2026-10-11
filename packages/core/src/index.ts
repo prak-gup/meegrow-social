@@ -17,6 +17,7 @@ export * from './services/sessions.js';
 export * from './services/connections.js';
 export * from './services/scheduler.js';
 export * from './services/posts.js';
+export * from './services/validate-post.js';
 export * from './services/media.js';
 export * from './services/publish.js';
 export * from './services/queues.js';

@@ -262,3 +262,40 @@ export const postGroupView = z.object({
   posts: z.array(postView),
 });
 export type PostGroupView = z.infer<typeof postGroupView>;
+
+/**
+ * Why a dry-run rejected a post (`POST /v1/posts/validate`, MCP `validate_post`). The first four
+ * are exactly what create rejects; the `media_*` codes are checks create does NOT run — a post that
+ * trips them is accepted by create and fails when it tries to publish.
+ */
+export const postValidationCode = z.enum([
+  /** The body fails the `createPostInput` contract. */
+  'invalid_request',
+  /** The provider's own rules (`assertPublishable`) reject this variant. */
+  'not_publishable',
+  /** No such connection in this workspace. */
+  'connection_not_found',
+  'queue_not_found',
+  'queue_inactive',
+  /** A media ref names no media of this workspace and carries no `url` of its own. */
+  'media_not_found',
+  /** The stored media is outside the platform's spec (format, aspect ratio, duration, size). */
+  'media_rejected',
+]);
+export type PostValidationCode = z.infer<typeof postValidationCode>;
+
+export const postValidationIssue = z.object({
+  /** Set when the issue belongs to one variant rather than the whole request. */
+  connectionId: z.string().optional(),
+  provider: providerIdentifier.optional(),
+  code: postValidationCode,
+  message: z.string(),
+});
+export type PostValidationIssue = z.infer<typeof postValidationIssue>;
+
+/** Result of a dry run: nothing was created, scheduled or sent to a platform. */
+export const postValidationResult = z.object({
+  valid: z.boolean(),
+  issues: z.array(postValidationIssue),
+});
+export type PostValidationResult = z.infer<typeof postValidationResult>;

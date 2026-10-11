@@ -1,9 +1,11 @@
 import { db, schema, withWorkspace } from '@meegrow-social/db';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import type {
   CallbackResult,
   ConnectionView,
   ConnectionHealth,
+  ConnectionHealthStatus,
+  ConnectionHealthView,
   ProviderIdentifier,
   TokenModel,
 } from '@meegrow-social/contracts';
@@ -17,6 +19,13 @@ export const EXPIRING_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 /** One-time tokens can't be auto-refreshed, so they surface 'expiring' earlier (14d) for manual re-auth. */
 export const ONE_TIME_EXPIRING_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Thrown when a post names a connection this workspace does not have (→ 404 in the API). The same
+ * error whether the id is unknown or belongs to another workspace — RLS hides the difference, and
+ * the message must not put it back.
+ */
+export class ConnectionNotFoundError extends Error {}
 
 function callbackUri(appUrl: string): string {
   return `${appUrl.replace(/\/$/, '')}/connect/callback`;
@@ -42,6 +51,68 @@ export function computeHealth(
 export function expiresInDaysFrom(expiresAt: Date | null): number | null {
   if (!expiresAt) return null;
   return Math.floor((expiresAt.getTime() - Date.now()) / DAY_MS);
+}
+
+/**
+ * Turns a connection's stored token state into a status, a reason and a next step (account health).
+ * Pure — and built on `computeHealth`, so it can never disagree with the dashboard badge; the only
+ * refinement is splitting an already-lapsed token (`expired`) out of `expiring`.
+ *
+ * `autoRefresh` is what the token sweeper acts on: a refreshable model AND a stored refresh token.
+ */
+export function describeConnectionHealth(conn: {
+  tokenModel: TokenModel;
+  needsReconnect: boolean;
+  expiresAt: Date | null;
+  hasRefreshToken: boolean;
+}): {
+  status: ConnectionHealthStatus;
+  reason: string;
+  recommendedAction: string;
+  autoRefresh: boolean;
+} {
+  const autoRefresh = conn.tokenModel !== 'one-time' && conn.hasRefreshToken;
+  const health = computeHealth(conn.tokenModel, conn.needsReconnect, conn.expiresAt);
+
+  if (health === 'needs_reconnect') {
+    return {
+      status: 'needs_reconnect',
+      reason: 'The platform rejected the stored credentials during a publish or a token refresh.',
+      recommendedAction:
+        'Reconnect the account in the dashboard. Posts to it fail until a human does.',
+      autoRefresh,
+    };
+  }
+  if (health === 'healthy') {
+    return {
+      status: 'healthy',
+      reason: conn.expiresAt
+        ? `The stored token is valid for another ${expiresInDaysFrom(conn.expiresAt)} days.`
+        : 'The stored token has no expiry.',
+      recommendedAction: 'None.',
+      autoRefresh,
+    };
+  }
+
+  const days = expiresInDaysFrom(conn.expiresAt)!;
+  if (conn.expiresAt!.getTime() <= Date.now()) {
+    return {
+      status: 'expired',
+      reason: `The stored token expired ${-days} day(s) ago.`,
+      recommendedAction: autoRefresh
+        ? 'The token refreshes automatically; if this persists past the next refresh sweep, reconnect the account in the dashboard.'
+        : 'Reconnect the account in the dashboard. Posts to it will fail until then.',
+      autoRefresh,
+    };
+  }
+  return {
+    status: 'expiring',
+    reason: `The stored token expires in ${days} day(s).`,
+    recommendedAction: autoRefresh
+      ? 'None. The token refreshes automatically before it expires.'
+      : 'Reconnect the account in the dashboard before the token expires; it cannot be refreshed automatically.',
+    autoRefresh,
+  };
 }
 
 /** Step 1: create a single-use flow row and return the provider auth URL to redirect the user to. */
@@ -176,6 +247,102 @@ export async function listConnections(workspaceId: string): Promise<ConnectionVi
       createdAt: r.createdAt,
     }));
   });
+}
+
+/**
+ * Account health for every connection of the workspace, or just `connectionIds` when given. Reads
+ * stored state only — token expiry, the needs-reconnect flag, the last analytics sweep, the latest
+ * failed post. It does NOT call the platform, so it cannot see a token revoked on the platform's
+ * side; `source: 'stored'` on every item says so.
+ */
+export async function listConnectionHealth(
+  workspaceId: string,
+  connectionIds?: readonly string[],
+): Promise<ConnectionHealthView[]> {
+  const checkedAt = new Date();
+  return withWorkspace(workspaceId, async (tx) => {
+    const rows = await tx
+      .select()
+      .from(schema.connections)
+      .where(connectionIds ? inArray(schema.connections.id, [...connectionIds]) : undefined);
+    if (rows.length === 0) return [];
+
+    // Newest failed post per connection: DISTINCT ON keeps the first row of each connection in
+    // (connectionId, createdAt desc) order.
+    const failed = await tx
+      .selectDistinctOn([schema.posts.connectionId], {
+        connectionId: schema.posts.connectionId,
+        postId: schema.posts.id,
+        error: schema.posts.error,
+        publishAt: schema.posts.publishAt,
+      })
+      .from(schema.posts)
+      .where(
+        and(
+          eq(schema.posts.status, 'failed'),
+          inArray(
+            schema.posts.connectionId,
+            rows.map((r) => r.id),
+          ),
+        ),
+      )
+      .orderBy(schema.posts.connectionId, desc(schema.posts.createdAt));
+    const failedByConnection = new Map(failed.map((f) => [f.connectionId, f]));
+
+    return rows.map((r) => {
+      const lastFailed = failedByConnection.get(r.id);
+      return {
+        connectionId: r.id,
+        provider: r.provider as ConnectionHealthView['provider'],
+        displayName: r.displayName,
+        ...describeConnectionHealth({
+          tokenModel: r.tokenModel as TokenModel,
+          needsReconnect: r.needsReconnect,
+          expiresAt: r.expiresAt,
+          hasRefreshToken: r.refreshToken !== null,
+        }),
+        needsReconnect: r.needsReconnect,
+        tokenModel: r.tokenModel as TokenModel,
+        expiresAt: r.expiresAt,
+        expiresInDays: expiresInDaysFrom(r.expiresAt),
+        lastAnalyticsAt: r.lastAnalyticsAt,
+        lastFailedPost: lastFailed
+          ? { postId: lastFailed.postId, error: lastFailed.error, publishAt: lastFailed.publishAt }
+          : null,
+        source: 'stored' as const,
+        checkedAt,
+      };
+    });
+  });
+}
+
+/** Health of one connection; null when the workspace has no such connection. */
+export async function getConnectionHealth(
+  workspaceId: string,
+  connectionId: string,
+): Promise<ConnectionHealthView | null> {
+  const [health] = await listConnectionHealth(workspaceId, [connectionId]);
+  return health ?? null;
+}
+
+/**
+ * Which of `connectionIds` this workspace does NOT have. RLS makes another workspace's connection
+ * indistinguishable from one that never existed, which is exactly what callers must report.
+ */
+export async function findMissingConnectionIds(
+  workspaceId: string,
+  connectionIds: readonly string[],
+): Promise<string[]> {
+  const wanted = [...new Set(connectionIds)];
+  if (wanted.length === 0) return [];
+  const found = await withWorkspace(workspaceId, async (tx) =>
+    tx
+      .select({ id: schema.connections.id })
+      .from(schema.connections)
+      .where(inArray(schema.connections.id, wanted)),
+  );
+  const have = new Set(found.map((r) => r.id));
+  return wanted.filter((id) => !have.has(id));
 }
 
 export async function deleteConnection(workspaceId: string, id: string): Promise<boolean> {
