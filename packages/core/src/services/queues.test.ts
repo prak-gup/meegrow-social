@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DateTime } from 'luxon';
-import { computeNextFreeSlot, type Clock } from './queues.js';
+import { computeNextFreeSlot, computeUpcomingSlots, type Clock } from './queues.js';
 import type { WeeklySlot } from '@meegrow-social/contracts';
 
 function clockAt(iso: string, zone: string): Clock {
@@ -149,5 +149,117 @@ describe('computeNextFreeSlot — edge cases', () => {
         maxLookaheadDays: 7,
       }),
     ).toThrow(/no free slot found/);
+  });
+});
+
+describe('computeUpcomingSlots — the slot preview', () => {
+  const slots: WeeklySlot[] = [
+    { dow: 1, time: '09:00' }, // Monday
+    { dow: 3, time: '18:30' }, // Wednesday
+    { dow: 5, time: '09:00' }, // Friday
+  ];
+  // 2026-07-05 is a Sunday in IST.
+  const clock = clockAt('2026-07-05T10:00:00', 'Asia/Kolkata');
+  const local = (d: Date) => DateTime.fromJSDate(d, { zone: 'Asia/Kolkata' }).toFormat('ccc HH:mm');
+
+  it('is exactly what N consecutive add-to-queue calls would be assigned', () => {
+    // The real path: pick a slot, the post occupies it, pick again.
+    const occupied: Date[] = [];
+    for (let i = 0; i < 7; i++) {
+      occupied.push(computeNextFreeSlot({ timezone: 'Asia/Kolkata', slots, occupied, clock }));
+    }
+    const preview = computeUpcomingSlots({
+      timezone: 'Asia/Kolkata',
+      slots,
+      occupied: [],
+      clock,
+      count: 7,
+    });
+    expect(preview).toEqual(occupied);
+    expect(preview.slice(0, 4).map(local)).toEqual([
+      'Mon 09:00',
+      'Wed 18:30',
+      'Fri 09:00',
+      'Mon 09:00',
+    ]);
+  });
+
+  it('skips slots that posts already hold, and starts where add-to-queue would', () => {
+    const [monday, wednesday] = computeUpcomingSlots({
+      timezone: 'Asia/Kolkata',
+      slots,
+      occupied: [],
+      clock,
+      count: 2,
+    });
+    const preview = computeUpcomingSlots({
+      timezone: 'Asia/Kolkata',
+      slots,
+      occupied: [monday!],
+      clock,
+      count: 2,
+    });
+    expect(preview[0]).toEqual(wednesday);
+    expect(preview[0]).toEqual(
+      computeNextFreeSlot({ timezone: 'Asia/Kolkata', slots, occupied: [monday!], clock }),
+    );
+    expect(preview.map(local)).toEqual(['Wed 18:30', 'Fri 09:00']);
+  });
+
+  it('never repeats a slot and returns them in ascending order', () => {
+    const preview = computeUpcomingSlots({
+      timezone: 'Asia/Kolkata',
+      slots,
+      occupied: [],
+      clock,
+      count: 30,
+    });
+    expect(preview).toHaveLength(30);
+    const times = preview.map((d) => d.getTime());
+    expect(new Set(times).size).toBe(30);
+    expect([...times].sort((a, b) => a - b)).toEqual(times);
+  });
+
+  it('returns fewer than asked, without throwing, when the look-ahead runs out', () => {
+    // One slot a week: a 90-day look-ahead holds 13 Mondays, not 50.
+    const weekly: WeeklySlot[] = [{ dow: 1, time: '09:00' }];
+    const preview = computeUpcomingSlots({
+      timezone: 'Asia/Kolkata',
+      slots: weekly,
+      occupied: [],
+      clock,
+      count: 50,
+    });
+    expect(preview).toHaveLength(13);
+    expect(
+      computeUpcomingSlots({
+        timezone: 'Asia/Kolkata',
+        slots: weekly,
+        occupied: preview,
+        clock,
+        count: 5,
+      }),
+    ).toEqual([]);
+  });
+
+  it('keeps the wall-clock time across a DST change', () => {
+    const daily: WeeklySlot[] = Array.from({ length: 7 }, (_, dow) => ({ dow, time: '09:00' }));
+    const preview = computeUpcomingSlots({
+      timezone: 'America/New_York',
+      slots: daily,
+      occupied: [],
+      clock: clockAt('2026-03-06T08:00:00', 'America/New_York'),
+      count: 4,
+    });
+    const zoned = preview.map((d) => DateTime.fromJSDate(d, { zone: 'America/New_York' }));
+    expect(zoned.map((z) => z.toFormat('HH:mm'))).toEqual(['09:00', '09:00', '09:00', '09:00']);
+    // Fri + Sat in EST, then Sunday 2026-03-08 springs forward to EDT.
+    expect(zoned.map((z) => z.offset)).toEqual([-300, -300, -240, -240]);
+  });
+
+  it('throws for a queue with no slots, like the real path', () => {
+    expect(() =>
+      computeUpcomingSlots({ timezone: 'Asia/Kolkata', slots: [], occupied: [], clock, count: 3 }),
+    ).toThrow(/no slots configured/);
   });
 });
