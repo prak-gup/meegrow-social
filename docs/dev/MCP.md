@@ -127,6 +127,32 @@ Notes that are easy to get wrong:
   optional caption, media and options) and group-level `media`. The older single-target arguments
   `connectionId` + `provider` (+ `options`), and `publishAt` on `create_post`, still work; mixing
   the two styles in one call is rejected.
+- A **WordPress** connection (`provider: "wordpress"`, present only when the server runs with
+  `WORDPRESS_ENABLED=true`) takes a blog article through the same tools. There is no separate
+  article tool:
+  - `options` is required: `{"kind":"wordpress","title":"…"}`, plus optional `excerpt`, `slug`
+    (lowercase letters, digits, hyphens), `categories` and `tags` (each a list of WordPress term
+    ids or names), and `status`.
+  - `caption` is the article **body, in Markdown** — headings, paragraphs, lists, quotes, fenced
+    code, bold, italic, links and `![alt](https://…)` images. It is converted to HTML on the
+    server. Raw HTML is **not** passed through: it is escaped and appears as the text you typed.
+  - The body may be up to 100000 characters, but only when it is the **variant's own** `caption`.
+    The shared top-level `caption` stays at 5000, so an article longer than that needs `variants`
+    (the single-target shorthand has nowhere to put a variant caption).
+  - At most one image in `media`: it is uploaded to the site's media library and set as the
+    featured image. A video is rejected.
+  - `schedule` works as for every platform: this server sends the article at that time.
+    `options.status` is the state it is created in **on WordPress** at that moment — `publish`
+    (the default), or `draft` / `pending` / `private`, which hand it to the site's own editors and
+    make nothing public. A post created as `draft` on WordPress still reads `published` here
+    (it was sent); its link is then not a public URL.
+  - A category name that does not exist on the site fails the post; a tag name that does not
+    exist is created.
+  - Connecting a site is a human action in the dashboard (the site owner approves on their own
+    WordPress). No tool starts it. `post_metrics` and `connection_followers` return nothing for
+    WordPress: WordPress core has no analytics API.
+  - Once published, an article cannot be edited or deleted from here (`update_post` and
+    `cancel_post` only act before publishing, as for every platform).
 - `create_post` with `schedule` `{"type":"now"}` or `{"type":"at",…}`, `add_to_queue`,
   `schedule_post`, and `update_post` with a `publishAt` all end in a real publish. Nothing here can
   recall a post once it is published.

@@ -34,7 +34,8 @@ import { idempotencyKey, notFound, PUBLISH, READ, respond, ToolError, WRITE } fr
  */
 const targetShape = {
   caption: createPostInput.shape.caption.describe(
-    'Text of the post. Each variant may override it.',
+    'Text of the post (at most 5000 characters). Each variant may override it. For a wordpress ' +
+      'variant it is the article BODY, in Markdown.',
   ),
   media: createPostInput.shape.media.describe(
     'Media attached to every variant, in carousel order. `mediaId` and `kind` come from ' +
@@ -45,7 +46,10 @@ const targetShape = {
     .describe(
       'One entry per social account to post to; each creates its own post. `connectionId` and ' +
         '`provider` come from list_connections. `options` carries per-platform settings and is ' +
-        'required for youtube (its title lives there).',
+        'required for youtube and wordpress (the title lives there). A wordpress variant is a ' +
+        'blog article: its `caption` is the body in Markdown (raw HTML is shown as text, not ' +
+        'run), may be up to 100000 characters when given on the variant itself, and at most one ' +
+        'image in `media` becomes the featured image.',
     ),
   connectionId: z
     .string()
