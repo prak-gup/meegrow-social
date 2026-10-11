@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import type { InviteView } from '@meegrow-social/contracts';
 import { api } from '../lib/api';
 import { Logo } from '../components/Logo';
+import { PRODUCT_NAME, signInName } from '../lib/platforms';
 import {
   FacebookLogo,
   InstagramLogo,
@@ -12,6 +13,28 @@ import {
   GoogleLogo,
   Plugs,
 } from '../lib/icons';
+
+/**
+ * Where the invite token waits while the browser is away on the platform's screens, so the picker
+ * can restart the same invite ("try again"). Same tab only; losing it just means reopening the link.
+ */
+const TOKEN_KEY = 'mg_invite_token';
+
+export function rememberInviteToken(token: string): void {
+  try {
+    window.sessionStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    // Storage can be blocked (private mode); "try again" then asks them to reopen the link.
+  }
+}
+
+export function recallInviteToken(): string | null {
+  try {
+    return window.sessionStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
 
 export const BRAND: Record<string, { Icon: typeof FacebookLogo; bg: string }> = {
   facebook: { Icon: FacebookLogo, bg: 'bg-brand-facebook' },
@@ -89,6 +112,7 @@ export function Invite() {
     setErr(null);
     try {
       const { url } = await api.startInvite(token);
+      rememberInviteToken(token);
       window.location.href = url; // full-page redirect to the platform's consent screen
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Could not start. The link may have expired.');
@@ -114,11 +138,14 @@ export function Invite() {
           <InviteHeading
             provider={invite.provider}
             title={`Connect your ${invite.providerDisplayName}`}
-            subtitle={`so ${invite.workspaceName} can publish on your behalf`}
+            subtitle={`Requested for ${invite.workspaceName}, through ${PRODUCT_NAME}`}
           />
           <ul className="mb-6 space-y-2 text-sm text-body-ink">
-            <li>• You’ll sign in with {invite.providerDisplayName} and approve access.</li>
-            <li>• {invite.workspaceName} can post and read insights — nothing else.</li>
+            <li>• You’ll sign in with {signInName(invite)} and approve access.</li>
+            <li>
+              • The team that manages social media for {invite.workspaceName} uses {PRODUCT_NAME} to
+              publish posts and read insights for this account — nothing else.
+            </li>
             <li>• Your password is never shared, and you can revoke access anytime.</li>
           </ul>
           {err && <p className="mb-4 text-sm text-error">{err}</p>}
@@ -127,7 +154,7 @@ export function Invite() {
             disabled={state === 'starting'}
             className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-sm bg-rausch px-4 text-body font-medium text-white hover:bg-rausch-active disabled:opacity-60"
           >
-            {state === 'starting' ? 'Redirecting…' : `Continue with ${invite.providerDisplayName}`}
+            {state === 'starting' ? 'Redirecting…' : `Continue with ${signInName(invite)}`}
           </button>
         </>
       )}

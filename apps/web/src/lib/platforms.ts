@@ -68,3 +68,25 @@ export function platformMeta(p: { identifier: string; displayName: string }): Pl
     }
   );
 }
+
+/**
+ * The product's name as a client meets it. There is no agency/operator entity in the data model (a
+ * workspace is the client; a user is a person), and this is the name the platform's own consent
+ * screen shows for the app, so the invite pages use the same one.
+ */
+export const PRODUCT_NAME = 'Meegrow Social';
+
+/** Whose login a platform's consent actually is — a Facebook Page and Instagram both sign in with Facebook. */
+const SIGN_IN_WITH: Record<string, string> = {
+  facebook: 'Facebook',
+  instagram: 'Facebook',
+  gmb: 'Google',
+  youtube: 'Google',
+  linkedin: 'LinkedIn',
+  'linkedin-page': 'LinkedIn',
+  x: 'X',
+};
+
+export function signInName(p: { provider: string; providerDisplayName: string }): string {
+  return SIGN_IN_WITH[p.provider] ?? p.providerDisplayName;
+}

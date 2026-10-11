@@ -2,15 +2,16 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import type { InviteConnectedView, InviteFlowView } from '@meegrow-social/contracts';
 import { api, ApiError } from '../lib/api';
-import { InviteCard, InviteHeading } from './Invite';
+import { PRODUCT_NAME, signInName } from '../lib/platforms';
+import { InviteCard, InviteHeading, recallInviteToken, rememberInviteToken } from './Invite';
 
 /** Why there is nothing to pick, in the client's terms — the platform returned an empty list. */
 function nothingToConnect(flow: InviteFlowView): string {
   switch (flow.provider) {
     case 'instagram':
-      return 'We couldn’t find an Instagram account to connect. It has to be a Business or Creator account that is linked to a Facebook Page you manage, and both that Page and the Instagram account have to be ticked on Facebook’s permission screens.';
+      return 'We couldn’t find an Instagram account to connect. It has to be a Business or Creator account linked to a Facebook Page you manage, and both that Page and the Instagram account have to be ticked on Facebook’s permission screens. If you approved this before, Facebook may have reused your earlier choice without showing the list again.';
     case 'facebook':
-      return 'We couldn’t find a Facebook Page to connect. You need to manage the Page, and it has to be ticked on Facebook’s permission screens.';
+      return 'We couldn’t find a Facebook Page to connect. You need to manage the Page, and it has to be ticked on Facebook’s permission screens. If you approved this before, Facebook may have reused your earlier choice without showing the list again.';
     default:
       return `That ${flow.providerDisplayName} login didn’t offer any account that can be connected.`;
   }
@@ -46,9 +47,81 @@ function stopped(err: unknown): { title: string; detail: string } {
   };
 }
 
+const META = new Set(['facebook', 'instagram']);
+
+/**
+ * What to do when the account they want was not offered. On Meta a returning person is asked
+ * "Continue as …?" and Continue reuses the earlier choice of Pages without showing the list again,
+ * so the fix is theirs to make on Facebook's screen — nothing on our side can re-open that list.
+ */
+function MissingAccountHelp({ flow }: { flow: InviteFlowView }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const token = recallInviteToken();
+  const signIn = signInName(flow);
+
+  const retry = async () => {
+    if (!token) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const { url } = await api.startInvite(token);
+      rememberInviteToken(token);
+      window.location.href = url;
+    } catch {
+      setErr('Could not start again — the link may have expired. Ask your agency for a fresh one.');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 rounded-sm bg-surface-soft p-4 text-sm text-body-ink">
+      {META.has(flow.provider) ? (
+        <ol className="list-decimal space-y-1.5 pl-5">
+          <li>Start again with the button below.</li>
+          <li>
+            If Facebook asks “Continue as …?”, choose <b className="text-ink">Edit settings</b> (or
+            “Edit previous settings”) — not Continue.
+          </li>
+          <li>
+            Tick the Page you want
+            {flow.provider === 'instagram' ? ' and the Instagram account linked to it' : ''}, then
+            finish.
+          </li>
+        </ol>
+      ) : (
+        <p>
+          Start again and, on {signIn}’s screens, make sure the account you want is selected before
+          you approve.
+        </p>
+      )}
+      {err && <p className="mt-3 text-error">{err}</p>}
+      {token ? (
+        <button
+          onClick={() => void retry()}
+          disabled={busy}
+          className="mt-4 inline-flex h-10 w-full items-center justify-center rounded-sm border border-ink bg-canvas px-4 text-sm font-medium text-ink hover:bg-surface-strong disabled:opacity-60"
+        >
+          {busy ? 'Redirecting…' : `Try again with ${signIn}`}
+        </button>
+      ) : (
+        <p className="mt-3 text-muted">
+          To start again, open the link your agency sent you once more.
+        </p>
+      )}
+    </div>
+  );
+}
+
 type State =
   | { step: 'loading' }
-  | { step: 'pick'; flow: InviteFlowView; busy: string | null; error: string | null }
+  | {
+      step: 'pick';
+      flow: InviteFlowView;
+      busy: string | null;
+      error: string | null;
+      help: boolean;
+    }
   | { step: 'connected'; result: InviteConnectedView }
   | { step: 'stopped'; title: string; detail: string };
 
@@ -65,7 +138,13 @@ export function InviteFinish() {
   useEffect(() => {
     void (async () => {
       try {
-        setState({ step: 'pick', flow: await api.getInviteFlow(flowId), busy: null, error: null });
+        setState({
+          step: 'pick',
+          flow: await api.getInviteFlow(flowId),
+          busy: null,
+          error: null,
+          help: false,
+        });
       } catch (e) {
         setState({ step: 'stopped', ...stopped(e) });
       }
@@ -73,7 +152,7 @@ export function InviteFinish() {
   }, [flowId]);
 
   const connect = async (flow: InviteFlowView, externalId: string) => {
-    setState({ step: 'pick', flow, busy: externalId, error: null });
+    setState({ step: 'pick', flow, busy: externalId, error: null, help: false });
     try {
       setState({ step: 'connected', result: await api.finishInviteFlow(flowId, externalId) });
     } catch (e) {
@@ -83,6 +162,7 @@ export function InviteFinish() {
           step: 'pick',
           flow,
           busy: null,
+          help: false,
           error: `That account could not be connected: ${e.message}. Nothing was connected.`,
         });
       } else {
@@ -107,8 +187,9 @@ export function InviteFinish() {
           <h1 className="text-xl font-semibold">Connected</h1>
           <p className="mt-2 text-body text-muted">
             <b className="text-ink">{state.result.accountName}</b> (
-            {state.result.providerDisplayName}) is now connected to{' '}
-            <b className="text-ink">{state.result.workspaceName}</b>. You can close this window.
+            {state.result.providerDisplayName}) is now connected. The team that manages social media
+            for <b className="text-ink">{state.result.workspaceName}</b> can publish to it and read
+            its insights through {PRODUCT_NAME}. You can close this window.
           </p>
         </>
       )}
@@ -118,12 +199,10 @@ export function InviteFinish() {
           <InviteHeading
             provider={state.flow.provider}
             title="Nothing to connect yet"
-            subtitle={`Nothing was connected to ${state.flow.workspaceName}`}
+            subtitle={`Nothing was connected for ${state.flow.workspaceName}`}
           />
           <p className="text-sm text-body-ink">{nothingToConnect(state.flow)}</p>
-          <p className="mt-3 text-sm text-muted">
-            Once that is sorted, open the link your agency sent you and try again.
-          </p>
+          <MissingAccountHelp flow={state.flow} />
         </>
       )}
 
@@ -136,7 +215,7 @@ export function InviteFinish() {
                 ? 'Confirm the account to connect'
                 : 'Choose the account to connect'
             }
-            subtitle={`One more step — nothing is connected to ${state.flow.workspaceName} yet`}
+            subtitle={`One more step for ${state.flow.workspaceName} — nothing is connected yet`}
           />
           {state.error && <p className="mb-4 text-sm text-error">{state.error}</p>}
           <ul className="space-y-2">
@@ -157,9 +236,19 @@ export function InviteFinish() {
             ))}
           </ul>
           <p className="mt-4 text-sm text-muted">
-            {state.flow.workspaceName} will be able to post to the account you connect and read its
-            insights.
+            The team that manages social media for {state.flow.workspaceName} will be able to
+            publish to the account you connect and read its insights, through {PRODUCT_NAME}.
           </p>
+          {state.help ? (
+            <MissingAccountHelp flow={state.flow} />
+          ) : (
+            <button
+              onClick={() => setState({ ...state, help: true })}
+              className="mt-3 text-sm font-medium text-ink underline underline-offset-2"
+            >
+              The one I want isn’t listed
+            </button>
+          )}
         </>
       )}
     </InviteCard>

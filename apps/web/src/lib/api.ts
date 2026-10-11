@@ -92,8 +92,13 @@ export const api = {
   listConnections: () => request<{ connections: ConnectionView[] }>('GET', '/v1/connections'),
   authUrl: (provider: string) =>
     request<{ url: string }>('GET', `/v1/connections/${encodeURIComponent(provider)}/auth-url`),
-  createInvite: (provider: string) =>
-    request<CreatedInviteView>('POST', `/v1/connections/${encodeURIComponent(provider)}/invite`),
+  /** Mints for the active client, or for `workspaceId` — any client the user belongs to. */
+  createInvite: (provider: string, workspaceId?: string) =>
+    request<CreatedInviteView>(
+      'POST',
+      `/v1/connections/${encodeURIComponent(provider)}/invite`,
+      workspaceId ? { workspaceId } : undefined,
+    ),
   getInvite: (token: string) =>
     request<InviteView>('GET', `/v1/invite/${encodeURIComponent(token)}`),
   startInvite: (token: string) =>
