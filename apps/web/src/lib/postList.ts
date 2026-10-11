@@ -1,5 +1,5 @@
 import type { PostStatus, PostView } from '@meegrow-social/contracts';
-import { parsePublishAt } from './postDate';
+import { TIME_NOT_RECORDED, parsePublishAt } from './postDate';
 import { canCancelPost, canEditPost } from './postStatus';
 
 /** `listPostsQuery` default; the API caps `limit` at 100. */
@@ -48,8 +48,9 @@ export function matchesFilters(post: PostView, f: PostFilters): boolean {
  * How to introduce a post's date, or null when there is nothing honest to show. `publishAt` is the
  * scheduled time until a post is sent and the send time after, so the wording follows the status.
  * Drafts carry no date; a scheduled post with no date was created as "post now" (core statusFor)
- * and is waiting on the worker, not on a time. The status badge already says what the post is, so
- * the prefix only says which date this is.
+ * and is waiting on the worker, not on a time. A published post with no date says so (lib/postDate
+ * TIME_NOT_RECORDED). The status badge already says what the post is, so the prefix only says which
+ * date this is.
  */
 export function whenLabel(
   post: Pick<PostView, 'status' | 'publishAt'>,
@@ -65,7 +66,9 @@ export function whenLabel(
     case 'publishing':
       return hasDate ? { prefix: 'Scheduled for', showDate: true } : null;
     case 'published':
-      return hasDate ? { prefix: 'Published', showDate: true } : null;
+      return hasDate
+        ? { prefix: 'Published', showDate: true }
+        : { prefix: TIME_NOT_RECORDED, showDate: false };
     case 'failed':
     case 'cancelled':
       return hasDate ? { prefix: 'Was scheduled for', showDate: true } : null;

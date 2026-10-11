@@ -13,9 +13,10 @@ import {
 } from '../lib/calendarGrid';
 import { cn } from '../lib/cn';
 import { platformMeta } from '../lib/platforms';
-import { formatPublishTime } from '../lib/postDate';
-import { promptEditCaption } from '../lib/postActions';
-import { STATUS_VARIANT } from '../lib/postStatus';
+import { formatPublishTime, postTimeLabel } from '../lib/postDate';
+import { replacePost } from '../lib/postList';
+import { STATUS_VARIANT, canEditPost } from '../lib/postStatus';
+import { EditCaptionModal } from '../components/EditCaptionModal';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -34,9 +35,6 @@ const longDate = (key: string) =>
     year: 'numeric',
   });
 
-/** The API only accepts edits to these (core/services/posts.ts EDITABLE_STATUSES). */
-const EDITABLE: ReadonlySet<PostView['status']> = new Set(['draft', 'scheduled']);
-
 /**
  * A post on the calendar. A draft or scheduled post is a button that runs the same "Edit" as
  * Content; anything already sent is read-only, so it is not offered as a control.
@@ -52,7 +50,7 @@ function PostChip({
   onEdit: (post: PostView) => void;
 }) {
   const platform = platformMeta({ identifier: post.provider, displayName: post.provider });
-  const time = formatPublishTime(post.publishAt);
+  const time = postTimeLabel(post, formatPublishTime);
   const caption = post.caption || '(no caption)';
   const body = (
     <>
@@ -87,7 +85,7 @@ function PostChip({
   );
   const box =
     'flex w-full min-w-0 flex-col gap-1 rounded-xs border border-hairline bg-canvas px-1.5 py-1 text-left';
-  if (!EDITABLE.has(post.status)) {
+  if (!canEditPost(post.status)) {
     return (
       <div className={box}>
         <span className="sr-only">{platform.label}, </span>
@@ -261,9 +259,11 @@ export function Calendar() {
   const [days, setDays] = useState<CalendarDay[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Days whose "+N more" is open; bumping `attempt` re-runs the load (retry, or after an edit).
+  // Days whose "+N more" is open; bumping `attempt` re-runs the load (retry).
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [attempt, setAttempt] = useState(0);
+  const [editing, setEditing] = useState<PostView | null>(null);
+  const [notice, setNotice] = useState('');
   const { year, month } = cursor;
 
   useEffect(() => {
@@ -300,8 +300,18 @@ export function Calendar() {
       if (!next.delete(date)) next.add(date);
       return next;
     });
-  const edit = useCallback(async (post: PostView) => {
-    if (await promptEditCaption(post)) setAttempt((a) => a + 1);
+  // Clearing the notice first lets a second save in a row be announced again.
+  const edit = useCallback((post: PostView) => {
+    setNotice('');
+    setEditing(post);
+  }, []);
+  const closeEdit = useCallback(() => setEditing(null), []);
+  // A caption edit cannot move a post to another day, so the saved post is swapped in place: the
+  // grid stays mounted and focus returns to the chip that opened the dialog.
+  const saved = useCallback((post: PostView) => {
+    setDays((prev) => prev.map((d) => ({ ...d, posts: replacePost(d.posts, post) })));
+    setEditing(null);
+    setNotice('Caption saved.');
   }, []);
 
   const first = parseDateKey(`${year}-${String(month).padStart(2, '0')}-01`);
@@ -385,6 +395,12 @@ export function Calendar() {
           <Agenda days={days} onEdit={edit} />
         </>
       )}
+
+      {/* Announces a saved caption to screen readers. */}
+      <p role="status" className="sr-only">
+        {notice}
+      </p>
+      {editing && <EditCaptionModal post={editing} onSaved={saved} onClose={closeEdit} />}
     </div>
   );
 }

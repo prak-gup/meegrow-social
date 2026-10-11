@@ -343,10 +343,20 @@ function PlatformTile({ provider }: { provider: string }) {
   );
 }
 
-/** "Scheduled for <date>" and friends; nothing for drafts or when there is no honest date. */
-function When({ post, className }: { post: PostView; className?: string }) {
+/**
+ * "Scheduled for <date>" and friends. With nothing to say (a draft, say) it renders nothing, or a
+ * dash when `dash` is set so a table cell is not left blank.
+ */
+function When({ post, className, dash }: { post: PostView; className?: string; dash?: boolean }) {
   const label = whenLabel(post);
-  if (!label) return null;
+  if (!label) {
+    return dash ? (
+      <p className={cn('text-caption text-muted', className)}>
+        <span aria-hidden="true">—</span>
+        <span className="sr-only">No time</span>
+      </p>
+    ) : null;
+  }
   const date = parsePublishAt(post.publishAt);
   return (
     <p className={cn('tnum text-caption text-muted', className)}>
@@ -501,8 +511,8 @@ function PostList({
         {
           key: 'when',
           header: 'When',
-          className: 'hidden md:table-cell md:min-w-40',
-          cell: (p) => <When post={p} />,
+          className: 'hidden md:table-cell md:min-w-40 xl:whitespace-nowrap',
+          cell: (p) => <When post={p} dash />,
         },
       ]}
       rowActions={(p) => <PostActions post={p} onEdit={onEdit} onCancel={onCancel} />}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import type { ConnectionView, MediaRef, PostView, QueueView } from '@meegrow-social/contracts';
-import { api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
 import { providerVisible } from '../lib/devProviders';
@@ -13,6 +13,9 @@ import {
   buildCreatePostInput,
   busyLabel,
   hasErrors,
+  nextSlotError,
+  nextSlotFromView,
+  nextSlotText,
   outcomeMessage,
   plural,
   postStatusSummary,
@@ -22,6 +25,7 @@ import {
   toLocalInputValue,
   validateForm,
   type ComposerForm,
+  type NextSlot,
   type ScheduleMode,
 } from '../lib/composer';
 import { Button } from '../components/ui/Button';
@@ -342,6 +346,7 @@ export function Composer() {
   const [mode, setMode] = useState<ScheduleMode>('draft');
   const [at, setAt] = useState('');
   const [queueId, setQueueId] = useState('');
+  const [nextSlot, setNextSlot] = useState<NextSlot | null>(null);
 
   const [uploading, setUploading] = useState(0);
   const [mediaError, setMediaError] = useState<string | null>(null);
@@ -379,6 +384,30 @@ export function Composer() {
   useEffect(() => {
     void fetchAccounts();
   }, [fetchAccounts]);
+
+  // Preview of when a queued post would go out. It only informs: a failed or empty preview never
+  // blocks the submit. A slow answer for a queue the operator already left must not be shown.
+  useEffect(() => {
+    if (mode !== 'queue' || !queueId) {
+      setNextSlot(null);
+      return;
+    }
+    let stale = false;
+    setNextSlot({ state: 'loading' });
+    api
+      .queueSlots(queueId, 1)
+      .then((view) => {
+        if (!stale) setNextSlot(nextSlotFromView(view));
+      })
+      .catch((e: unknown) => {
+        if (stale) return;
+        const status = e instanceof ApiError ? e.status : undefined;
+        setNextSlot({ state: 'error', message: nextSlotError(status) });
+      });
+    return () => {
+      stale = true;
+    };
+  }, [mode, queueId]);
 
   useEffect(() => {
     if (outcome) outcomeHeading.current?.focus();
@@ -572,6 +601,7 @@ export function Composer() {
   const atErrorId = 'at-error';
   const queueErrorId = 'queue-error';
   const mediaErrorId = 'media-error';
+  const queueSlotId = 'queue-slot';
 
   return (
     <div>
@@ -728,7 +758,9 @@ export function Composer() {
                     value={queueId}
                     onChange={(e) => setQueueId(e.target.value)}
                     aria-invalid={Boolean(queueError)}
-                    aria-describedby={queueError ? queueErrorId : undefined}
+                    aria-describedby={
+                      cn(nextSlot && queueSlotId, queueError && queueErrorId) || undefined
+                    }
                   >
                     {queues.map((q) => (
                       <option key={q.id} value={q.id}>
@@ -739,6 +771,10 @@ export function Composer() {
                 ) : (
                   <p className="text-body text-muted">This client has no queues yet.</p>
                 )}
+                {/* A live region, so changing the queue announces its slot. */}
+                <p id={queueSlotId} role="status" className="tnum text-caption text-muted">
+                  {nextSlot && nextSlotText(nextSlot)}
+                </p>
                 {queueError && <FieldError id={queueErrorId}>{queueError}</FieldError>}
               </div>
             )}
@@ -758,7 +794,7 @@ export function Composer() {
             caption={caption}
             firstMedia={media[0]}
             mediaCount={media.length}
-            when={scheduleSummary(mode, at, queueName)}
+            when={scheduleSummary(mode, at, queueName, nextSlot)}
           />
         </div>
       </div>

@@ -5,7 +5,7 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { providerVisible } from '../lib/devProviders';
 import { platformMeta } from '../lib/platforms';
-import { formatPublishAt } from '../lib/postDate';
+import { postTimeLabel } from '../lib/postDate';
 import { appendPage, captionSnippet, safeExternalUrl } from '../lib/postList';
 import {
   FOLLOWERS,
@@ -1070,7 +1070,7 @@ function PostsTable({
       header: 'Published',
       className: 'whitespace-nowrap',
       cell: ({ post, at }) => (
-        <time dateTime={new Date(at).toISOString()}>{formatPublishAt(post.publishAt)}</time>
+        <time dateTime={new Date(at).toISOString()}>{postTimeLabel(post)}</time>
       ),
     },
     {
