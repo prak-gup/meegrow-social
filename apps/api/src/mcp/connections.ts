@@ -1,6 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { listConnections } from '@meegrow-social/core';
+import { getConnectionHealth, listConnectionHealth, listConnections } from '@meegrow-social/core';
 import type { AuthContext } from '@meegrow-social/core';
 import { notFound, READ, respond } from './shared.js';
 
@@ -36,6 +36,34 @@ export function registerConnectionTools(server: McpServer, ctx: AuthContext): vo
         const connection = connections.find((c) => c.id === args.connectionId);
         if (!connection) throw notFound('connection');
         return connection;
+      }),
+  );
+
+  server.registerTool(
+    'connection_health',
+    {
+      description:
+        'Report whether connected accounts can be expected to publish. With `connectionId`: one ' +
+        'report; without: one per account of the workspace. `status` is healthy | expiring | ' +
+        'expired | needs_reconnect, with a `reason` and a `recommendedAction` in plain words, ' +
+        'plus token expiry and the latest failed post of the account. Derived from stored state ' +
+        'only (`source: "stored"`): the platform is NOT contacted, so a token revoked on the ' +
+        'platform side still reads healthy until a publish fails. Read-only.',
+      inputSchema: {
+        connectionId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe('One account, as returned by list_connections. Omit for all of them.'),
+      },
+      annotations: READ,
+    },
+    (args) =>
+      respond(async () => {
+        if (!args.connectionId) return listConnectionHealth(ctx.workspaceId);
+        const health = await getConnectionHealth(ctx.workspaceId, args.connectionId);
+        if (!health) throw notFound('connection');
+        return health;
       }),
   );
 }

@@ -18,17 +18,22 @@ vi.mock('@meegrow-social/core', async (importOriginal) => ({
   createPost: vi.fn(),
   duplicatePost: vi.fn(),
   getConnectionFollowers: vi.fn(),
+  getConnectionHealth: vi.fn(),
   getMedia: vi.fn(),
   getWorkspace: vi.fn(),
   listMedia: vi.fn(),
   getPost: vi.fn(),
   getPostGroup: vi.fn(),
   getPostMetrics: vi.fn(),
+  listConnectionHealth: vi.fn(),
   listConnections: vi.fn(),
   listPosts: vi.fn(),
   listQueues: vi.fn(),
+  previewQueueSlots: vi.fn(),
   registerMediaFromUrl: vi.fn(),
+  retryPost: vi.fn(),
   updatePost: vi.fn(),
+  validatePost: vi.fn(),
 }));
 
 const WS = '11111111-1111-4111-8111-111111111111';
@@ -43,6 +48,7 @@ const EXPECTED_TOOLS = [
   'calendar',
   'cancel_post',
   'connection_followers',
+  'connection_health',
   'create_post',
   'delete_post',
   'duplicate_post',
@@ -57,15 +63,19 @@ const EXPECTED_TOOLS = [
   'list_queues',
   'list_workspaces',
   'post_metrics',
+  'preview_queue_slots',
   'register_media_from_url',
+  'retry_post',
   'schedule_post',
   'unschedule_post',
   'update_post',
+  'validate_post',
 ];
 
 const READ_ONLY_TOOLS = [
   'calendar',
   'connection_followers',
+  'connection_health',
   'get_connection',
   'get_media',
   'get_post',
@@ -77,6 +87,8 @@ const READ_ONLY_TOOLS = [
   'list_queues',
   'list_workspaces',
   'post_metrics',
+  'preview_queue_slots',
+  'validate_post',
 ];
 
 async function connect(): Promise<Client> {
@@ -112,7 +124,7 @@ beforeEach(() => {
 });
 
 describe('MCP tool surface', () => {
-  it('exposes exactly the D1 tools', async () => {
+  it('exposes exactly the D1 tools plus the backend-batch four', async () => {
     const { tools } = await (await connect()).listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(EXPECTED_TOOLS);
   });
@@ -140,7 +152,13 @@ describe('MCP tool surface', () => {
 
   it('says so in the description of every tool that can publish', async () => {
     const { tools } = await (await connect()).listTools();
-    const publishing = ['create_post', 'add_to_queue', 'schedule_post', 'update_post'];
+    const publishing = [
+      'create_post',
+      'add_to_queue',
+      'schedule_post',
+      'update_post',
+      'retry_post',
+    ];
     for (const tool of tools.filter((t) => publishing.includes(t.name))) {
       expect(tool.description).toMatch(/PUBLISHES/);
       expect(tool.annotations?.openWorldHint).toBe(true);
@@ -316,6 +334,171 @@ describe('every tool calls core with the workspace of the key', () => {
   });
 });
 
+describe('retry / validate / health / slot preview', () => {
+  it("retry_post retries the post of the key's workspace and returns it", async () => {
+    vi.mocked(core.retryPost).mockResolvedValue({ id: POST, status: 'scheduled' } as never);
+    expect((await call('retry_post', { postId: POST })).body).toEqual({
+      id: POST,
+      status: 'scheduled',
+    });
+    expect(core.retryPost).toHaveBeenCalledWith(WS, POST);
+  });
+
+  it('retry_post on anything but a failed post is invalid_state (REST 409)', async () => {
+    vi.mocked(core.retryPost).mockRejectedValue(
+      new core.PostStateError("a 'published' post cannot be retried"),
+    );
+    expect(await call('retry_post', { postId: POST })).toMatchObject({
+      isError: true,
+      body: { error: 'invalid_state', message: "a 'published' post cannot be retried" },
+    });
+  });
+
+  it('retry_post warns that it publishes, and is not marked read-only or idempotent', async () => {
+    const { tools } = await (await connect()).listTools();
+    const retry = tools.find((t) => t.name === 'retry_post')!;
+    expect(retry.description).toMatch(/PUBLISHES TO THE REAL SOCIAL ACCOUNT IMMEDIATELY/);
+    expect(retry.annotations).toMatchObject({ readOnlyHint: false, openWorldHint: true });
+  });
+
+  it('validate_post hands core the create body and returns its verdict as a normal result', async () => {
+    const verdict = {
+      valid: false,
+      issues: [{ connectionId: CONN, code: 'connection_not_found', message: 'nope' }],
+    };
+    vi.mocked(core.validatePost).mockResolvedValue(verdict as never);
+    const media = [{ mediaId: MEDIA, kind: 'image' }];
+    const variants = [{ connectionId: CONN, provider: 'fake' }];
+    const outcome = await call('validate_post', {
+      caption: 'hello',
+      media,
+      variants,
+      schedule: { type: 'queue', queueId: QUEUE },
+    });
+    // An invalid post is the answer, not a failed call.
+    expect(outcome).toMatchObject({ isError: false, body: verdict });
+    expect(core.validatePost).toHaveBeenCalledWith(WS, {
+      caption: 'hello',
+      media,
+      variants,
+      schedule: { type: 'queue', queueId: QUEUE },
+    });
+    expect(core.createPost).not.toHaveBeenCalled();
+  });
+
+  it('validate_post takes the same shorthands as create_post', async () => {
+    vi.mocked(core.validatePost).mockResolvedValue({ valid: true, issues: [] });
+    await call('validate_post', {
+      connectionId: CONN,
+      provider: 'fake',
+      publishAt: '2026-11-01T09:00:00Z',
+    });
+    expect(core.validatePost).toHaveBeenCalledWith(WS, {
+      caption: '',
+      media: [],
+      variants: [{ connectionId: CONN, provider: 'fake', options: undefined }],
+      schedule: { type: 'at', publishAt: new Date('2026-11-01T09:00:00Z') },
+    });
+    await call('validate_post', { connectionId: CONN, provider: 'fake' });
+    expect(vi.mocked(core.validatePost).mock.lastCall?.[1]).toMatchObject({
+      schedule: { type: 'draft' },
+    });
+  });
+
+  it('validate_post takes no idempotencyKey, and rejects mixed target styles like create_post', async () => {
+    const { tools } = await (await connect()).listTools();
+    const validate = tools.find((t) => t.name === 'validate_post')!;
+    const create = tools.find((t) => t.name === 'create_post')!;
+    expect(Object.keys(validate.inputSchema.properties ?? {}).sort()).toEqual(
+      Object.keys(create.inputSchema.properties ?? {})
+        .filter((p) => p !== 'idempotencyKey')
+        .sort(),
+    );
+    expect(
+      await call('validate_post', {
+        variants: [{ connectionId: CONN, provider: 'fake' }],
+        connectionId: CONN,
+        provider: 'fake',
+      }),
+    ).toMatchObject({ isError: true, body: { error: 'invalid_request' } });
+    expect(await call('validate_post', { caption: 'no target' })).toMatchObject({
+      isError: true,
+      body: { error: 'invalid_request' },
+    });
+    expect(core.validatePost).not.toHaveBeenCalled();
+  });
+
+  it('connection_health: every account when bare, one when given an id', async () => {
+    const report = { connectionId: CONN, status: 'expiring', source: 'stored' };
+    vi.mocked(core.listConnectionHealth).mockResolvedValue([report] as never);
+    vi.mocked(core.getConnectionHealth).mockResolvedValue(report as never);
+
+    expect((await call('connection_health')).body).toEqual([report]);
+    expect(core.listConnectionHealth).toHaveBeenCalledWith(WS);
+    expect(core.getConnectionHealth).not.toHaveBeenCalled();
+
+    expect((await call('connection_health', { connectionId: CONN })).body).toEqual(report);
+    expect(core.getConnectionHealth).toHaveBeenCalledWith(WS, CONN);
+  });
+
+  it('connection_health is not_found for a connection the workspace does not have', async () => {
+    vi.mocked(core.getConnectionHealth).mockResolvedValue(null);
+    expect(await call('connection_health', { connectionId: CONN })).toMatchObject({
+      isError: true,
+      body: { error: 'not_found', message: 'connection not found' },
+    });
+  });
+
+  it('connection_health says in its description that it does not call the platform', async () => {
+    const { tools } = await (await connect()).listTools();
+    const health = tools.find((t) => t.name === 'connection_health')!;
+    expect(health.description).toMatch(/platform is NOT contacted/);
+  });
+
+  it('preview_queue_slots defaults to 5 and passes count through', async () => {
+    const view = { queueId: QUEUE, timezone: 'Asia/Kolkata', slots: [] };
+    vi.mocked(core.previewQueueSlots).mockResolvedValue(view);
+    expect((await call('preview_queue_slots', { queueId: QUEUE })).body).toEqual(view);
+    expect(core.previewQueueSlots).toHaveBeenLastCalledWith(WS, QUEUE, 5);
+    await call('preview_queue_slots', { queueId: QUEUE, count: 50 });
+    expect(core.previewQueueSlots).toHaveBeenLastCalledWith(WS, QUEUE, 50);
+  });
+
+  it('preview_queue_slots rejects a count over 50 before core, and maps the queue errors', async () => {
+    expect((await call('preview_queue_slots', { queueId: QUEUE, count: 51 })).isError).toBe(true);
+    expect((await call('preview_queue_slots', { queueId: QUEUE, count: 0 })).isError).toBe(true);
+    expect(core.previewQueueSlots).not.toHaveBeenCalled();
+
+    vi.mocked(core.previewQueueSlots).mockRejectedValueOnce(
+      new core.QueueInactiveError('queue is not active'),
+    );
+    expect(await call('preview_queue_slots', { queueId: QUEUE })).toMatchObject({
+      isError: true,
+      body: { error: 'invalid_request', message: 'queue is not active' },
+    });
+    vi.mocked(core.previewQueueSlots).mockRejectedValueOnce(
+      new core.QueueNotFoundError('queue not found'),
+    );
+    expect((await call('preview_queue_slots', { queueId: QUEUE })).body).toMatchObject({
+      error: 'not_found',
+    });
+  });
+
+  it('a connection outside the workspace is not_found on create_post and add_to_queue (REST 404)', async () => {
+    const err = () => new core.ConnectionNotFoundError(`connection ${OTHER} not found`);
+    vi.mocked(core.createPost).mockRejectedValueOnce(err()).mockRejectedValueOnce(err());
+    for (const outcome of [
+      await call('create_post', { connectionId: OTHER, provider: 'fake' }),
+      await call('add_to_queue', { connectionId: OTHER, provider: 'fake', queueId: QUEUE }),
+    ]) {
+      expect(outcome).toMatchObject({
+        isError: true,
+        body: { error: 'not_found', message: `connection ${OTHER} not found` },
+      });
+    }
+  });
+});
+
 describe('create_post / add_to_queue input', () => {
   const media = [{ mediaId: MEDIA, kind: 'image' }];
 
@@ -441,6 +624,7 @@ describe('failures come back as tool errors, not thrown JSON-RPC errors', () => 
     vi.mocked(core.updatePost).mockResolvedValue(null);
     vi.mocked(core.cancelPost).mockResolvedValue(false);
     vi.mocked(core.duplicatePost).mockResolvedValue(null);
+    vi.mocked(core.retryPost).mockResolvedValue(null);
     vi.mocked(core.listConnections).mockResolvedValue([{ id: OTHER }] as never);
 
     const outcomes = [
@@ -453,6 +637,7 @@ describe('failures come back as tool errors, not thrown JSON-RPC errors', () => 
       await call('cancel_post', { postId: POST }),
       await call('delete_post', { postId: POST }),
       await call('duplicate_post', { postId: POST }),
+      await call('retry_post', { postId: POST }),
       await call('post_metrics', { postId: POST }),
       await call('get_connection', { connectionId: CONN }),
       await call('connection_followers', { connectionId: CONN }),

@@ -19,17 +19,20 @@ import {
   getPost,
   getPostGroup,
   listPosts,
+  retryPost,
   updatePost,
+  validatePost,
 } from '@meegrow-social/core';
 import type { AuthContext } from '@meegrow-social/core';
 import { idempotencyKey, notFound, PUBLISH, READ, respond, ToolError, WRITE } from './shared.js';
 
 /**
- * What to post and where — the arguments `create_post` and `add_to_queue` share. `variants` is the
+ * What to post and where — the arguments `create_post`, `add_to_queue` and `validate_post` share
+ * (the first two add `idempotencyKey`; a dry run writes nothing to replay). `variants` is the
  * `createPostInput` contract; `connectionId` / `provider` / `options` are the single-target
  * shorthand these two tools took before they accepted variants, kept so existing callers still work.
  */
-export const postTargetShape = {
+const targetShape = {
   caption: createPostInput.shape.caption.describe(
     'Text of the post. Each variant may override it.',
   ),
@@ -55,13 +58,14 @@ export const postTargetShape = {
   options: postOptions
     .optional()
     .describe('Shorthand for a single target: per-platform options for `connectionId`.'),
-  idempotencyKey,
 };
 
-type PostTargetArgs = z.infer<z.ZodObject<typeof postTargetShape>>;
+export const postTargetShape = { ...targetShape, idempotencyKey };
 
-/** Folds the single-target shorthand into `variants` and validates against the REST contract. */
-export function toCreatePostInput(args: PostTargetArgs, schedule: ScheduleMode): CreatePostInput {
+type PostTargetArgs = z.infer<z.ZodObject<typeof targetShape>>;
+
+/** Folds the single-target shorthand into `variants`: the REST create body, not yet validated. */
+function toCreatePostBody(args: PostTargetArgs, schedule: ScheduleMode): unknown {
   const shorthand =
     args.connectionId !== undefined || args.provider !== undefined || args.options !== undefined;
   if (args.variants && shorthand) {
@@ -76,14 +80,41 @@ export function toCreatePostInput(args: PostTargetArgs, schedule: ScheduleMode):
       'name at least one target: `variants`, or `connectionId` + `provider`',
     );
   }
-  return createPostInput.parse({
+  return {
     caption: args.caption,
     media: args.media,
     variants: args.variants ?? [
       { connectionId: args.connectionId, provider: args.provider, options: args.options },
     ],
     schedule,
-  });
+  };
+}
+
+/** Folds the single-target shorthand into `variants` and validates against the REST contract. */
+export function toCreatePostInput(args: PostTargetArgs, schedule: ScheduleMode): CreatePostInput {
+  return createPostInput.parse(toCreatePostBody(args, schedule));
+}
+
+/** When to publish — the two arguments `create_post` and `validate_post` share. */
+const scheduleShape = {
+  schedule: scheduleMode
+    .optional()
+    .describe('When to publish. Omit to save a draft that publishes nothing.'),
+  publishAt: z
+    .string()
+    .datetime()
+    .optional()
+    .describe('Shorthand for schedule {"type":"at"}. Do not combine with `schedule`.'),
+};
+
+function toSchedule(args: { schedule?: ScheduleMode; publishAt?: string }): ScheduleMode {
+  if (args.schedule && args.publishAt) {
+    throw new ToolError('invalid_request', 'pass either `schedule` or `publishAt`, not both');
+  }
+  return (
+    args.schedule ??
+    (args.publishAt ? { type: 'at', publishAt: new Date(args.publishAt) } : { type: 'draft' })
+  );
 }
 
 const postId = z
@@ -102,34 +133,36 @@ export function registerPostTools(server: McpServer, ctx: AuthContext): void {
         'PUBLISHES TO THE REAL SOCIAL ACCOUNTS at that time; {"type":"now"} PUBLISHES ' +
         'IMMEDIATELY; {"type":"queue","queueId":"..."} takes the next free slot of a queue. A ' +
         'published post cannot be recalled by this server. Set `idempotencyKey` whenever the ' +
-        'call may be retried, or a retry publishes a second copy.',
-      inputSchema: {
-        ...postTargetShape,
-        schedule: scheduleMode
-          .optional()
-          .describe('When to publish. Omit to save a draft that publishes nothing.'),
-        publishAt: z
-          .string()
-          .datetime()
-          .optional()
-          .describe('Shorthand for schedule {"type":"at"}. Do not combine with `schedule`.'),
-      },
+        'call may be retried, or a retry publishes a second copy. Fails with not_found, creating ' +
+        'nothing, if any `connectionId` is not a connection of this workspace; validate_post ' +
+        'checks a post without creating it.',
+      inputSchema: { ...postTargetShape, ...scheduleShape },
       annotations: PUBLISH,
     },
     (args) =>
-      respond(async () => {
-        if (args.schedule && args.publishAt) {
-          throw new ToolError('invalid_request', 'pass either `schedule` or `publishAt`, not both');
-        }
-        const schedule: ScheduleMode =
-          args.schedule ??
-          (args.publishAt
-            ? { type: 'at', publishAt: new Date(args.publishAt) }
-            : { type: 'draft' });
-        return createPost(ctx.workspaceId, toCreatePostInput(args, schedule), {
+      respond(() =>
+        createPost(ctx.workspaceId, toCreatePostInput(args, toSchedule(args)), {
           idempotencyKey: args.idempotencyKey,
-        });
-      }),
+        }),
+      ),
+  );
+
+  server.registerTool(
+    'validate_post',
+    {
+      description:
+        'Dry-run create_post: takes the same arguments, creates nothing, schedules nothing and ' +
+        'takes no queue slot. Returns `{ valid, issues }`; each issue has a `code`, a `message` ' +
+        'and, when it belongs to one target, its `connectionId` and `provider`. Checks the ' +
+        "contract, each platform's own rules, that every connection is in this workspace, that " +
+        'a queue is usable, and that media exists and fits the platform spec. It does NOT ' +
+        'contact the platform, so a revoked token or a platform-side rejection is not caught: ' +
+        '`valid: true` is not a promise the post will publish. Read-only.',
+      inputSchema: { ...targetShape, ...scheduleShape },
+      annotations: READ,
+    },
+    (args) =>
+      respond(() => validatePost(ctx.workspaceId, toCreatePostBody(args, toSchedule(args)))),
   );
 
   server.registerTool(
@@ -276,6 +309,28 @@ export function registerPostTools(server: McpServer, ctx: AuthContext): void {
       annotations: { ...WRITE, destructiveHint: true },
     },
     cancel,
+  );
+
+  server.registerTool(
+    'retry_post',
+    {
+      description:
+        'Retry a post whose status is `failed`: it is queued again and PUBLISHES TO THE REAL ' +
+        'SOCIAL ACCOUNT IMMEDIATELY, through the normal publish path. Returns the post, now ' +
+        '`scheduled`; read the outcome back with get_post. Only a failed post can be retried: ' +
+        'any other status, including published, fails with invalid_state, so a post that went ' +
+        'out is never sent twice. Each account of a multi-account post is its own post and is ' +
+        'retried on its own. Fix the cause first: read `error`, and if it is an account problem ' +
+        'check connection_health, since a needs_reconnect account fails again.',
+      inputSchema: { postId },
+      annotations: PUBLISH,
+    },
+    (args) =>
+      respond(async () => {
+        const post = await retryPost(ctx.workspaceId, args.postId);
+        if (!post) throw notFound('post');
+        return post;
+      }),
   );
 
   server.registerTool(

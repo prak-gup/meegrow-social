@@ -1,6 +1,7 @@
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { z, ZodError } from 'zod';
 import {
+  ConnectionNotFoundError,
   PostStateError,
   ProviderBadRequestError,
   QueueInactiveError,
@@ -36,6 +37,7 @@ function fail(code: ToolErrorCode, message: string): CallToolResult {
 function failFrom(err: unknown): CallToolResult {
   if (err instanceof ToolError) return fail(err.code, err.message);
   if (err instanceof QueueNotFoundError) return fail('not_found', err.message);
+  if (err instanceof ConnectionNotFoundError) return fail('not_found', err.message);
   if (err instanceof PostStateError) return fail('invalid_state', err.message);
   if (err instanceof QueueInactiveError) return fail('invalid_request', err.message);
   if (err instanceof ProviderBadRequestError) return fail('invalid_request', err.message);

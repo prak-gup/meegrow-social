@@ -161,13 +161,21 @@ describe('workspace isolation over /mcp', () => {
     const workspaces = (await call(a.key, 'list_workspaces')).body as Array<{ id: string }>;
     expect(workspaces.map((w) => w.id)).toEqual([a.ws]);
 
+    const health = (await call(a.key, 'connection_health')).body as Array<{
+      connectionId: string;
+    }>;
+    expect(health.map((h) => h.connectionId)).toEqual([a.conn]);
+
     // Asking for B's rows by id is indistinguishable from asking for rows that do not exist.
+    const queueB = await createQueue(b.ws);
     for (const [name, args] of [
       ['get_post', { postId: b.post.id }],
       ['get_post_group', { groupId: b.post.groupId }],
       ['get_connection', { connectionId: b.conn }],
       ['post_metrics', { postId: b.post.id }],
       ['connection_followers', { connectionId: b.conn }],
+      ['connection_health', { connectionId: b.conn }],
+      ['preview_queue_slots', { queueId: queueB }],
     ] as const) {
       const outcome = await call(a.key, name, args);
       expect(outcome, name).toMatchObject({ isError: true, body: { error: 'not_found' } });
@@ -184,6 +192,7 @@ describe('workspace isolation over /mcp', () => {
       ['cancel_post', { postId: b.post.id }],
       ['delete_post', { postId: b.post.id }],
       ['duplicate_post', { postId: b.post.id }],
+      ['retry_post', { postId: b.post.id }],
     ] as const) {
       const outcome = await call(a.key, name, args);
       expect(outcome, name).toMatchObject({ isError: true, body: { error: 'not_found' } });
@@ -211,13 +220,67 @@ describe('workspace isolation over /mcp', () => {
     expect(viaQueue).toMatchObject({ isError: true, body: { error: 'not_found' } });
     expect(await listPosts(a.ws)).toHaveLength(1);
 
-    // Naming B's connection does not reach B: whatever A creates stays in A, where that
-    // connection does not exist (core does not check the connection id at create time).
-    await call(a.key, 'create_post', {
+    // Naming B's connection is refused at create — as not_found, the same answer an id that
+    // exists nowhere gets — and nothing is written on either side.
+    const foreign = await call(a.key, 'create_post', {
       caption: 'onto B',
       variants: [{ connectionId: b.conn, provider: 'fake' }],
     });
+    const unknown = await call(a.key, 'create_post', {
+      caption: 'onto nothing',
+      variants: [{ connectionId: '00000000-0000-4000-8000-000000000000', provider: 'fake' }],
+    });
+    expect(foreign).toEqual({
+      isError: true,
+      body: { error: 'not_found', message: `connection ${b.conn} not found` },
+    });
+    expect(unknown).toEqual({
+      isError: true,
+      body: {
+        error: 'not_found',
+        message: 'connection 00000000-0000-4000-8000-000000000000 not found',
+      },
+    });
+    // One foreign variant sinks the whole call, including the variant that was fine.
+    const mixed = await call(a.key, 'create_post', {
+      caption: 'mixed',
+      variants: [
+        { connectionId: a.conn, provider: 'fake' },
+        { connectionId: b.conn, provider: 'fake' },
+      ],
+    });
+    expect(mixed).toMatchObject({ isError: true, body: { error: 'not_found' } });
+    const queueA = await createQueue(a.ws);
+    expect(
+      await call(a.key, 'add_to_queue', {
+        connectionId: b.conn,
+        provider: 'fake',
+        queueId: queueA,
+      }),
+    ).toMatchObject({ isError: true, body: { error: 'not_found' } });
+
+    expect((await listPosts(a.ws)).map((p) => p.id)).toEqual([a.post.id]);
     expect((await listPosts(b.ws)).map((p) => p.id)).toEqual([b.post.id]);
+
+    // The dry run reports the same thing, as a verdict rather than an error.
+    const verdict = await call(a.key, 'validate_post', {
+      caption: 'onto B',
+      variants: [{ connectionId: b.conn, provider: 'fake' }],
+    });
+    expect(verdict).toEqual({
+      isError: false,
+      body: {
+        valid: false,
+        issues: [
+          {
+            connectionId: b.conn,
+            provider: 'fake',
+            code: 'connection_not_found',
+            message: `connection ${b.conn} not found`,
+          },
+        ],
+      },
+    });
   });
 });
 
@@ -334,5 +397,88 @@ describe('core errors over /mcp', () => {
       }),
     ).toMatchObject({ isError: true, body: { error: 'not_found' } });
     expect(await listPosts(ws)).toHaveLength(0);
+  });
+});
+
+describe('retry, slot preview and health over /mcp', () => {
+  it('retry_post re-enqueues a failed post through the scheduler and refuses any other status', async () => {
+    const { a } = await twoTenants();
+    // Test setup only — the admin handle forces the state a failed publish records.
+    await db()
+      .update(schema.posts)
+      .set({ status: 'failed', error: 'the platform said no' })
+      .where(eq(schema.posts.id, a.post.id));
+    const { calls } = useRecordingScheduler();
+
+    const retried = await call(a.key, 'retry_post', { postId: a.post.id });
+    expect(retried).toMatchObject({
+      isError: false,
+      body: { id: a.post.id, status: 'scheduled', error: null },
+    });
+    // Handed to the scheduler to run now — the MCP call itself published nothing.
+    expect(calls).toEqual([{ postId: a.post.id, when: 'now' }]);
+    expect(await getPost(a.ws, a.post.id)).toMatchObject({ status: 'scheduled', releaseUrl: null });
+
+    // Now scheduled, a second retry is refused and enqueues nothing more.
+    expect(await call(a.key, 'retry_post', { postId: a.post.id })).toMatchObject({
+      isError: true,
+      body: { error: 'invalid_state', message: "a 'scheduled' post cannot be retried" },
+    });
+    await db()
+      .update(schema.posts)
+      .set({ status: 'published' })
+      .where(eq(schema.posts.id, a.post.id));
+    expect(await call(a.key, 'retry_post', { postId: a.post.id })).toMatchObject({
+      isError: true,
+      body: { error: 'invalid_state', message: "a 'published' post cannot be retried" },
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('preview_queue_slots shows the slot add_to_queue then takes', async () => {
+    const ws = await createWorkspace();
+    const key = await keyFor(ws);
+    const connectionId = await createConnection(ws);
+    const queueId = await createQueue(ws, {
+      slots: Array.from({ length: 7 }, (_, dow) => ({ dow, time: '23:59' })),
+    });
+
+    const preview = (await call(key, 'preview_queue_slots', { queueId, count: 3 })).body as {
+      queueId: string;
+      slots: Array<{ publishAt: string }>;
+    };
+    expect(preview.queueId).toBe(queueId);
+    expect(preview.slots).toHaveLength(3);
+    const bare = (await call(key, 'preview_queue_slots', { queueId })).body as {
+      slots: unknown[];
+    };
+    expect(bare.slots).toHaveLength(5);
+
+    const [queued] = (await call(key, 'add_to_queue', { connectionId, provider: 'fake', queueId }))
+      .body as Array<{ publishAt: string }>;
+    expect(queued!.publishAt).toBe(preview.slots[0]!.publishAt);
+
+    const after = (await call(key, 'preview_queue_slots', { queueId, count: 2 })).body as {
+      slots: unknown[];
+    };
+    expect(after.slots).toEqual(preview.slots.slice(1));
+
+    const paused = await createQueue(ws, { active: false });
+    expect(await call(key, 'preview_queue_slots', { queueId: paused })).toMatchObject({
+      isError: true,
+      body: { error: 'invalid_request' },
+    });
+  });
+
+  it('connection_health reports from stored state and says so', async () => {
+    const ws = await createWorkspace();
+    const key = await keyFor(ws);
+    const flagged = await createConnection(ws, 'fake', 'Flagged', { needsReconnect: true });
+
+    expect((await call(key, 'connection_health', { connectionId: flagged })).body).toMatchObject({
+      connectionId: flagged,
+      status: 'needs_reconnect',
+      source: 'stored',
+    });
   });
 });

@@ -17,6 +17,7 @@ import {
   logsAggregateInput,
   logsQueryInput,
   providerIdentifier,
+  queueSlotsQuery,
   registerMediaFromUrlInput,
   switchWorkspaceInput,
   updatePostInput,
@@ -35,6 +36,7 @@ import {
   calendarPosts,
   cancelPost,
   changePassword,
+  ConnectionNotFoundError,
   createPost,
   createQueue,
   createSession,
@@ -42,6 +44,7 @@ import {
   deleteConnection,
   deleteQueue,
   finishConnect,
+  getConnectionHealth,
   getMedia,
   getPost,
   getPostGroup,
@@ -50,9 +53,11 @@ import {
   getQueue,
   handleCallback,
   listApiKeys,
+  listConnectionHealth,
   listConnections,
   overviewForUser,
   listPosts,
+  previewQueueSlots,
   listProviders,
   listQueues,
   queryEventLogs,
@@ -61,6 +66,7 @@ import {
   QueueNotFoundError,
   recordApiRequestLog,
   registerMediaFromUrl,
+  retryPost,
   revokeSession,
   rotateSession,
   SESSION_COOKIE,
@@ -71,6 +77,7 @@ import {
   updateQueue,
   uploadMedia,
   validateMediaAgainstPlatform,
+  validatePost,
   verifyUserCredentials,
   type AuthContext,
   PostStateError,
@@ -467,6 +474,18 @@ export async function buildServer(): Promise<FastifyInstance> {
     connections: await listConnections(req.authContext!.workspaceId),
   }));
 
+  // Account health, from stored state only — no live platform call (see `listConnectionHealth`).
+  // Static path: registered alongside the parametric routes below, and wins over them.
+  app.get('/v1/connections/health', async (req) => ({
+    connections: await listConnectionHealth(req.authContext!.workspaceId),
+  }));
+
+  app.get<{ Params: { id: string } }>('/v1/connections/:id/health', async (req, reply) => {
+    const health = await getConnectionHealth(req.authContext!.workspaceId, req.params.id);
+    if (!health) return reply.code(404).send({ error: 'not found' });
+    return { health };
+  });
+
   app.delete<{ Params: { id: string } }>('/v1/connections/:id', async (req, reply) => {
     const ok = await deleteConnection(req.authContext!.workspaceId, req.params.id);
     if (!ok) return reply.code(404).send({ error: 'not found' });
@@ -497,6 +516,9 @@ export async function buildServer(): Promise<FastifyInstance> {
       return reply.code(201).send({ posts });
     } catch (err) {
       if (err instanceof QueueNotFoundError) return reply.code(404).send({ error: err.message });
+      // A variant names a connection this workspace does not have — its own or anyone else's.
+      if (err instanceof ConnectionNotFoundError)
+        return reply.code(404).send({ error: err.message });
       if (err instanceof QueueInactiveError) return reply.code(400).send({ error: err.message });
       // A provider's own rules rejected the post at create time (#44) — client error, not a 500.
       if (err instanceof ProviderBadRequestError)
@@ -504,6 +526,13 @@ export async function buildServer(): Promise<FastifyInstance> {
       throw err;
     }
   });
+
+  // Dry run of POST /v1/posts: same body, nothing created. Always 200 — an invalid post is the
+  // answer, not a failed request — so the body is handed to core unparsed and core reports the
+  // contract failures as issues alongside the rest.
+  app.post('/v1/posts/validate', async (req) =>
+    validatePost(req.authContext!.workspaceId, req.body),
+  );
 
   app.get('/v1/posts', async (req, reply) => {
     const parsed = listPostsQuery.safeParse(req.query);
@@ -552,6 +581,18 @@ export async function buildServer(): Promise<FastifyInstance> {
       const ok = await cancelPost(req.authContext!.workspaceId, req.params.id);
       if (!ok) return reply.code(404).send({ error: 'not found' });
       return { cancelled: true };
+    } catch (err) {
+      if (err instanceof PostStateError) return reply.code(409).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // Re-enqueue a failed post through the scheduler. 409 for any other status, like edit/cancel.
+  app.post<{ Params: { id: string } }>('/v1/posts/:id/retry', async (req, reply) => {
+    try {
+      const post = await retryPost(req.authContext!.workspaceId, req.params.id);
+      if (!post) return reply.code(404).send({ error: 'not found' });
+      return { post };
     } catch (err) {
       if (err instanceof PostStateError) return reply.code(409).send({ error: err.message });
       throw err;
@@ -626,6 +667,23 @@ export async function buildServer(): Promise<FastifyInstance> {
     return { queue };
   });
 
+  // The next N slots add-to-queue would assign — core replays the real slot picker, takes nothing.
+  app.get<{ Params: { id: string } }>('/v1/queues/:id/slots', async (req, reply) => {
+    const parsed = queueSlotsQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    try {
+      return await previewQueueSlots(
+        req.authContext!.workspaceId,
+        req.params.id,
+        parsed.data.count,
+      );
+    } catch (err) {
+      if (err instanceof QueueNotFoundError) return reply.code(404).send({ error: err.message });
+      if (err instanceof QueueInactiveError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
+  });
+
   app.patch<{ Params: { id: string } }>('/v1/queues/:id', async (req, reply) => {
     const parsed = updateQueueInput.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
@@ -666,6 +724,21 @@ export async function buildServer(): Promise<FastifyInstance> {
     await server.connect(transport);
     await transport.handleRequest(req.raw, reply.raw, req.body);
     reply.hijack();
+  });
+
+  // Stateless means POST only: there is no server-to-client stream to open (GET) and no session
+  // to end (DELETE). The MCP spec's answer for both is 405, which SDK clients treat as "not
+  // offered" and carry on from — a 404 reads as "no MCP server here". These sit behind the auth
+  // preHandler like every non-public route, so a caller with no key still gets 401 first: the
+  // method table is not readable without a credential, and 401 is what POST /mcp answers too.
+  app.route({
+    method: ['GET', 'DELETE'],
+    url: '/mcp',
+    handler: async (_req, reply) =>
+      reply
+        .code(405)
+        .header('allow', 'POST')
+        .send({ error: 'method not allowed: /mcp accepts POST only' }),
   });
 
   return app;
