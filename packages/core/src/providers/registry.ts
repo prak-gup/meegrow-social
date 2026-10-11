@@ -13,6 +13,7 @@ import { FacebookPagesProvider } from './meta/facebook.js';
 import { InstagramProvider } from './meta/instagram.js';
 import { GbpProvider } from './google/gbp.js';
 import { YouTubeProvider } from './google/youtube.js';
+import { WordPressProvider } from './wordpress/wordpress.js';
 
 /**
  * Explicit registry (Postiz pattern — no decorator auto-discovery). Real providers get added to
@@ -117,6 +118,13 @@ export function registerConfiguredProviders(): void {
         ),
       );
     }
+  }
+
+  // WordPress needs no credentials of ours at all — each site issues its own — so nothing but
+  // this switch keeps it out of the connect list. Exact opt-in, off by default: it has never run
+  // against a real site (docs/dev/research/wordpress.md has the bring-up checklist).
+  if (process.env.WORDPRESS_ENABLED === 'true') {
+    registerProvider(new WordPressProvider());
   }
 }
 

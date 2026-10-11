@@ -25,6 +25,7 @@ import {
   providerIdentifier,
   queueSlotsQuery,
   registerMediaFromUrlInput,
+  startConnectInput,
   switchWorkspaceInput,
   updatePostInput,
   updateQueueInput,
@@ -41,7 +42,9 @@ import {
   createConnectInvite,
   getConnectInvite,
   calendarPosts,
+  callbackCarriesCredential,
   cancelPost,
+  completeCredentialCallback,
   changePasswordWithLimit,
   ConnectionNotFoundError,
   createPost,
@@ -75,6 +78,7 @@ import {
   previewQueueSlots,
   listConnectableProviders,
   listQueues,
+  openCallbackOutcome,
   queryEventLogs,
   QueueInactiveError,
   revokeApiKey,
@@ -399,6 +403,9 @@ export async function buildServer(): Promise<FastifyInstance> {
     if (
       path === '/healthz' ||
       path === '/connect/callback' ||
+      // Where a credential-bearing callback redirects to. Public for the callback's reason; what
+      // it shows is sealed by the server (core `openCallbackOutcome`), not taken from the link.
+      path === '/connect/done' ||
       path === '/v1/auth/login' ||
       // Public connect-invite endpoints — the token in the path is the credential (a client opening
       // the link has no session). The mint endpoint (POST /v1/connections/:p/invite) IS authed.
@@ -423,10 +430,12 @@ export async function buildServer(): Promise<FastifyInstance> {
   // Request-logging hook (PRD F8.1): records every authed /v1 call into event_logs. Does NOT
   // fire for /mcp — that route hijacks the reply (see below) which Fastify excludes from
   // onResponse, so /mcp logs itself explicitly.
+  // The route is logged as its pattern; the fallback (no route matched) drops the query string,
+  // because a query can carry a secret — the connect callback's does — and a log is forever.
   app.addHook('onResponse', async (req, reply) => {
     logRequest(
       req.authContext,
-      req.routeOptions.url ?? req.url,
+      req.routeOptions.url ?? req.url.split('?')[0] ?? '',
       reply.statusCode,
       reply.elapsedTime,
     );
@@ -550,8 +559,51 @@ export async function buildServer(): Promise<FastifyInstance> {
     async (req, reply) => {
       const provider = providerIdentifier.safeParse(req.params.provider);
       if (!provider.success) return reply.code(400).send({ error: 'unknown provider' });
-      const { url } = await startConnect(req.authContext!.workspaceId, provider.data, appUrl());
-      return { url };
+      try {
+        const { url } = await startConnect(req.authContext!.workspaceId, provider.data, appUrl());
+        return { url };
+      } catch (err) {
+        // A provider that needs an answer first (WordPress: the site's address) says so here.
+        if (err instanceof ProviderBadRequestError)
+          return reply.code(400).send({ error: err.message });
+        throw err;
+      }
+    },
+  );
+
+  // Start connecting a provider that needs something from the person first (`connectInput` on
+  // GET /v1/providers) — WordPress needs the site's address before there is anywhere to send them.
+  // Works for every provider (the body is then ignored), so a client need not know which is which.
+  // The flow's proof cookie is set when core returns one: that provider's callback carries a
+  // credential, and core will only complete the flow in the browser holding this cookie.
+  app.post<{ Params: { provider: string } }>(
+    '/v1/connections/:provider/start',
+    async (req, reply) => {
+      const provider = providerIdentifier.safeParse(req.params.provider);
+      if (!provider.success) return reply.code(400).send({ error: 'unknown provider' });
+      const parsed = startConnectInput.safeParse(req.body ?? {});
+      if (!parsed.success) return reply.code(400).send({ error: 'enter the address of the site' });
+      try {
+        const started = await startConnect(
+          req.authContext!.workspaceId,
+          provider.data,
+          appUrl(),
+          undefined,
+          parsed.data,
+        );
+        if (started.proof) {
+          reply.setCookie(
+            inviteFlowCookie(started.flowId),
+            started.proof,
+            inviteFlowCookieOptions(),
+          );
+        }
+        return { url: started.url };
+      } catch (err) {
+        if (err instanceof ProviderBadRequestError)
+          return reply.code(400).send({ error: err.message });
+        throw err;
+      }
     },
   );
 
@@ -623,6 +675,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       workspaceName: invite.workspaceName,
       provider: invite.provider,
       providerDisplayName: invite.providerDisplayName,
+      ...(invite.connectInput ? { connectInput: invite.connectInput } : {}),
     };
   });
 
@@ -630,7 +683,19 @@ export async function buildServer(): Promise<FastifyInstance> {
   // flow carries the workspaceId, so no session on the client's side is needed; the proof cookie is
   // what lets this browser, and no other, pick the account afterwards.
   app.post<{ Params: { token: string } }>('/v1/invite/:token/start', async (req, reply) => {
-    const started = await startInviteConnect(req.params.token, appUrl());
+    // The body is optional: only an invite for a `connectInput` provider sends one (a site address).
+    const parsed = startConnectInput.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'enter the address of the site' });
+    let started: Awaited<ReturnType<typeof startInviteConnect>>;
+    try {
+      started = parsed.data.siteUrl
+        ? await startInviteConnect(req.params.token, appUrl(), parsed.data)
+        : await startInviteConnect(req.params.token, appUrl());
+    } catch (err) {
+      if (err instanceof ProviderBadRequestError)
+        return reply.code(400).send({ error: err.message });
+      throw err;
+    }
     if (!started) return reply.code(404).send({ error: 'this invite link is invalid or expired' });
     reply.setCookie(inviteFlowCookie(started.flowId), started.proof, inviteFlowCookieOptions());
     return { url: started.url };
@@ -679,10 +744,34 @@ export async function buildServer(): Promise<FastifyInstance> {
   // flow's proof and an account still has to be picked, it is sent on to the public picker instead.
   // An invite-started flow is refused outright in any other browser (core `handleCallback`).
   // handleCallback still returns the CallbackResult contract; only the transport differs.
-  app.get<{ Querystring: { state?: string; code?: string; error?: string } }>(
+  //
+  // WordPress does not send a `code`: its redirect carries the credential itself (`user_login` +
+  // `password`, an application password) in this URL's query string. Such a callback is never
+  // answered with a page. Core handles it and the reply is a 303 to /connect/done carrying only a
+  // sealed result, so the secret does not stay in the address bar or the tab's history, is not
+  // sent on as a Referer, and is not cached. Nothing in this app logs the query: request logging
+  // (the onResponse hook) skips unauthenticated routes and records the route pattern, Fastify's own
+  // logger is off, and no failure of this branch is rethrown into an error page.
+  app.get<{ Querystring: Record<string, string | string[] | undefined> }>(
     '/connect/callback',
     async (req, reply) => {
-      const { state, code, error } = req.query;
+      // A parameter given twice is not something a platform sends; it is dropped, not guessed at.
+      const query: Record<string, string | undefined> = {};
+      for (const [name, value] of Object.entries(req.query)) {
+        if (typeof value === 'string') query[name] = value;
+      }
+      const { state, code, error } = query;
+      if (callbackCarriesCredential(query)) {
+        const sealed = await completeCredentialCallback(
+          query,
+          state ? req.cookies[inviteFlowCookie(state)] : undefined,
+        );
+        if (state) reply.clearCookie(inviteFlowCookie(state), { path: '/' });
+        return reply
+          .header('cache-control', 'no-store')
+          .header('referrer-policy', 'no-referrer')
+          .redirect(`${appUrl().replace(/\/$/, '')}/connect/done?${sealed}`, 303);
+      }
       const send = (payload: unknown, status: number): void => {
         void reply.code(status).type('text/html; charset=utf-8').send(connectPopupHtml(payload));
       };
@@ -691,7 +780,9 @@ export async function buildServer(): Promise<FastifyInstance> {
         const reason =
           error === 'access_denied'
             ? 'access was not approved on the platform’s screen'
-            : 'missing state or code';
+            : error === 'disabled'
+              ? 'the site does not allow application passwords for that account'
+              : 'missing state or code';
         return send({ status: 'error', error: reason }, 400);
       }
       try {
@@ -711,6 +802,18 @@ export async function buildServer(): Promise<FastifyInstance> {
       }
     },
   );
+
+  // Public: where a credential-bearing callback lands after its redirect. Same page as the
+  // callback's own (it hands the result to the dashboard that opened the popup, or says what
+  // happened when there is none), but the result is read from a seal only this server can make.
+  app.get<{ Querystring: Record<string, unknown> }>('/connect/done', async (req, reply) => {
+    const payload = openCallbackOutcome(req.query);
+    return reply
+      .code(payload.status === 'connected' ? 200 : 400)
+      .header('cache-control', 'no-store')
+      .type('text/html; charset=utf-8')
+      .send(connectPopupHtml(payload));
+  });
 
   app.post('/v1/connections/finish', async (req, reply) => {
     const parsed = finishConnectInput.safeParse(req.body);
@@ -755,6 +858,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       identifier: p.identifier,
       displayName: p.displayName,
       isBetweenSteps: p.isBetweenSteps,
+      ...(p.connectInput ? { connectInput: p.connectInput } : {}),
     })),
   }));
 

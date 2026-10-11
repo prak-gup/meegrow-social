@@ -58,3 +58,26 @@ export function verifyConnectFlowProof(flowId: string, proof: string | undefined
   const given = Buffer.from(proof);
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
+
+/** MAC key for sealed callback outcomes — its own label, for the reason `flowProofKey` has one. */
+function outcomeKey(): Buffer {
+  return createHmac('sha256', key()).update('meegrow-social/connect-outcome/v1').digest();
+}
+
+/**
+ * Seal for the result of a connect callback that is reported by redirect (see
+ * `sealCallbackOutcome` in services/connections.ts). The result page is public and reads its
+ * result from the URL, so without this anyone could write a link that makes this app say
+ * "Connected".
+ */
+export function signConnectOutcome(outcome: string): string {
+  return createHmac('sha256', outcomeKey()).update(outcome).digest('base64url');
+}
+
+/** Constant-time check of a seal from `signConnectOutcome`. */
+export function verifyConnectOutcome(outcome: string, seal: unknown): boolean {
+  if (typeof seal !== 'string' || seal === '') return false;
+  const expected = Buffer.from(signConnectOutcome(outcome));
+  const given = Buffer.from(seal);
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}
