@@ -47,6 +47,7 @@ export {
   MapPinLine,
   PlugsConnected as PlugConnected,
   ShareNetwork,
+  ArrowSquareOut,
   CheckCircle as CheckIcon,
 } from '@phosphor-icons/react';
 export type { Icon as IconComponent } from '@phosphor-icons/react';
