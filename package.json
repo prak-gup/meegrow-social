@@ -9,7 +9,7 @@
   "scripts": {
     "build": "turbo run build",
     "test": "vitest run --exclude '**/*.integration.test.ts'",
-    "test:integration": "vitest run",
+    "test:integration": "MGS_RUN_INTEGRATION_TESTS=1 vitest run",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,json,md}\"",

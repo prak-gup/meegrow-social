@@ -4,8 +4,13 @@ import { fileURLToPath } from 'node:url';
 const src = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
 // Alias workspace packages to their SOURCE so tests run without a prior build (and are
-// order-independent in the `pnpm i && pnpm test && pnpm build` gate). `*.integration.test.ts`
-// require Postgres+Redis and run via `pnpm test:integration` (CI provides service containers).
+// order-independent in the `pnpm i && pnpm test && pnpm build` gate).
+//
+// `*.integration.test.ts` need Postgres+Redis and TRUNCATE the database they are pointed at, so
+// they are excluded unless MGS_RUN_INTEGRATION_TESTS=1 — which only `pnpm test:integration` sets.
+// A bare `vitest run` (or `npx vitest run <dir>`, or naming an integration file) runs none of them.
+const runIntegration = process.env.MGS_RUN_INTEGRATION_TESTS === '1';
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -18,7 +23,11 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['packages/**/*.test.ts', 'apps/**/*.test.ts'],
-    exclude: ['**/node_modules/**', '**/dist/**'],
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      ...(runIntegration ? [] : ['**/*.integration.test.ts']),
+    ],
     // Integration tests share one Postgres and TRUNCATE in beforeEach — run files serially so
     // one file's reset can't race another's data.
     fileParallelism: false,

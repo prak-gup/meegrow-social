@@ -104,14 +104,13 @@ reads like your bug. We store Page tokens. To read a connected Page later, query
 
 ```bash
 pnpm install
-# integration tests need Postgres; some suites hardcode :5432, others :5433 (docker-compose.dev)
 pnpm --filter @meegrow-social/db db:migrate
-npx vitest run --exclude "**/*.integration.test.ts"   # unit only, no infra
+pnpm test   # unit only, no infra
 ```
 
-Known: `rls.integration.test.ts` + `publish.integration.test.ts` hardcode `:5433` while their
-siblings use `:5432`. With Docker down they fail locally and pass in CI. **Not your bug** — worth
-tidying if it annoys you.
+Integration tests **truncate every table** of the database they run against. They only run through
+`pnpm test:integration`, default to a separate `meegrow_social_test` database, and refuse any
+database not named `*_test`. Read `docs/dev/TESTING.md` before running them locally.
 
 ## House rules (learned the hard way — see STATE.md)
 
