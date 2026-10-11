@@ -4,6 +4,7 @@ import type { OverviewView, ClientHealth, ProviderIdentifier } from '@meegrow-so
 import { computeHealth } from './connections.js';
 import { EXPIRING_WINDOW_MS } from './connections.js';
 import { systemClock, type Clock } from './queues.js';
+import { providerVisible } from '../providers/registry.js';
 
 /**
  * Cross-client control-tower rollup (the redesign's home screen). Aggregates every workspace the
@@ -12,6 +13,10 @@ import { systemClock, type Clock } from './queues.js';
  *
  * Each workspace is read under `withWorkspace` so RLS isolates it — the rollup never bypasses
  * tenancy; it fans out over the memberships and stitches the per-tenant results together.
+ *
+ * Connections and posts on a provider that is not `providerVisible` (the test-only `fake*` family,
+ * in production) are left out of every number here — the dashboard already hides them everywhere
+ * else, so counting them made the home screen disagree with the screens it links to.
  */
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -47,8 +52,12 @@ export async function overviewForUser(
 
   for (const ws of rows) {
     const per = await withWorkspace(ws.workspaceId, async (tx) => {
-      const conns = await tx.select().from(schema.connections);
-      const posts = await tx.select().from(schema.posts);
+      const conns = (await tx.select().from(schema.connections)).filter((c) =>
+        providerVisible(c.provider),
+      );
+      const posts = (await tx.select().from(schema.posts)).filter((p) =>
+        providerVisible(p.provider),
+      );
 
       // connection health
       let anyBad = false;
@@ -73,9 +82,12 @@ export async function overviewForUser(
           )
           .orderBy(desc(schema.metrics.capturedAt))
           .limit(1000); // bound the scan; latest-per-connection only needs recent rows
+        // Only connections counted above contribute: `metrics` has no FK, so it also holds rows for
+        // hidden and since-removed connections.
+        const counted = new Set(conns.map((c) => c.id));
         const latestByConn = new Map<string, number>();
         for (const m of followerRows) {
-          if (m.connectionId && !latestByConn.has(m.connectionId)) {
+          if (m.connectionId && counted.has(m.connectionId) && !latestByConn.has(m.connectionId)) {
             latestByConn.set(m.connectionId, Number(m.value));
           }
         }

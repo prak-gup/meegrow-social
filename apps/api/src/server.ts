@@ -58,7 +58,7 @@ import {
   overviewForUser,
   listPosts,
   previewQueueSlots,
-  listProviders,
+  listConnectableProviders,
   listQueues,
   queryEventLogs,
   QueueInactiveError,
@@ -459,11 +459,12 @@ export async function buildServer(): Promise<FastifyInstance> {
     return { revoked: true };
   });
 
-  // Which platforms this environment can actually connect. Registration is env-gated, so dev/CI
-  // return the fakes and production returns the real providers — the dashboard renders a button per
-  // entry rather than hardcoding one (#45).
+  // Which platforms this environment can actually connect. Real providers are registered only when
+  // their credentials are set, and core hides the test-only fakes in production, so dev/CI return
+  // the fakes and production returns the real providers — the dashboard renders a button per entry
+  // rather than hardcoding one (#45).
   app.get('/v1/providers', async () => ({
-    providers: listProviders().map((p) => ({
+    providers: listConnectableProviders().map((p) => ({
       identifier: p.identifier,
       displayName: p.displayName,
       isBetweenSteps: p.isBetweenSteps,

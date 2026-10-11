@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as core from '@meegrow-social/core';
 import type { FastifyInstance } from 'fastify';
 import { buildServer } from './server.js';
@@ -75,6 +75,32 @@ describe('GET /mcp', () => {
     const res = await app.inject({ method: 'DELETE', url: '/mcp', headers: auth });
     expect(res.statusCode).toBe(405);
     expect(res.headers.allow).toBe('POST');
+  });
+});
+
+describe('GET /v1/providers', () => {
+  afterEach(() => vi.unstubAllEnvs());
+  const identifiers = async () => {
+    const res = await app.inject({ method: 'GET', url: '/v1/providers', headers: auth });
+    expect(res.statusCode).toBe(200);
+    return (res.json() as { providers: Array<{ identifier: string }> }).providers.map(
+      (p) => p.identifier,
+    );
+  };
+
+  it('offers the fakes outside production, where dev and CI connect through them', async () => {
+    expect(await identifiers()).toContain('fake');
+  });
+
+  it('offers no test-only provider in production', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    expect((await identifiers()).filter((id) => id.startsWith('fake'))).toEqual([]);
+  });
+
+  it('offers them in production again with SHOW_FAKE_PROVIDERS=true', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('SHOW_FAKE_PROVIDERS', 'true');
+    expect(await identifiers()).toContain('fake');
   });
 });
 
