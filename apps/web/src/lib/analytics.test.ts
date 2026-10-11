@@ -3,13 +3,16 @@ import type { PostView } from '@meegrow-social/contracts';
 import {
   DASH,
   DEFAULT_DAYS,
+  EMPTY_PERIOD_HINT,
   FOLLOWERS,
   POST_CAP,
   buildTiles,
   capPosts,
   chunk,
   connectionsFor,
+  countUndated,
   dayKey,
+  emptyPeriodNote,
   filtersToParams,
   followerSnapshot,
   followerTimeline,
@@ -246,6 +249,44 @@ describe('capPosts', () => {
   it('defaults to 300', () => {
     expect(POST_CAP).toBe(300);
     expect(capPosts(windowed(301, 0)).current).toHaveLength(300);
+  });
+});
+
+describe('countUndated', () => {
+  it('counts posts with no publish time, the epoch placeholder included', () => {
+    expect(
+      countUndated([
+        { publishAt: null },
+        { publishAt: new Date(0) },
+        { publishAt: '1970-01-01T00:00:00.000Z' as unknown as Date },
+        { publishAt: new Date(NOW) },
+      ]),
+    ).toBe(3);
+    expect(countUndated([])).toBe(0);
+  });
+});
+
+describe('emptyPeriodNote', () => {
+  it('keeps the generic hint when the check has not answered or found nothing', () => {
+    expect(emptyPeriodNote(null)).toBe(EMPTY_PERIOD_HINT);
+    expect(emptyPeriodNote({ count: 0, atLeast: false })).toBe(EMPTY_PERIOD_HINT);
+    // A truncated list that showed none proves nothing either way.
+    expect(emptyPeriodNote({ count: 0, atLeast: true })).toBe(EMPTY_PERIOD_HINT);
+  });
+
+  it('names the undated posts instead of suggesting a longer range', () => {
+    expect(emptyPeriodNote({ count: 1, atLeast: false })).toBe(
+      '1 published post has no recorded publish time and cannot be placed in a period.',
+    );
+    expect(emptyPeriodNote({ count: 12, atLeast: false })).toBe(
+      '12 published posts have no recorded publish time and cannot be placed in a period.',
+    );
+  });
+
+  it('says "at least" when the list it counted from was cut off', () => {
+    expect(emptyPeriodNote({ count: 1, atLeast: true })).toBe(
+      'At least 1 published post has no recorded publish time and cannot be placed in a period.',
+    );
   });
 });
 

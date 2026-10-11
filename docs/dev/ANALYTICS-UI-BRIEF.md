@@ -37,13 +37,20 @@ the whole analytics layer is built so a rename is not a code change (invariant 7
   `apps/web/src/lib/icons.ts`. The nav is the `TABS` array at `AppLayout.tsx:9-14` today; the
   left-sidebar layout is being built in parallel and will own that array — add your entry wherever
   the nav list lives at the time you merge.
-- **Route gate.** The route is always registered (so Prakhar can validate on production by typing
-  the URL), but the nav entry is only rendered when `import.meta.env.VITE_ANALYTICS_UI === 'true'`,
-  and the page shows a neutral `Badge` reading "Preview — numbers not yet validated" until that flag
-  is on. There is no feature-flag pattern in `apps/web/src` today (no `import.meta.env` reads
-  anywhere), so this is the first one; keep it to those two call sites. Production does not set the
-  flag, so green `main` auto-deploys with Analytics hidden. Removing the gate is PR 4 (§8) and needs
-  the §7 checklist signed off.
+- **Visibility (changed 2026-10-11, owner decision).** The route is always registered and the
+  "Analytics" nav entry is now shown to everyone, unconditionally, after Content. The numbers have
+  still **not** been validated against the platforms' native insights (§7), so the page keeps a
+  neutral `Badge` reading "Preview — numbers not yet validated" ("Beta" for a client role).
+  `VITE_ANALYTICS_UI` no longer hides anything: it is a build-time record of the §7 sign-off, and
+  its only read is in `apps/web/src/pages/Analytics.tsx` — set it to `'true'` once the checklist is
+  signed off and the badge goes away. Production does not set it, so `main` deploys with Analytics
+  visible and labelled preview. (Originally the same flag also gated the nav entry.)
+- **Posts without a publish time.** Legacy "publish now" posts have no stored `publishAt` and are
+  not being backfilled, so the date-bounded list never returns them and they appear in no period.
+  When a period comes back empty the page reads the published list once more without `from`/`to`
+  and, if such posts exist, says "N published posts have no recorded publish time and cannot be
+  placed in a period" instead of suggesting a longer range. Their metrics are not shown anywhere on
+  this page.
 
 ---
 

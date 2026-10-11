@@ -169,6 +169,28 @@ export function capPosts(windowed: readonly WindowedPost[], cap: number = POST_C
   };
 }
 
+/**
+ * Published posts with no usable publish time (legacy "publish now" posts, which are not being
+ * backfilled). The date-bounded list never returns them, so they can appear in no period.
+ */
+export function countUndated(posts: readonly Pick<PostView, 'publishAt'>[]): number {
+  return posts.filter((p) => parsePublishAt(p.publishAt) === null).length;
+}
+
+export const EMPTY_PERIOD_HINT = 'A longer date range may have some.';
+
+/**
+ * The line under "No published posts in this period". `undated` is the count from the unbounded
+ * published list, or null when that check has not answered (or failed) — then only the generic hint
+ * is honest. `atLeast` marks a count taken from a list that hit the paging limit.
+ */
+export function emptyPeriodNote(undated: { count: number; atLeast: boolean } | null): string {
+  if (!undated || undated.count === 0) return EMPTY_PERIOD_HINT;
+  const n = `${undated.atLeast ? 'At least ' : ''}${undated.count.toLocaleString()}`;
+  const posts = undated.count === 1 ? 'published post has' : 'published posts have';
+  return `${n} ${posts} no recorded publish time and cannot be placed in a period.`;
+}
+
 export function chunk<T>(items: readonly T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));

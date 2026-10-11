@@ -17,6 +17,8 @@ import {
   TABLE_PAGE,
   buildTiles,
   capPosts,
+  countUndated,
+  emptyPeriodNote,
   chunk,
   connectionsFor,
   filtersToParams,
@@ -69,8 +71,9 @@ import { StatTile } from '../components/ui/StatTile';
 import { Table, type TableColumn } from '../components/ui/Table';
 import { ArrowSquareOut, Article, CaretDown, CaretRight, ChartLineUp, Plugs } from '../lib/icons';
 
-// Until the numbers are checked against the platforms (docs/dev/ANALYTICS-UI-BRIEF.md §7) the page is
-// reachable by URL only and says so. The other read of this flag is the nav entry in AppLayout.
+// The page is in the sidebar for everyone, but its numbers have not been checked against the
+// platforms yet (docs/dev/ANALYTICS-UI-BRIEF.md §7), so it says so. Setting VITE_ANALYTICS_UI=true at
+// build time records that sign-off and drops the badge; this is the only read of the flag.
 const VALIDATED = import.meta.env.VITE_ANALYTICS_UI === 'true';
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : 'Please try again.');
@@ -102,12 +105,15 @@ function profileLabels(connections: ConnectionView[], withPlatform: boolean): Ma
   return new Map(connections.map((c, i) => [c.id, labels[i]!]));
 }
 
-/** Every published post in the range. The API pages at 100 and returns no total. */
+/**
+ * Every published post in the range — or, with no range, every published post there is, including
+ * those without a publish time. The API pages at 100 and returns no total.
+ */
 async function listPublished(query: {
   provider?: string;
   connectionId?: string;
-  from: string;
-  to: string;
+  from?: string;
+  to?: string;
 }): Promise<PostList> {
   let posts: PostView[] = [];
   for (let page = 0; page < LIST_MAX_PAGES; page++) {
@@ -139,6 +145,10 @@ function useAnalyticsData(raw: AnalyticsFilters) {
     key: '',
     load: LOADING,
   });
+  const [undated, setUndated] = useState<{
+    key: string;
+    result: { count: number; atLeast: boolean } | null;
+  }>({ key: '', result: null });
   const metricsCache = useRef(new Map<string, PostMetrics>());
   const [metrics, setMetrics] = useState<MetricsByPost>(metricsCache.current);
   const followersCache = useRef(new Map<string, FollowerLoad>());
@@ -214,6 +224,31 @@ function useAnalyticsData(raw: AnalyticsFilters) {
     () => (posts.status === 'ok' ? capPosts(windowPosts(posts.data.posts, windows)) : null),
     [posts, windows],
   );
+
+  // An empty period has two very different causes: nothing was published, or what was published has
+  // no stored publish time (legacy posts) and so falls in no period at all. Only then is it worth
+  // one more read of the list, without the date bounds, to tell them apart.
+  const periodEmpty = capped !== null && capped.currentTotal === 0;
+  const undatedKey = `${run.attempt}|${filters.platform}|${filters.connection}`;
+  useEffect(() => {
+    if (!periodEmpty) return;
+    let stale = false;
+    listPublished({
+      provider: filters.platform || undefined,
+      connectionId: filters.connection || undefined,
+    })
+      .then((list) => {
+        if (stale) return;
+        const count = countUndated(list.posts.filter((p) => providerVisible(p.provider)));
+        setUndated({ key: undatedKey, result: { count, atLeast: list.truncated } });
+      })
+      // The generic empty state stays; this check is a refinement, not something to fail the page on.
+      .catch(() => undefined);
+    return () => {
+      stale = true;
+    };
+  }, [periodEmpty, undatedKey, filters.platform, filters.connection]);
+  const undatedPosts = periodEmpty && undated.key === undatedKey ? undated.result : null;
 
   useEffect(() => {
     if (!capped) return;
@@ -295,6 +330,7 @@ function useAnalyticsData(raw: AnalyticsFilters) {
     windows,
     posts,
     capped,
+    undatedPosts,
     metrics,
     followers,
     followersSoFar,
@@ -430,7 +466,11 @@ export function Analytics() {
       {nothingYet ? (
         <EmptyState
           title="Nothing collected yet"
-          description="Metrics appear within an hour of the first published post. A longer date range may have data."
+          description={
+            data.undatedPosts?.count
+              ? emptyPeriodNote(data.undatedPosts)
+              : 'Metrics appear within an hour of the first published post. A longer date range may have data.'
+          }
           icon={ChartLineUp}
         />
       ) : (
@@ -517,6 +557,7 @@ export function Analytics() {
                 // A new filter set starts again from the first page with every row collapsed.
                 key={`${filters.platform}|${filters.connection}|${filters.days}`}
                 capped={capped}
+                undated={data.undatedPosts}
                 metrics={metrics}
                 connections={all}
               />
@@ -1022,10 +1063,13 @@ function PostHistory({ entry }: { entry: PostMetrics | undefined }) {
  */
 function PostsTable({
   capped,
+  undated,
   metrics,
   connections,
 }: {
   capped: CappedPosts;
+  /** Published posts with no publish time, counted only when the period is empty; null = unknown. */
+  undated: { count: number; atLeast: boolean } | null;
   metrics: MetricsByPost;
   connections: ConnectionView[];
 }) {
@@ -1142,7 +1186,7 @@ function PostsTable({
         }
         empty={{
           title: 'No published posts in this period',
-          description: 'A longer date range may have some.',
+          description: emptyPeriodNote(undated),
           icon: Article,
         }}
       />
