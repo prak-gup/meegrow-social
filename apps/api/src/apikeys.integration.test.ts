@@ -2,7 +2,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { closeDb } from '@meegrow-social/db';
 import { createApiKeyForWorkspace } from '@meegrow-social/core';
-import { createWorkspace, resetDb, useRecordingScheduler } from '@meegrow-social/testing';
+import {
+  createWorkspace,
+  resetDb,
+  useRecordingScheduler,
+  useTestDatabaseEnv,
+} from '@meegrow-social/testing';
 import { buildServer } from './server.js';
 
 /**
@@ -15,8 +20,7 @@ import { buildServer } from './server.js';
  */
 
 beforeAll(() => {
-  process.env.DATABASE_URL ??= 'postgres://prakhar@localhost:5432/meegrow_social';
-  process.env.APP_DATABASE_URL ??= 'postgres://mgs_app:mgs_app@localhost:5432/meegrow_social';
+  useTestDatabaseEnv();
   process.env.TOKEN_ENCRYPTION_KEY ??= 'integration-test-key';
   useRecordingScheduler();
 });

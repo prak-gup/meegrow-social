@@ -1,7 +1,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { desc, eq } from 'drizzle-orm';
 import { closeDb, schema, withWorkspace } from '@meegrow-social/db';
-import { createConnection, createWorkspace, resetDb } from '@meegrow-social/testing';
+import {
+  createConnection,
+  createWorkspace,
+  resetDb,
+  useTestDatabaseEnv,
+} from '@meegrow-social/testing';
 import { getConnectionFollowers, getPostMetrics, sweepAnalyticsForWorkspace } from './analytics.js';
 import { ANALYTICS_UPDATED_EVENT, CONNECTION_NEEDS_RECONNECT_EVENT } from './webhooks.js';
 import type { Clock } from './queues.js';
@@ -12,8 +17,7 @@ import type { Clock } from './queues.js';
  */
 
 beforeAll(() => {
-  process.env.DATABASE_URL ??= 'postgres://prakhar@localhost:5432/meegrow_social';
-  process.env.APP_DATABASE_URL ??= 'postgres://mgs_app:mgs_app@localhost:5432/meegrow_social';
+  useTestDatabaseEnv();
   process.env.TOKEN_ENCRYPTION_KEY ??= 'integration-test-key';
 });
 beforeEach(resetDb);

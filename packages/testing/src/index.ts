@@ -14,13 +14,47 @@ import {
 } from '@meegrow-social/core';
 import type { WeeklySlot } from '@meegrow-social/contracts';
 import { sql } from 'drizzle-orm';
+import { assertConnectedToTestDatabase, assertTestDatabaseEnv } from './safety.js';
+
+export {
+  ALLOW_DESTRUCTIVE_VAR,
+  DEFAULT_TEST_APP_DATABASE_URL,
+  DEFAULT_TEST_DATABASE_URL,
+  TEST_DATABASE_NAME,
+  TestDatabaseGuardError,
+  requireTestRedisUrl,
+  useTestDatabaseEnv,
+} from './safety.js';
+
+/** The admin handle already proven to be inside a test database — re-proven if it is rebuilt. */
+let verifiedHandle: ReturnType<typeof db> | undefined;
+
+/**
+ * Gate in front of every destructive statement in this package. Checks the env the handle is built
+ * from (no connection needed to refuse), then asks that same handle which database it is in.
+ */
+async function assertSafeToWipe(): Promise<ReturnType<typeof db>> {
+  assertTestDatabaseEnv();
+  const handle = db();
+  if (handle !== verifiedHandle) {
+    await assertConnectedToTestDatabase(async () => {
+      const rows = await handle.execute<{ name: string }>(sql`select current_database() as name`);
+      return rows[0]?.name;
+    });
+    verifiedHandle = handle;
+  }
+  return handle;
+}
 
 /**
  * Truncate every table — call in beforeEach for isolated integration tests. Also forgets the
  * login/password attempt counts: they are keyed on email and client address, which tests reuse, so
  * without this one test's wrong passwords would rate-limit the next.
+ *
+ * Refuses (TestDatabaseGuardError) unless the target is a dedicated test database — see safety.ts.
  */
 export async function resetDb(): Promise<void> {
+  const admin = await assertSafeToWipe();
   resetAttemptStore();
   const tables = [
     'oauth_flows',
@@ -40,7 +74,7 @@ export async function resetDb(): Promise<void> {
     'users',
     'workspaces',
   ];
-  await db().execute(sql.raw(`TRUNCATE ${tables.map((t) => `"${t}"`).join(', ')} CASCADE;`));
+  await admin.execute(sql.raw(`TRUNCATE ${tables.map((t) => `"${t}"`).join(', ')} CASCADE;`));
 }
 
 /**

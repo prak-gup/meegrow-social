@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { withWorkspace, schema, closeDb } from '@meegrow-social/db';
-import { createWorkspace, resetDb } from '@meegrow-social/testing';
+import { createWorkspace, resetDb, useTestDatabaseEnv } from '@meegrow-social/testing';
 import { aggregateEventLogs, pruneEventLogs, queryEventLogs, recordApiRequestLog } from './logs.js';
 
 beforeAll(() => {
-  process.env.DATABASE_URL ??= 'postgres://mgs:mgs@localhost:5433/meegrow_social';
+  useTestDatabaseEnv();
   process.env.TOKEN_ENCRYPTION_KEY ??= 'integration-test-key';
 });
 beforeEach(resetDb);

@@ -5,6 +5,7 @@ import {
   createWorkspace,
   resetDb,
   useRecordingScheduler,
+  useTestDatabaseEnv,
 } from '@meegrow-social/testing';
 import type { WeeklySlot } from '@meegrow-social/contracts';
 import { DateTime } from 'luxon';
@@ -23,7 +24,7 @@ import {
 import { cancelPost, createPost, listPosts } from './posts.js';
 
 beforeAll(() => {
-  process.env.DATABASE_URL ??= 'postgres://mgs:mgs@localhost:5433/meegrow_social';
+  useTestDatabaseEnv();
   process.env.TOKEN_ENCRYPTION_KEY ??= 'integration-test-key';
 });
 beforeEach(resetDb);

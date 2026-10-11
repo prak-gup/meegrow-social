@@ -9,6 +9,7 @@ import {
   resetDb,
   useRecordingScheduler,
   useTempDiskStorage,
+  useTestDatabaseEnv,
 } from '@meegrow-social/testing';
 import type { FastifyInstance } from 'fastify';
 import { buildServer } from './server.js';
@@ -33,7 +34,7 @@ function multipartBody(filename: string, contentType: string, data: Buffer) {
 let app: FastifyInstance;
 
 beforeAll(async () => {
-  process.env.DATABASE_URL ??= 'postgres://mgs:mgs@localhost:5433/meegrow_social';
+  useTestDatabaseEnv();
   process.env.TOKEN_ENCRYPTION_KEY ??= 'integration-test-key';
   process.env.MEDIA_STORAGE_DRIVER ??= 'disk';
   useRecordingScheduler();

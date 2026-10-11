@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { RedisConnection } from 'bullmq';
 import { MemoryAttemptStore, type AttemptStore } from '@meegrow-social/core';
+import { requireTestRedisUrl } from '@meegrow-social/testing';
 import { createRedisAttemptStore } from './attempt-store.js';
 
 /**
@@ -9,7 +10,7 @@ import { createRedisAttemptStore } from './attempt-store.js';
  * same cases: BUILD-SPEC-V2 invariant 4 — the store tests run on must not be more permissive than
  * the one production runs on.
  */
-const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
+const REDIS_URL = requireTestRedisUrl();
 const WINDOW_MS = 60_000;
 
 let redisStore: ReturnType<typeof createRedisAttemptStore>;

@@ -2,7 +2,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { closeDb, db, schema } from '@meegrow-social/db';
 import { createConnectInvite, listConnections, startConnect } from '@meegrow-social/core';
-import { createMembership, createUser, createWorkspace, resetDb } from '@meegrow-social/testing';
+import {
+  createMembership,
+  createUser,
+  createWorkspace,
+  resetDb,
+  useTestDatabaseEnv,
+} from '@meegrow-social/testing';
 import type { FastifyInstance } from 'fastify';
 import { buildServer } from './server.js';
 
@@ -16,8 +22,7 @@ import { buildServer } from './server.js';
 let app: FastifyInstance;
 
 beforeAll(async () => {
-  process.env.DATABASE_URL ??= 'postgres://prakhar@localhost:5432/meegrow_social';
-  process.env.APP_DATABASE_URL ??= 'postgres://mgs_app:mgs_app@localhost:5432/meegrow_social';
+  useTestDatabaseEnv();
   process.env.TOKEN_ENCRYPTION_KEY ??= 'integration-test-key';
   app = await buildServer();
 });

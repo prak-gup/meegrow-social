@@ -6,6 +6,7 @@ import {
   createWorkspace,
   resetDb,
   useRecordingScheduler,
+  useTestDatabaseEnv,
 } from '@meegrow-social/testing';
 import { ProviderAuthError, ProviderBadRequestError, ProviderTransientError } from '../errors.js';
 import { registerProvider } from '../providers/registry.js';
@@ -15,8 +16,7 @@ import { publishPost, recordPublishExhaustion } from './publish.js';
 import { setScheduler } from './scheduler.js';
 
 beforeAll(() => {
-  process.env.DATABASE_URL ??= 'postgres://mgs:mgs@localhost:5433/meegrow_social';
-  process.env.APP_DATABASE_URL ??= 'postgres://mgs_app:mgs_app@localhost:5433/meegrow_social';
+  useTestDatabaseEnv();
   process.env.TOKEN_ENCRYPTION_KEY ??= 'integration-test-key';
   registerProvider(flaky);
 });

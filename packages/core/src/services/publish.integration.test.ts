@@ -6,12 +6,13 @@ import {
   createWorkspace,
   resetDb,
   useRecordingScheduler,
+  useTestDatabaseEnv,
 } from '@meegrow-social/testing';
 import { createPost } from './posts.js';
 import { publishPost } from './publish.js';
 
 beforeAll(() => {
-  process.env.DATABASE_URL ??= 'postgres://mgs:mgs@localhost:5433/meegrow_social';
+  useTestDatabaseEnv();
   process.env.TOKEN_ENCRYPTION_KEY ??= 'integration-test-key';
 });
 beforeEach(resetDb);
