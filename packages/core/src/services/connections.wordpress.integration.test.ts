@@ -211,6 +211,7 @@ describe('WordPress connect — callback', () => {
     expect(JSON.stringify(row)).not.toContain('MNOP');
     expect(JSON.stringify(row)).not.toContain('priya');
     expect(decodeCredentials(decryptToken(row!.accessToken!))).toEqual({
+      transport: 'rest',
       siteUrl: SITE,
       apiRoot: API_ROOT,
       username: 'priya',
