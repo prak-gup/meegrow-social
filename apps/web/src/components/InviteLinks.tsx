@@ -54,7 +54,7 @@ export function InviteLinkRow({
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
       <div className="min-w-0 flex-1">
-        <code className="block truncate font-mono text-sm text-ink">{invite.url}</code>
+        <code className="block truncate font-mono text-xs text-ink">{invite.url}</code>
         <p className="text-caption text-muted">{inviteStatusLine(invite)}</p>
       </div>
       <Button

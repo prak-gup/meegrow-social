@@ -17,7 +17,7 @@ export interface PlatformBadgeProps {
  */
 export function PlatformBadge({ provider, name, size = 'md', className }: PlatformBadgeProps) {
   const m = platformMeta({ identifier: provider, displayName: provider });
-  const dim = size === 'sm' ? 'h-6 w-6 text-xs' : 'h-8 w-8 text-sm';
+  const dim = size === 'sm' ? 'h-6 w-6 text-xs' : 'h-7 w-7 text-xs';
   const mark = size === 'sm' ? 'h-3 w-3' : 'h-3.5 w-3.5';
   return (
     <span className={cn('relative inline-flex flex-none', className)}>
