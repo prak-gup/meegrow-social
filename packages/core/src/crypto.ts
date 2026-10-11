@@ -1,4 +1,11 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from 'node:crypto';
 
 /** AES-256-GCM token-at-rest encryption. Key derived from TOKEN_ENCRYPTION_KEY (any length). */
 function key(): Buffer {
@@ -24,4 +31,30 @@ export function decryptToken(payload: string): string {
     decipher.update(Buffer.from(dataB64, 'base64')),
     decipher.final(),
   ]).toString('utf8');
+}
+
+/**
+ * MAC key for connect-flow proofs. Derived from the encryption key under its own label, so the same
+ * secret is never used directly for both AES-GCM and HMAC.
+ */
+function flowProofKey(): Buffer {
+  return createHmac('sha256', key()).update('meegrow-social/connect-flow-proof/v1').digest();
+}
+
+/**
+ * Proof that a browser started a given connect flow. The public invite path has no session, and the
+ * flow id alone is not a credential — it is the OAuth `state`, so it travels through the platform
+ * and sits in the address bar. The server hands this MAC to the starting browser (HttpOnly cookie)
+ * and requires it back on the unauthenticated account-pick step; nobody else can mint one.
+ */
+export function signConnectFlow(flowId: string): string {
+  return createHmac('sha256', flowProofKey()).update(flowId).digest('base64url');
+}
+
+/** Constant-time check of a proof from `signConnectFlow`. False for a missing or malformed one. */
+export function verifyConnectFlowProof(flowId: string, proof: string | undefined | null): boolean {
+  if (!flowId || !proof) return false;
+  const expected = Buffer.from(signConnectFlow(flowId));
+  const given = Buffer.from(proof);
+  return given.length === expected.length && timingSafeEqual(given, expected);
 }

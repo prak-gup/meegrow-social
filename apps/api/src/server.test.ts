@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as core from '@meegrow-social/core';
 import type { FastifyInstance } from 'fastify';
-import { buildServer, trustProxySetting } from './server.js';
+import { buildServer, inviteFlowCookie, trustProxySetting } from './server.js';
 
 /**
  * The REST layer in isolation, for the routes that need no database to prove: `core` is replaced by
@@ -19,6 +19,12 @@ vi.mock('@meegrow-social/core', async (importOriginal) => ({
   loginWithPassword: vi.fn(),
   recordApiRequestLog: vi.fn(),
   createPost: vi.fn(),
+  createConnectInvite: vi.fn(),
+  isWorkspaceMember: vi.fn(),
+  finishInviteConnect: vi.fn(),
+  getInviteFlow: vi.fn(),
+  handleCallback: vi.fn(),
+  startInviteConnect: vi.fn(),
   getConnectionHealth: vi.fn(),
   listConnectionHealth: vi.fn(),
   previewQueueSlots: vi.fn(),
@@ -432,5 +438,343 @@ describe('GET /v1/queues/:id/slots', () => {
       new core.QueueNotFoundError(`queue ${QUEUE} not found`),
     );
     expect((await slots()).statusCode).toBe(404);
+  });
+});
+
+/**
+ * The client-invite connect path. Nobody here has a session or an API key: every request below is
+ * sent without credentials, and the flow's proof cookie is the only thing that opens the picker.
+ */
+describe('invite connect path (public)', () => {
+  const FLOW = '44444444-4444-4444-8444-444444444444';
+  const OTHER_FLOW = '55555555-5555-4555-8555-555555555555';
+  const ORIGIN = 'http://localhost:8990'; // appUrl()'s default
+  const accounts = [
+    { externalId: 'page-1', displayName: 'Page One' },
+    { externalId: 'page-2', displayName: 'Page Two' },
+  ];
+  let proof: string;
+  let cookie: string;
+  let previousKey: string | undefined;
+  let previousAppUrl: string | undefined;
+
+  beforeAll(() => {
+    previousKey = process.env.TOKEN_ENCRYPTION_KEY;
+    previousAppUrl = process.env.APP_URL;
+    process.env.TOKEN_ENCRYPTION_KEY = 'unit-test-key';
+    delete process.env.APP_URL;
+    proof = core.signConnectFlow(FLOW);
+    cookie = `${inviteFlowCookie(FLOW)}=${proof}`;
+  });
+  afterAll(() => {
+    if (previousKey === undefined) delete process.env.TOKEN_ENCRYPTION_KEY;
+    else process.env.TOKEN_ENCRYPTION_KEY = previousKey;
+    if (previousAppUrl !== undefined) process.env.APP_URL = previousAppUrl;
+  });
+
+  describe('POST /v1/invite/:token/start', () => {
+    it('hands the starting browser the flow proof as an HttpOnly, Lax cookie', async () => {
+      vi.mocked(core.startInviteConnect).mockResolvedValue({
+        url: 'https://platform.test/dialog',
+        flowId: FLOW,
+        proof,
+      });
+      const res = await app.inject({ method: 'POST', url: '/v1/invite/tok123/start' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ url: 'https://platform.test/dialog' });
+      expect(core.startInviteConnect).toHaveBeenCalledWith('tok123', ORIGIN);
+      const set = String(res.headers['set-cookie']);
+      expect(set).toContain(`${inviteFlowCookie(FLOW)}=${proof}`);
+      expect(set).toContain('HttpOnly');
+      expect(set).toContain('SameSite=Lax');
+      expect(set).toContain('Max-Age=2400');
+      // The proof is for the cookie jar only; the page's script never sees it.
+      expect(res.body).not.toContain(proof);
+    });
+
+    it('404s for a dead invite and sets no cookie', async () => {
+      vi.mocked(core.startInviteConnect).mockResolvedValue(null);
+      const res = await app.inject({ method: 'POST', url: '/v1/invite/nope/start' });
+      expect(res.statusCode).toBe(404);
+      expect(res.headers['set-cookie']).toBeUndefined();
+    });
+  });
+
+  describe('GET /connect/callback', () => {
+    const callback = (headers: Record<string, string> = {}) =>
+      app.inject({ method: 'GET', url: `/connect/callback?state=${FLOW}&code=c0de`, headers });
+
+    it('sends the invite browser on to the picker when an account has to be chosen', async () => {
+      vi.mocked(core.handleCallback).mockResolvedValue({
+        status: 'choose_account',
+        flowId: FLOW,
+        accounts,
+      });
+      const res = await callback({ cookie });
+      expect(core.handleCallback).toHaveBeenCalledWith(FLOW, 'c0de');
+      expect(res.statusCode).toBe(302);
+      expect(res.headers.location).toBe(`${ORIGIN}/i/finish/${FLOW}`);
+    });
+
+    it('still answers the dashboard popup with the hand-off page (no proof cookie)', async () => {
+      vi.mocked(core.handleCallback).mockResolvedValue({
+        status: 'choose_account',
+        flowId: FLOW,
+        accounts,
+      });
+      const res = await callback();
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('text/html');
+      expect(res.body).toContain('window.opener.postMessage');
+      expect(res.body).toContain('Not connected yet');
+      expect(res.body).not.toContain('Connected. You can close this window.');
+    });
+
+    it("does not redirect on another flow's proof", async () => {
+      vi.mocked(core.handleCallback).mockResolvedValue({
+        status: 'choose_account',
+        flowId: FLOW,
+        accounts,
+      });
+      const res = await callback({
+        cookie: `${inviteFlowCookie(FLOW)}=${core.signConnectFlow(OTHER_FLOW)}`,
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('a single-step provider connects on the callback and says so truthfully', async () => {
+      vi.mocked(core.handleCallback).mockResolvedValue({ status: 'connected', connectionId: CONN });
+      const res = await callback({ cookie });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('<h1 id="t">Connected</h1>');
+    });
+
+    it('reports a failed exchange as not connected, with the reason', async () => {
+      vi.mocked(core.handleCallback).mockRejectedValue(new Error('connect flow expired'));
+      const res = await callback({ cookie });
+      expect(res.statusCode).toBe(400);
+      expect(res.body).toContain('<h1 id="t">Not connected</h1>');
+      expect(res.body).toContain('Connecting failed: connect flow expired.');
+    });
+
+    it('a declined consent is a failure, and the page never echoes the query text', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/connect/callback?state=${FLOW}&error=access_denied&error_description=CALL-0000`,
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.body).toContain('access was not approved');
+      expect(res.body).not.toContain('CALL-0000');
+      expect(core.handleCallback).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('GET /v1/invite/flow/:flowId', () => {
+    const view = {
+      workspaceName: 'Ecolive',
+      provider: 'fake_2step' as const,
+      providerDisplayName: 'Fake Two-Step Provider',
+      accounts,
+    };
+
+    it('returns the picker for the flow, passing the cookie of that flow to core', async () => {
+      vi.mocked(core.getInviteFlow).mockResolvedValue({ status: 'choose_account', ...view });
+      const res = await app.inject({
+        method: 'GET',
+        url: `/v1/invite/flow/${FLOW}`,
+        headers: { cookie },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual(view);
+      expect(core.getInviteFlow).toHaveBeenCalledWith(FLOW, proof);
+    });
+
+    it("never offers one flow's proof for another flow", async () => {
+      vi.mocked(core.getInviteFlow).mockResolvedValue({ status: 'not_found' });
+      const res = await app.inject({
+        method: 'GET',
+        url: `/v1/invite/flow/${OTHER_FLOW}`,
+        headers: { cookie },
+      });
+      expect(res.statusCode).toBe(404);
+      expect(core.getInviteFlow).toHaveBeenCalledWith(OTHER_FLOW, undefined);
+    });
+
+    it.each([
+      ['not_found', 404],
+      ['used', 409],
+      ['expired', 410],
+    ] as const)('%s → %i', async (status, code) => {
+      vi.mocked(core.getInviteFlow).mockResolvedValue({ status });
+      const res = await app.inject({ method: 'GET', url: `/v1/invite/flow/${FLOW}` });
+      expect(res.statusCode).toBe(code);
+      expect(typeof res.json<{ error: string }>().error).toBe('string');
+    });
+  });
+
+  describe('POST /v1/invite/flow/:flowId/finish', () => {
+    const finish = (
+      opts: { payload?: unknown; headers?: Record<string, string>; flowId?: string } = {},
+    ) =>
+      app.inject({
+        method: 'POST',
+        url: `/v1/invite/flow/${opts.flowId ?? FLOW}/finish`,
+        payload: opts.payload ?? { externalId: 'page-2' },
+        headers: opts.headers ?? { cookie, origin: ORIGIN },
+      });
+    const connected = {
+      status: 'connected' as const,
+      connectionId: CONN,
+      accountName: 'Page Two',
+      workspaceName: 'Ecolive',
+      providerDisplayName: 'Fake Two-Step Provider',
+    };
+
+    it('connects the picked account and reports what joined what', async () => {
+      vi.mocked(core.finishInviteConnect).mockResolvedValue(connected);
+      const res = await finish();
+      expect(res.statusCode).toBe(201);
+      expect(res.json()).toEqual({
+        connectionId: CONN,
+        accountName: 'Page Two',
+        workspaceName: 'Ecolive',
+        providerDisplayName: 'Fake Two-Step Provider',
+      });
+      // No workspace anywhere in the request: core takes it from the flow.
+      expect(core.finishInviteConnect).toHaveBeenCalledWith(FLOW, proof, 'page-2');
+      expect(String(res.headers['set-cookie'])).toContain(`${inviteFlowCookie(FLOW)}=;`);
+    });
+
+    it('passes no proof when the browser has none, or only has one for another flow', async () => {
+      vi.mocked(core.finishInviteConnect).mockResolvedValue({ status: 'not_found' });
+      expect((await finish({ headers: { origin: ORIGIN } })).statusCode).toBe(404);
+      expect(core.finishInviteConnect).toHaveBeenLastCalledWith(FLOW, undefined, 'page-2');
+      expect((await finish({ flowId: OTHER_FLOW })).statusCode).toBe(404);
+      expect(core.finishInviteConnect).toHaveBeenLastCalledWith(OTHER_FLOW, undefined, 'page-2');
+    });
+
+    it.each([
+      [{ status: 'not_found' }, 404],
+      [{ status: 'used' }, 409],
+      [{ status: 'expired' }, 410],
+      [{ status: 'invalid_account' }, 400],
+      [{ status: 'failed', error: 'the platform refused the page' }, 502],
+    ] as const)('%o → %i, and the proof cookie is kept', async (result, code) => {
+      vi.mocked(core.finishInviteConnect).mockResolvedValue(result);
+      const res = await finish();
+      expect(res.statusCode).toBe(code);
+      expect(typeof res.json<{ error: string }>().error).toBe('string');
+      expect(res.headers['set-cookie']).toBeUndefined();
+    });
+
+    it('surfaces the platform reason on a failed connect', async () => {
+      vi.mocked(core.finishInviteConnect).mockResolvedValue({
+        status: 'failed',
+        error: 'the platform refused the page',
+      });
+      expect((await finish()).json()).toEqual({ error: 'the platform refused the page' });
+    });
+
+    it('400s on a missing account without calling core', async () => {
+      expect((await finish({ payload: {} })).statusCode).toBe(400);
+      expect((await finish({ payload: { externalId: '' } })).statusCode).toBe(400);
+      expect(core.finishInviteConnect).not.toHaveBeenCalled();
+    });
+
+    it('refuses a cross-origin post', async () => {
+      const res = await finish({ headers: { cookie, origin: 'https://evil.example' } });
+      expect(res.statusCode).toBe(403);
+      expect(core.finishInviteConnect).not.toHaveBeenCalled();
+    });
+  });
+
+  it('leaves the dashboard finish route behind auth', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/connections/finish',
+      payload: { flowId: FLOW, externalId: 'page-1' },
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+/**
+ * Minting an invite for a client other than the active one (the Clients page lists them all). The
+ * session is never switched; membership is what allows it.
+ */
+describe('POST /v1/connections/:provider/invite', () => {
+  const OTHER_WS = '77777777-7777-4777-8777-777777777777';
+  const USER = '88888888-8888-4888-8888-888888888888';
+  const ORIGIN = 'http://localhost:8990';
+  const session = { cookie: 'mg_sid=good', origin: ORIGIN };
+  const mint = (payload: unknown, headers: Record<string, string>) =>
+    app.inject({
+      method: 'POST',
+      url: '/v1/connections/fake/invite',
+      headers,
+      ...(payload === undefined ? {} : { payload: payload as object }),
+    });
+  let previousAppUrl: string | undefined;
+
+  beforeAll(() => {
+    previousAppUrl = process.env.APP_URL;
+    delete process.env.APP_URL;
+  });
+  afterAll(() => {
+    if (previousAppUrl !== undefined) process.env.APP_URL = previousAppUrl;
+  });
+  beforeEach(() => {
+    vi.mocked(core.authenticateSession).mockImplementation(async (token) =>
+      token === 'good'
+        ? ({ workspaceId: WS, userId: USER, sessionId: 'session-1' } as never)
+        : null,
+    );
+    vi.mocked(core.createConnectInvite).mockImplementation(async (_ws, provider) => ({
+      token: 'tok123',
+      provider,
+      expiresAt: new Date('2026-11-01T00:00:00.000Z'),
+    }));
+  });
+
+  it('mints for the active client when no workspace is named, body or no body', async () => {
+    for (const payload of [undefined, {}]) {
+      const res = await mint(payload, session);
+      expect(res.statusCode).toBe(201);
+      expect(res.json<{ url: string }>().url).toBe(`${ORIGIN}/i/tok123`);
+      expect(core.createConnectInvite).toHaveBeenLastCalledWith(WS, 'fake', USER);
+    }
+    expect(core.isWorkspaceMember).not.toHaveBeenCalled();
+  });
+
+  it('mints for another client the user belongs to', async () => {
+    vi.mocked(core.isWorkspaceMember).mockResolvedValue(true);
+    const res = await mint({ workspaceId: OTHER_WS }, session);
+    expect(res.statusCode).toBe(201);
+    expect(core.isWorkspaceMember).toHaveBeenCalledWith(USER, OTHER_WS);
+    expect(core.createConnectInvite).toHaveBeenCalledWith(OTHER_WS, 'fake', USER);
+  });
+
+  it('refuses a client the user does not belong to', async () => {
+    vi.mocked(core.isWorkspaceMember).mockResolvedValue(false);
+    const res = await mint({ workspaceId: OTHER_WS }, session);
+    expect(res.statusCode).toBe(403);
+    expect(core.createConnectInvite).not.toHaveBeenCalled();
+  });
+
+  it('an API key cannot reach past its own workspace', async () => {
+    const res = await mint({ workspaceId: OTHER_WS }, auth);
+    expect(res.statusCode).toBe(403);
+    expect(core.isWorkspaceMember).not.toHaveBeenCalled();
+    expect(core.createConnectInvite).not.toHaveBeenCalled();
+    // Naming its own workspace is the same as naming none.
+    expect((await mint({ workspaceId: WS }, auth)).statusCode).toBe(201);
+    expect(core.createConnectInvite).toHaveBeenLastCalledWith(WS, 'fake', WS);
+  });
+
+  it('400s on a workspace id that is not a uuid, and 401s without credentials', async () => {
+    expect((await mint({ workspaceId: 'nope' }, session)).statusCode).toBe(400);
+    expect((await mint({ workspaceId: OTHER_WS }, {})).statusCode).toBe(401);
+    expect(core.createConnectInvite).not.toHaveBeenCalled();
   });
 });

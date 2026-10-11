@@ -3,6 +3,8 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { db, schema } from '@meegrow-social/db';
 import type { ProviderIdentifier } from '@meegrow-social/contracts';
 import { getProvider } from '../providers/registry.js';
+import { signConnectFlow } from '../crypto.js';
+import { startConnect } from './connections.js';
 
 /**
  * Per-platform connect invites (client onboarding). The operator mints a link for a
@@ -74,4 +76,19 @@ export async function getConnectInvite(token: string): Promise<RedeemedInvite | 
     provider: providerId,
     providerDisplayName: getProvider(providerId).displayName,
   };
+}
+
+/**
+ * The client clicked Connect on the invite landing: start the OAuth for the invite's workspace +
+ * provider. `proof` goes to that browser as an HttpOnly cookie and is what later lets it — and only
+ * it — pick the account without a session (see `finishInviteConnect`). Null for a dead invite.
+ */
+export async function startInviteConnect(
+  token: string,
+  appUrl: string,
+): Promise<{ url: string; flowId: string; proof: string } | null> {
+  const invite = await getConnectInvite(token);
+  if (!invite) return null;
+  const { url, flowId } = await startConnect(invite.workspaceId, invite.provider, appUrl);
+  return { url, flowId, proof: signConnectFlow(flowId) };
 }

@@ -139,6 +139,18 @@ export async function keepOnlySession(
   return { token, expiresAt: row.expiresAt };
 }
 
+/** Does this user belong to this workspace? The gate for acting on a client other than the active one. */
+export async function isWorkspaceMember(userId: string, workspaceId: string): Promise<boolean> {
+  const [membership] = await db()
+    .select({ id: schema.memberships.id })
+    .from(schema.memberships)
+    .where(
+      and(eq(schema.memberships.userId, userId), eq(schema.memberships.workspaceId, workspaceId)),
+    )
+    .limit(1);
+  return membership !== undefined;
+}
+
 /** Switch the workspace this session targets. Refuses a workspace the user isn't a member of. */
 export async function switchActiveWorkspace(
   sessionId: string,
