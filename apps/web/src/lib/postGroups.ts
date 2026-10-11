@@ -217,6 +217,16 @@ const firstUrl = (...urls: Array<string | null | undefined>): string | null => {
   return null;
 };
 
+/**
+ * How long to wait before asking for a thumbnail again after its `attempt`-th request (0 = the
+ * first) failed; null once it has been asked for often enough to call it missing. Two retries,
+ * spaced out, cover a transient storage error without hammering a url that is really gone.
+ */
+export const THUMB_RETRY_DELAYS_MS = [1_000, 4_000] as const;
+export function thumbRetryDelay(attempt: number): number | null {
+  return THUMB_RETRY_DELAYS_MS[attempt] ?? null;
+}
+
 /** The picture for a list of media: the first image, or the first video's cover when it has one. */
 export function mediaThumb(media: readonly PostMediaView[] | undefined): Thumb | null {
   const first = media?.[0];

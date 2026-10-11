@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { cn } from '../lib/cn';
 import { Article, ImageIcon, Images, Play } from '../lib/icons';
-import type { Thumb } from '../lib/postGroups';
+import { thumbRetryDelay, type Thumb } from '../lib/postGroups';
 
 const SIZE = {
   /** Calendar entries. */
@@ -29,11 +29,30 @@ export interface PostThumbProps {
  * Usage: <PostThumb thumb={groupThumb(group)} caption={group.caption} />
  */
 export function PostThumb({ thumb, caption = '', size = 'md', className }: PostThumbProps) {
-  // A url that fails to load (deleted file, private bucket) falls back to the neutral tile.
-  const [failed, setFailed] = useState<string | null>(null);
+  // One failed request must not cost the picture for as long as the page stays open: storage
+  // answers a burst of new thumbnails with the odd 503, and the same url is fine a second later.
+  // So a failure is asked again a few times, and only a url that keeps failing (deleted file,
+  // private bucket) falls back to the neutral tile.
+  const [load, setLoad] = useState<{ src: string; failures: number; attempt: number } | null>(null);
+  const wanted = thumb?.src ?? null;
+  const state = load && load.src === wanted ? load : null;
+  const failures = state?.failures ?? 0;
+  const attempt = state?.attempt ?? 0;
+  const retryIn = wanted && failures > attempt ? thumbRetryDelay(attempt) : null;
+  useEffect(() => {
+    if (!wanted || retryIn === null) return;
+    const timer = window.setTimeout(
+      () => setLoad({ src: wanted, failures, attempt: attempt + 1 }),
+      retryIn,
+    );
+    return () => window.clearTimeout(timer);
+  }, [wanted, retryIn, failures, attempt]);
+  const gaveUp = failures > attempt && retryIn === null;
   const roomy = size === 'md' || size === 'lg';
   const icon = size === 'xs' ? 10 : size === 'sm' ? 14 : 20;
-  const src = thumb?.src && thumb.src !== failed ? thumb.src : null;
+  // While a retry is pending the tile stays empty, as it is while the picture first loads.
+  const src = wanted && !gaveUp ? wanted : null;
+  const waiting = src !== null && failures > attempt;
   const firstLine = caption.split('\n')[0]?.trim() ?? '';
 
   return (
@@ -45,13 +64,15 @@ export function PostThumb({ thumb, caption = '', size = 'md', className }: PostT
         className,
       )}
     >
-      {src ? (
+      {waiting ? null : src ? (
         <img
+          // A new element per attempt: the browser asks for the same url again.
+          key={attempt}
           src={src}
           alt=""
           loading="lazy"
           decoding="async"
-          onError={() => setFailed(src)}
+          onError={() => setLoad({ src, failures: attempt + 1, attempt })}
           className="h-full w-full object-cover"
         />
       ) : thumb?.kind === 'video' ? (
@@ -65,7 +86,7 @@ export function PostThumb({ thumb, caption = '', size = 'md', className }: PostT
       ) : (
         <Article size={icon} />
       )}
-      {src && thumb?.kind === 'video' && size !== 'xs' && (
+      {src && !waiting && thumb?.kind === 'video' && size !== 'xs' && (
         <span className="absolute inset-0 grid place-items-center bg-scrim/20 text-white">
           <Play size={size === 'sm' ? 12 : 18} weight="fill" />
         </span>
