@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { hashPassword, verifyPassword } from './password.js';
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@meegrow-social/contracts';
+import { hashPassword, newPasswordProblem, verifyPassword } from './password.js';
 
 describe('password hashing', () => {
   it('produces an argon2id hash (locks the variant — drives the refresh/auth security model)', async () => {
@@ -23,5 +24,22 @@ describe('password hashing', () => {
 
   it('fails closed on a malformed hash (no throw)', async () => {
     expect(await verifyPassword('not-a-real-hash', 'anything')).toBe(false);
+  });
+});
+
+describe('newPasswordProblem', () => {
+  it('accepts both ends of the allowed range', () => {
+    expect(newPasswordProblem('x'.repeat(PASSWORD_MIN_LENGTH))).toBeNull();
+    expect(newPasswordProblem('x'.repeat(PASSWORD_MAX_LENGTH))).toBeNull();
+  });
+
+  it('names the bound that is broken', () => {
+    expect(newPasswordProblem('')).toBe('too_short');
+    expect(newPasswordProblem('x'.repeat(PASSWORD_MIN_LENGTH - 1))).toBe('too_short');
+    expect(newPasswordProblem('x'.repeat(PASSWORD_MAX_LENGTH + 1))).toBe('too_long');
+  });
+
+  it('pins the policy: 12 to 128 characters', () => {
+    expect([PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH]).toEqual([12, 128]);
   });
 });

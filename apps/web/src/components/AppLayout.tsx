@@ -13,6 +13,7 @@ import {
   UsersThree,
   Plugs,
   Key,
+  LockKey,
   Plus,
   List,
   CloseIcon,
@@ -100,26 +101,42 @@ function SidebarContent({
         ))}
       </nav>
 
-      <div className="mt-auto flex items-center gap-3 border-t border-hairline-soft pt-4">
-        <span
-          className="grid h-9 w-9 flex-none place-items-center rounded-full bg-surface-strong text-sm font-semibold text-ink"
-          aria-hidden="true"
-        >
-          {initial}
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-ink">{displayName}</p>
-          {me?.user.name && <p className="truncate text-caption text-muted">{me.user.email}</p>}
+      <div className="mt-auto border-t border-hairline-soft pt-4">
+        <div className="flex items-center gap-3">
+          <span
+            className="grid h-9 w-9 flex-none place-items-center rounded-full bg-surface-strong text-sm font-semibold text-ink"
+            aria-hidden="true"
+          >
+            {initial}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold text-ink">{displayName}</p>
+            {me?.user.name && <p className="truncate text-caption text-muted">{me.user.email}</p>}
+          </div>
+          <button
+            type="button"
+            onClick={() => void logout().then(() => navigate('/login'))}
+            className="grid h-9 w-9 flex-none place-items-center rounded-sm text-muted hover:bg-surface-soft hover:text-ink"
+            aria-label="Sign out"
+            title="Sign out"
+          >
+            <SignOut size={18} />
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => void logout().then(() => navigate('/login'))}
-          className="grid h-9 w-9 flex-none place-items-center rounded-sm text-muted hover:bg-surface-soft hover:text-ink"
-          aria-label="Sign out"
-          title="Sign out"
+        {/* Account-level, so it sits with the user rather than in the per-client nav above. */}
+        <NavLink
+          to="/settings/password"
+          onClick={onNavigate}
+          className={({ isActive }) =>
+            cn(
+              'mt-2 flex h-9 items-center gap-3 rounded-sm px-3 text-sm font-semibold text-muted hover:bg-surface-soft hover:text-ink',
+              isActive && 'bg-surface-strong text-ink',
+            )
+          }
         >
-          <SignOut size={18} />
-        </button>
+          <LockKey size={18} />
+          Change password
+        </NavLink>
       </div>
     </div>
   );

@@ -6,6 +6,7 @@ import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import {
   calendarPostsQuery,
+  changePasswordInput,
   createApiKeyInput,
   createPostInput,
   createWorkspaceInput,
@@ -33,6 +34,7 @@ import {
   getConnectInvite,
   calendarPosts,
   cancelPost,
+  changePassword,
   createPost,
   createQueue,
   createSession,
@@ -301,6 +303,41 @@ export async function buildServer(): Promise<FastifyInstance> {
     const rotated = await rotateSession(sessionId);
     if (!rotated) return reply.code(401).send({ error: 'session required' });
     reply.setCookie(SESSION_COOKIE, rotated.token, sessionCookieOptions());
+    return { ok: true };
+  });
+
+  // Change your own password. Session-only: an API key has no user, so a key-authed call is
+  // refused before the body is even looked at. Signs the user out everywhere else and re-issues
+  // this session's cookie. The body is never logged (the onResponse hook records route/status only).
+  app.post('/v1/auth/password', async (req, reply) => {
+    const ctx = req.authContext!;
+    if (!ctx.sessionId || !ctx.userId) {
+      return reply.code(401).send({ error: 'session required' });
+    }
+    const parsed = changePasswordInput.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const result = await changePassword(
+      ctx.userId,
+      ctx.sessionId,
+      parsed.data.currentPassword,
+      parsed.data.newPassword,
+    );
+    if (!result.ok) {
+      switch (result.reason) {
+        case 'invalid_current_password':
+          // 422, not 401: the session is fine, and a client must not read this as "signed out".
+          return reply.code(422).send({ error: 'current password is incorrect' });
+        case 'session_not_found':
+          return reply.code(401).send({ error: 'session required' });
+        case 'same_password':
+          return reply
+            .code(400)
+            .send({ error: 'new password must differ from the current password' });
+        case 'invalid_new_password':
+          return reply.code(400).send({ error: 'new password does not meet the password policy' });
+      }
+    }
+    reply.setCookie(SESSION_COOKIE, result.token, sessionCookieOptions());
     return { ok: true };
   });
 

@@ -134,7 +134,7 @@ Notes that are easy to get wrong:
 | REST                                                                           | Why not                                                               |
 | ------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
 | `/v1/api-keys` (create, list, revoke)                                          | Deliberate — key management stays a human action                      |
-| `/v1/auth/*` (login, logout, me, session workspace, rotate)                    | Human sessions; an API key has no user                                |
+| `/v1/auth/*` (login, logout, me, session workspace, rotate, password)          | Human sessions; an API key has no user                                |
 | `GET /v1/overview`, `POST /v1/workspaces`                                      | Session-only: they span every workspace a user belongs to             |
 | Connecting accounts: `auth-url`, `invite`, `/v1/invite/*`, `finish`, providers | OAuth needs a human in a browser                                      |
 | `DELETE /v1/connections/:id`                                                   | Not in the D1 tool list                                               |

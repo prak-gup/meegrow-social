@@ -71,6 +71,10 @@ export const api = {
   switchWorkspace: (workspaceId: string) =>
     request<{ activeWorkspaceId: string }>('POST', '/v1/auth/session/workspace', { workspaceId }),
   rotateSession: () => request<{ ok: true }>('POST', '/v1/auth/session/rotate'),
+  // Signs the user out everywhere else; this browser keeps its (re-issued) session cookie.
+  // Callers must not persist or log either password.
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<{ ok: true }>('POST', '/v1/auth/password', { currentPassword, newPassword }),
 
   // --- Overview + workspaces (redesign) ---
   overview: () => request<OverviewView>('GET', '/v1/overview'),
