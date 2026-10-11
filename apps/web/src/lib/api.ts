@@ -97,6 +97,16 @@ export const api = {
   listConnections: () => request<{ connections: ConnectionView[] }>('GET', '/v1/connections'),
   authUrl: (provider: string) =>
     request<{ url: string }>('GET', `/v1/connections/${encodeURIComponent(provider)}/auth-url`),
+  /**
+   * Start connecting a provider that asks for something first (`connectInput` on the provider) —
+   * WordPress needs the site's address. The server validates it and answers with where to go.
+   */
+  startConnect: (provider: string, answers: { siteUrl?: string }) =>
+    request<{ url: string }>(
+      'POST',
+      `/v1/connections/${encodeURIComponent(provider)}/start`,
+      answers,
+    ),
   /** Mints for the active client, or for `workspaceId` — any client the user belongs to. */
   createInvite: (provider: string, workspaceId?: string) =>
     request<CreatedInviteView>(
@@ -118,8 +128,13 @@ export const api = {
     ),
   getInvite: (token: string) =>
     request<InviteView>('GET', `/v1/invite/${encodeURIComponent(token)}`),
-  startInvite: (token: string) =>
-    request<{ url: string }>('POST', `/v1/invite/${encodeURIComponent(token)}/start`),
+  /** `siteUrl` only for an invite whose `connectInput` is `site_url` (WordPress). */
+  startInvite: (token: string, siteUrl?: string) =>
+    request<{ url: string }>(
+      'POST',
+      `/v1/invite/${encodeURIComponent(token)}/start`,
+      siteUrl ? { siteUrl } : undefined,
+    ),
   // The invite's account pick (public): the flow's HttpOnly proof cookie is the credential.
   getInviteFlow: (flowId: string) =>
     request<InviteFlowView>('GET', `/v1/invite/flow/${encodeURIComponent(flowId)}`),

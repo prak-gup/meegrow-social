@@ -8,6 +8,16 @@ import type {
   QueueView,
 } from '@meegrow-social/contracts';
 import { formatPublishAt, parsePublishAt } from './postDate';
+import {
+  ARTICLE_BODY_MAX,
+  articleDirty,
+  articleOptions,
+  emptyArticle,
+  isArticleProvider,
+  validateArticle,
+  type ArticleErrors,
+  type ArticleForm,
+} from './wordpress';
 
 /**
  * Pure Composer logic: form state → `createPost` payload, validation and copy. Kept out of the page
@@ -34,6 +44,8 @@ export interface ComposerForm {
   /** `datetime-local` value (local time, no zone), e.g. "2026-10-12T09:30". */
   at: string;
   queueId: string;
+  /** The article fields, used only when a WordPress account is selected (lib/wordpress). */
+  article?: ArticleForm;
 }
 
 export interface FormErrors {
@@ -41,6 +53,89 @@ export interface FormErrors {
   caption?: string;
   at?: string;
   queue?: string;
+  /** Present only when an article account is selected and a field of the article is wrong. */
+  article?: ArticleErrors;
+}
+
+/**
+ * What the one text box is, given who it is going to. The same text is a caption on a social
+ * account and the BODY of a WordPress article, so the box is named for what is selected — and may
+ * only run to article length when every selected account takes an article.
+ */
+export interface CaptionRole {
+  kind: 'caption' | 'article' | 'both';
+  label: string;
+  placeholder: string;
+  hint: string | null;
+  max: number;
+}
+
+export function captionRole(targets: readonly Pick<ConnectionView, 'provider'>[]): CaptionRole {
+  const articles = targets.filter((t) => isArticleProvider(t.provider)).length;
+  if (articles === 0) {
+    return {
+      kind: 'caption',
+      label: 'Caption',
+      placeholder: 'Write something…',
+      hint: null,
+      max: CAPTION_MAX,
+    };
+  }
+  if (articles === targets.length) {
+    return {
+      kind: 'article',
+      label: 'Article body',
+      placeholder: 'Write the article…',
+      hint: 'Markdown: # headings, **bold**, *italic*, - lists, [links](https://…), > quotes. HTML is shown as text.',
+      max: ARTICLE_BODY_MAX,
+    };
+  }
+  return {
+    kind: 'both',
+    label: 'Caption and article body',
+    placeholder: 'Write something…',
+    hint: 'This text is the caption on the social accounts and the body of the WordPress article. To write them separately, create two posts.',
+    max: CAPTION_MAX,
+  };
+}
+
+/**
+ * The media a WordPress variant carries: the first image, as its featured image. An article takes
+ * one image and no video, so a carousel picked for the social accounts must not travel with it.
+ */
+export function featuredImage(media: readonly MediaRef[]): MediaRef[] {
+  const first = media.find((m) => m.kind === 'image');
+  return first ? [first] : [];
+}
+
+type Variant = CreatePostInput['variants'][number];
+
+/**
+ * One account's variant. A WordPress one carries the article options and, where the shared values
+ * do not fit an article, its own: the featured image instead of the full media list, and the body
+ * itself once it is longer than a group caption may be.
+ */
+function variantFor(
+  c: Pick<ConnectionView, 'id' | 'provider'>,
+  form: Pick<ComposerForm, 'caption' | 'media' | 'article'>,
+  article: ArticleForm,
+): Variant {
+  const long = form.caption.length > CAPTION_MAX;
+  if (!isArticleProvider(c.provider)) {
+    // With a body too long to share, each variant states its own text (and a social one is then
+    // refused for it, per account, rather than the whole request for its group caption).
+    return { connectionId: c.id, provider: c.provider, ...(long ? { caption: form.caption } : {}) };
+  }
+  const featured = featuredImage(form.media);
+  const sameMedia =
+    featured.length === form.media.length && featured[0]?.mediaId === form.media[0]?.mediaId;
+  return {
+    connectionId: c.id,
+    provider: c.provider,
+    options: articleOptions(article),
+    ...(long ? { caption: form.caption } : {}),
+    ...(sameMedia ? {} : { media: featured }),
+  };
 }
 
 const MODE_LABEL: Record<ScheduleMode, string> = {
@@ -85,11 +180,29 @@ export function validateForm(
   form: ComposerForm,
   queues: readonly QueueView[],
   now: Date,
+  connections: readonly ConnectionView[] = [],
 ): FormErrors {
   const errors: FormErrors = {};
   if (form.connectionIds.length === 0) errors.accounts = 'Select at least one account.';
-  if (form.caption.length > CAPTION_MAX) {
-    errors.caption = `Caption is ${form.caption.length - CAPTION_MAX} over the ${CAPTION_MAX} character limit.`;
+  // Without the connection list the form cannot know an account is WordPress; callers that select
+  // one pass `connections` (the Composer always does).
+  const targets = selectedConnections(connections, form.connectionIds);
+  const role = captionRole(targets);
+  if (form.caption.length > role.max) {
+    const over = (form.caption.length - role.max).toLocaleString('en-US');
+    const limit = role.max.toLocaleString('en-US').replace(/,/g, '');
+    errors.caption =
+      role.kind === 'both'
+        ? `The text is ${over} over the ${limit} character limit of the social accounts. Shorten it, or post the article on its own.`
+        : role.kind === 'article'
+          ? `The article is ${over} over the ${limit} character limit.`
+          : `Caption is ${over} over the ${limit} character limit.`;
+  } else if (role.kind !== 'caption' && form.caption.trim() === '') {
+    errors.caption = 'An article needs a body.';
+  }
+  if (role.kind !== 'caption') {
+    const article = validateArticle(form.article ?? emptyArticle());
+    if (Object.keys(article).length > 0) errors.article = article;
   }
   if (form.mode === 'at') {
     const at = validateScheduleAt(form.at, now);
@@ -140,10 +253,12 @@ export function buildCreatePostInput(
       break;
   }
 
+  const article = form.article ?? emptyArticle();
   return {
-    caption: form.caption,
+    // A body longer than a shared caption may be travels on the article's own variant instead.
+    caption: form.caption.length > CAPTION_MAX ? '' : form.caption,
     media: form.media,
-    variants: targets.map((c) => ({ connectionId: c.id, provider: c.provider })),
+    variants: targets.map((c) => variantFor(c, form, article)),
     schedule,
   };
 }
@@ -300,13 +415,17 @@ export function setGroupSelected(
  * time or a queue.
  */
 export function buildValidationInput(
-  form: Pick<ComposerForm, 'caption' | 'media'>,
+  form: Pick<ComposerForm, 'caption' | 'media' | 'article'>,
   connections: readonly ConnectionView[],
 ): CreatePostInput {
+  // A missing title is the form's own error, shown on the field once a WordPress account is
+  // picked; a stand-in keeps it from also flagging every WordPress account before one is.
+  const typed = form.article ?? emptyArticle();
+  const article = typed.title.trim() === '' ? { ...typed, title: 'Untitled' } : typed;
   return {
-    caption: form.caption,
+    caption: form.caption.length > CAPTION_MAX ? '' : form.caption,
     media: form.media,
-    variants: connections.map((c) => ({ connectionId: c.id, provider: c.provider })),
+    variants: connections.map((c) => variantFor(c, form, article)),
     schedule: { type: 'draft' },
   };
 }
@@ -358,8 +477,8 @@ export function contractRejected(issues: readonly PostValidationIssue[]): string
 }
 
 /** Has the operator put anything in that closing would throw away? */
-export function isDirty(form: Pick<ComposerForm, 'caption' | 'media'>): boolean {
-  return form.caption.trim() !== '' || form.media.length > 0;
+export function isDirty(form: Pick<ComposerForm, 'caption' | 'media' | 'article'>): boolean {
+  return form.caption.trim() !== '' || form.media.length > 0 || articleDirty(form.article);
 }
 
 /**

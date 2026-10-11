@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type {
   ConnectionView,
@@ -7,20 +7,22 @@ import type {
   PostView,
   QueueView,
 } from '@meegrow-social/contracts';
+import { articleMarkdownToHtml } from '@meegrow-social/contracts/article-markdown';
 import { ApiError, api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
 import { providerVisible } from '../lib/devProviders';
 import { platformMeta } from '../lib/platforms';
 import {
-  CAPTION_MAX,
   MEDIA_MAX,
   SCHEDULE_MODES,
   accountWarnings,
   buildCreatePostInput,
   buildValidationInput,
   busyLabel,
+  captionRole,
   contractRejected,
+  featuredImage,
   hasErrors,
   isDirty,
   nextSlotError,
@@ -38,6 +40,14 @@ import {
   type NextSlot,
   type ScheduleMode,
 } from '../lib/composer';
+import {
+  ARTICLE_STATUSES,
+  ARTICLE_TITLE_MAX,
+  emptyArticle,
+  isArticleProvider,
+  parseTerms,
+  type ArticleForm,
+} from '../lib/wordpress';
 import { AccountPicker } from '../components/AccountPicker';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
@@ -51,6 +61,7 @@ import { Select } from '../components/ui/Select';
 import { Textarea } from '../components/ui/Textarea';
 import {
   CalendarBlank,
+  CaretRight,
   CheckCircle,
   Clock,
   CloseIcon,
@@ -196,20 +207,116 @@ function MediaThumb({ item, onRemove }: { item: MediaItem; onRemove: () => void 
   );
 }
 
+/** Typography for the converter's HTML: a fixed set of tags, so a fixed set of rules. */
+const ARTICLE_PROSE = cn(
+  'break-words text-sm leading-relaxed text-body-ink',
+  '[&_p]:my-2 [&_a]:underline [&_strong]:font-semibold [&_strong]:text-ink',
+  '[&_h1]:mb-1 [&_h1]:mt-4 [&_h1]:text-lg [&_h1]:font-semibold [&_h1]:text-ink',
+  '[&_h2]:mb-1 [&_h2]:mt-4 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-ink',
+  '[&_h3]:mt-3 [&_h3]:font-semibold [&_h3]:text-ink [&_h4]:mt-3 [&_h4]:font-semibold',
+  '[&_h5]:mt-3 [&_h5]:font-semibold [&_h6]:mt-3 [&_h6]:font-semibold',
+  '[&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5',
+  '[&_blockquote]:my-2 [&_blockquote]:border-l-2 [&_blockquote]:border-hairline-strong [&_blockquote]:pl-3 [&_blockquote]:text-muted',
+  '[&_code]:rounded-xs [&_code]:bg-surface-soft [&_code]:px-1 [&_code]:font-mono [&_code]:text-caption',
+  '[&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-sm [&_pre]:bg-surface-soft [&_pre]:p-2 [&_pre_code]:p-0',
+  '[&_img]:my-2 [&_img]:max-w-full [&_img]:rounded-sm [&_hr]:my-3 [&_hr]:border-hairline',
+);
+
+/**
+ * An article as a reader meets it: featured image, title, body. The body is the HTML this app will
+ * send — made by the same converter the server runs (`articleMarkdownToHtml`), which builds every
+ * tag itself and escapes whatever was typed, which is what makes it safe to set as markup here.
+ * The site's theme decides the real look; this shows the structure and that the formatting took.
+ */
+function ArticlePreview({
+  article,
+  body,
+  image,
+}: {
+  article: ArticleForm;
+  body: string;
+  image: MediaItem | undefined;
+}) {
+  const html = useMemo(() => articleMarkdownToHtml(body), [body]);
+  const categories = parseTerms(article.categories);
+  const tags = parseTerms(article.tags);
+  const status = ARTICLE_STATUSES.find((s) => s.value === article.status);
+  return (
+    <article>
+      {image &&
+        (image.ref.url ? (
+          <img
+            src={image.ref.url}
+            alt={`Featured image: ${image.name}`}
+            className="aspect-video w-full object-cover"
+          />
+        ) : (
+          <div className="flex aspect-video w-full flex-col items-center justify-center gap-1 bg-surface-strong text-muted">
+            <ImageIcon size={28} aria-hidden="true" />
+            <span className="max-w-full truncate px-4 text-caption">
+              Featured image: {image.name}
+            </span>
+          </div>
+        ))}
+      <div className="px-4 py-3">
+        {categories.length > 0 && (
+          <p className="mb-1 truncate text-micro font-semibold uppercase tracking-wide text-muted">
+            {categories.join(' · ')}
+          </p>
+        )}
+        <h3
+          className={cn(
+            'break-words text-xl font-semibold leading-tight',
+            article.title.trim() ? 'text-ink' : 'text-muted',
+          )}
+        >
+          {article.title.trim() || 'Article title'}
+        </h3>
+        {article.excerpt.trim() && (
+          <p className="mt-1.5 break-words text-sm text-muted">{article.excerpt.trim()}</p>
+        )}
+        {html ? (
+          <div
+            className={cn(ARTICLE_PROSE, 'mt-3 max-h-96 overflow-y-auto')}
+            // A preview is not a place to leave from: links show, but do not navigate.
+            onClick={(e) => {
+              if ((e.target as HTMLElement).closest('a')) e.preventDefault();
+            }}
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        ) : (
+          <p className="mt-3 text-sm text-muted">The article will appear here.</p>
+        )}
+        {tags.length > 0 && (
+          <p className="mt-3 break-words text-caption text-muted">Tagged: {tags.join(', ')}</p>
+        )}
+      </div>
+      {status && article.status !== 'publish' && (
+        <p className="border-t border-hairline-soft bg-surface-soft px-4 py-2 text-caption text-muted">
+          <b className="font-semibold text-ink">{status.label} on WordPress.</b> {status.note}
+        </p>
+      )}
+    </article>
+  );
+}
+
 /**
  * What goes out, laid out like a post: the account, the caption, the media. Neutral on purpose —
  * it follows each platform's order (picture first or text first) but imitates no network's chrome.
- * With several accounts selected, a switcher picks whose post is shown.
+ * With several accounts selected, a switcher picks whose post is shown. A WordPress account shows
+ * an article instead (`ArticlePreview`).
  */
 function Preview({
   accounts,
   caption,
   media,
+  article,
   when,
 }: {
   accounts: ConnectionView[];
   caption: string;
   media: MediaItem[];
+  article: ArticleForm;
   when: string;
 }) {
   const [pickedId, setPickedId] = useState('');
@@ -219,6 +326,9 @@ function Preview({
     : null;
   const first = media[0];
   const mediaFirst = current ? MEDIA_FIRST.has(current.provider) : false;
+  const asArticle = current ? isArticleProvider(current.provider) : false;
+  // The image the article gets is the first IMAGE attached, wherever it sits in the list.
+  const featuredId = featuredImage(media.map((m) => m.ref))[0]?.mediaId;
 
   const text = (
     <p
@@ -312,7 +422,13 @@ function Preview({
             </span>
           </div>
         </div>
-        {mediaFirst ? (
+        {asArticle ? (
+          <ArticlePreview
+            article={article}
+            body={caption}
+            image={media.find((m) => m.ref.mediaId === featuredId)}
+          />
+        ) : mediaFirst ? (
           <>
             {picture}
             {text}
@@ -328,6 +444,11 @@ function Preview({
         <Clock size={14} className="mt-0.5 flex-none" aria-hidden="true" />
         <span>{when}</span>
       </p>
+      {asArticle && (
+        <p className="mt-1 text-caption text-muted">
+          The site’s theme decides the final look. This shows the structure that is sent.
+        </p>
+      )}
     </section>
   );
 }
@@ -356,6 +477,8 @@ export function Composer({
   });
 
   const [caption, setCaption] = useState('');
+  const [article, setArticle] = useState<ArticleForm>(emptyArticle);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [connectionIds, setConnectionIds] = useState<string[]>([]);
   const [mode, setMode] = useState<ScheduleMode>('draft');
@@ -456,12 +579,13 @@ export function Composer({
   // accounts it rejected there are set aside and the rest are asked about once more. Advisory only:
   // a failed dry run costs the warnings, never the form, and the server still decides on submit.
   const mediaKey = media.map((m) => m.ref.mediaId).join(',');
+  const articleKey = JSON.stringify(article);
   useEffect(() => {
     if (conns.length === 0) return;
     let stale = false;
     const timer = window.setTimeout(() => {
       void (async () => {
-        const draft = { caption, media: media.map((m) => m.ref) };
+        const draft = { caption, media: media.map((m) => m.ref), article };
         try {
           let found = (await api.validatePost(buildValidationInput(draft, conns))).issues;
           const rejected = new Set(contractRejected(found));
@@ -480,8 +604,9 @@ export function Composer({
       stale = true;
       window.clearTimeout(timer);
     };
-    // `mediaKey` stands for `media`: the refs matter, not the array's identity.
-  }, [caption, mediaKey, conns]);
+    // `mediaKey` stands for `media`, and `articleKey` for `article`: the values matter, not the
+    // objects' identity.
+  }, [caption, mediaKey, articleKey, conns]);
 
   useEffect(() => {
     if (outcome) outcomeHeading.current?.focus();
@@ -494,9 +619,14 @@ export function Composer({
     mode,
     at,
     queueId,
+    article,
   };
-  const errors = validateForm(form, queues, new Date());
+  const errors = validateForm(form, queues, new Date(), conns);
   const targets = selectedConnections(conns, connectionIds);
+  const role = captionRole(targets);
+  const writingArticle = role.kind !== 'caption';
+  const setArticleField = <K extends keyof ArticleForm>(field: K, value: ArticleForm[K]) =>
+    setArticle((prev) => ({ ...prev, [field]: value }));
   const warnings = accountWarnings(conns, issues);
   const flagged = targets.filter((c) => warnings.has(c.id)).length;
   const queueName = queues.find((q) => q.id === queueId)?.name;
@@ -537,7 +667,7 @@ export function Composer({
   const send = async () => {
     // Re-validate against the clock now: a scheduled time can have slipped into the past while the
     // form (or the confirm dialog) was open.
-    if (hasErrors(validateForm(form, queues, new Date()))) {
+    if (hasErrors(validateForm(form, queues, new Date(), conns))) {
       setAttempted(true);
       return;
     }
@@ -612,6 +742,7 @@ export function Composer({
 
   const reset = () => {
     setCaption('');
+    setArticle(emptyArticle());
     setMedia([]);
     setConnectionIds(conns[0] ? [conns[0].id] : []);
     setMode('draft');
@@ -623,7 +754,19 @@ export function Composer({
     setOutcome(null);
   };
 
-  const over = caption.length > CAPTION_MAX;
+  const over = caption.length > role.max;
+  // Too long is said as it happens; "needs a body" only once a send has been tried.
+  const captionError = errors.caption && (over || attempted) ? errors.caption : undefined;
+  const articleErrors = errors.article ?? {};
+  // A missing title waits for a send attempt; a field that is wrong as typed says so at once.
+  const titleError =
+    articleErrors.title && (attempted || article.title.trim() !== '')
+      ? articleErrors.title
+      : undefined;
+  const articleSettingsWrong = Boolean(
+    articleErrors.excerpt || articleErrors.slug || articleErrors.categories || articleErrors.tags,
+  );
+  const articleStatus = ARTICLE_STATUSES.find((s) => s.value === article.status);
   const accountsErrorId = 'accounts-error';
   const captionErrorId = 'caption-error';
   const atErrorId = 'at-error';
@@ -656,7 +799,7 @@ export function Composer({
         <EmptyState
           icon={Plugs}
           title="No connected accounts"
-          description="Connect a social account for this client before creating a post."
+          description="Connect an account for this client before creating a post."
           action={
             <Button asChild>
               <Link to="/connections">Go to Connections</Link>
@@ -705,30 +848,179 @@ export function Composer({
       <div className="grid lg:min-h-full lg:grid-cols-composer lg:grid-rows-head-fill xl:grid-cols-composer-wide xl:grid-rows-1">
         {/* Content first: what is being said, then with what, then when. */}
         <div className="min-w-0 lg:col-start-1 lg:row-start-1 lg:border-r lg:border-hairline-soft">
+          {writingArticle && (
+            <Section
+              title="Article"
+              hint={
+                <span
+                  id="article-title-count"
+                  className={cn(
+                    'tnum',
+                    article.title.trim().length > ARTICLE_TITLE_MAX && 'font-semibold text-error',
+                  )}
+                >
+                  {article.title.trim().length} / {ARTICLE_TITLE_MAX}
+                </span>
+              }
+            >
+              <div className="space-y-1.5">
+                <Label htmlFor="article-title">Title</Label>
+                <Input
+                  id="article-title"
+                  value={article.title}
+                  onChange={(e) => setArticleField('title', e.target.value)}
+                  placeholder="The headline of the article"
+                  aria-required="true"
+                  aria-invalid={Boolean(titleError)}
+                  aria-describedby={cn('article-title-count', titleError && 'article-title-error')}
+                />
+                {titleError && <FieldError id="article-title-error">{titleError}</FieldError>}
+              </div>
+              {/* Everything optional sits behind one disclosure; it opens itself when a field in it is wrong. */}
+              <details
+                className="group"
+                open={settingsOpen || articleSettingsWrong}
+                onToggle={(e) => setSettingsOpen(e.currentTarget.open)}
+              >
+                <summary className="flex min-h-11 cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-ink md:min-h-8 [&::-webkit-details-marker]:hidden">
+                  <CaretRight
+                    size={12}
+                    weight="bold"
+                    className="flex-none transition-transform group-open:rotate-90"
+                    aria-hidden="true"
+                  />
+                  Article settings
+                  <span className="font-normal text-muted">
+                    · {articleStatus?.label ?? 'Published'} on WordPress
+                  </span>
+                </summary>
+                <div className="grid gap-3 pb-1 pt-2 sm:grid-cols-2">
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <Label htmlFor="article-status">When it is sent, create it as</Label>
+                    <Select
+                      id="article-status"
+                      value={article.status}
+                      onChange={(e) =>
+                        setArticleField('status', e.target.value as ArticleForm['status'])
+                      }
+                      aria-describedby="article-status-note"
+                    >
+                      {ARTICLE_STATUSES.map((s) => (
+                        <option key={s.value} value={s.value}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </Select>
+                    <p id="article-status-note" className="text-caption text-muted">
+                      {articleStatus?.note} “When to post” below still decides when it is sent.
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="article-categories">Categories</Label>
+                    <Input
+                      id="article-categories"
+                      value={article.categories}
+                      onChange={(e) => setArticleField('categories', e.target.value)}
+                      placeholder="News, Guides"
+                      aria-invalid={Boolean(articleErrors.categories)}
+                      aria-describedby="article-categories-note"
+                    />
+                    {articleErrors.categories ? (
+                      <FieldError id="article-categories-note">
+                        {articleErrors.categories}
+                      </FieldError>
+                    ) : (
+                      <p id="article-categories-note" className="text-caption text-muted">
+                        Separate with commas. Each must already exist on the site.
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="article-tags">Tags</Label>
+                    <Input
+                      id="article-tags"
+                      value={article.tags}
+                      onChange={(e) => setArticleField('tags', e.target.value)}
+                      placeholder="plastic, zero waste"
+                      aria-invalid={Boolean(articleErrors.tags)}
+                      aria-describedby="article-tags-note"
+                    />
+                    {articleErrors.tags ? (
+                      <FieldError id="article-tags-note">{articleErrors.tags}</FieldError>
+                    ) : (
+                      <p id="article-tags-note" className="text-caption text-muted">
+                        Separate with commas. New tags are created.
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <Label htmlFor="article-slug">Link ending (slug)</Label>
+                    <Input
+                      id="article-slug"
+                      value={article.slug}
+                      onChange={(e) => setArticleField('slug', e.target.value)}
+                      placeholder="made from the title when left empty"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                      aria-invalid={Boolean(articleErrors.slug)}
+                      aria-describedby={articleErrors.slug ? 'article-slug-error' : undefined}
+                    />
+                    {articleErrors.slug && (
+                      <FieldError id="article-slug-error">{articleErrors.slug}</FieldError>
+                    )}
+                  </div>
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <Label htmlFor="article-excerpt">Excerpt</Label>
+                    <Textarea
+                      id="article-excerpt"
+                      value={article.excerpt}
+                      onChange={(e) => setArticleField('excerpt', e.target.value)}
+                      placeholder="A short summary. WordPress makes one from the body when left empty."
+                      rows={2}
+                      className="!min-h-16"
+                      aria-invalid={Boolean(articleErrors.excerpt)}
+                      aria-describedby={articleErrors.excerpt ? 'article-excerpt-error' : undefined}
+                    />
+                    {articleErrors.excerpt && (
+                      <FieldError id="article-excerpt-error">{articleErrors.excerpt}</FieldError>
+                    )}
+                  </div>
+                </div>
+              </details>
+            </Section>
+          )}
+
           <Section
-            title="Caption"
+            title={role.label}
             hint={
               <span id="caption-count" className={cn('tnum', over && 'font-semibold text-error')}>
-                {caption.length.toLocaleString()} / {CAPTION_MAX.toLocaleString()}
+                {caption.length.toLocaleString()} / {role.max.toLocaleString()}
               </span>
             }
           >
             <Label htmlFor="caption" className="sr-only">
-              Caption
+              {role.label}
             </Label>
             <Textarea
               id="caption"
               ref={captionField}
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
-              placeholder="Write something…"
-              rows={7}
-              aria-invalid={over}
-              aria-describedby={cn('caption-count', over && captionErrorId)}
+              placeholder={role.placeholder}
+              rows={role.kind === 'article' ? 14 : 7}
+              aria-invalid={Boolean(captionError)}
+              aria-describedby={cn(
+                'caption-count',
+                role.hint && 'caption-hint',
+                captionError && captionErrorId,
+              )}
             />
-            {over && errors.caption && (
-              <FieldError id={captionErrorId}>{errors.caption}</FieldError>
+            {role.hint && (
+              <p id="caption-hint" className="text-caption text-muted">
+                {role.hint}
+              </p>
             )}
+            {captionError && <FieldError id={captionErrorId}>{captionError}</FieldError>}
           </Section>
 
           <Section title="Media" hint={`${media.length} of ${MEDIA_MAX} · photos and videos`}>
@@ -779,6 +1071,9 @@ export function Composer({
                       : mediaFull
                         ? `Maximum of ${MEDIA_MAX} reached. Remove one to add another.`
                         : 'Add photos or videos, or drop files here.'}
+                    {writingArticle &&
+                      uploading === 0 &&
+                      ' WordPress uses the first image as the article’s featured image.'}
                   </p>
                 </li>
               </ul>
@@ -876,7 +1171,13 @@ export function Composer({
 
         <div className="min-w-0 border-t border-hairline-soft p-4 lg:col-start-1 lg:row-start-2 lg:border-r lg:border-hairline-soft xl:col-start-3 xl:row-start-1 xl:border-r-0 xl:border-t-0">
           <div className="xl:sticky xl:top-4">
-            <Preview accounts={targets} caption={caption} media={media} when={when} />
+            <Preview
+              accounts={targets}
+              caption={caption}
+              media={media}
+              article={article}
+              when={when}
+            />
           </div>
         </div>
       </div>
@@ -961,6 +1262,13 @@ export function Composer({
               </li>
             ))}
           </ul>
+          {writingArticle && articleStatus && (
+            <p className="mt-3 text-sm text-body-ink">
+              On WordPress the article is created as{' '}
+              <b className="font-semibold text-ink">{articleStatus.label.toLowerCase()}</b>.{' '}
+              {articleStatus.note}
+            </p>
+          )}
           <div className="mt-6 flex justify-end gap-2">
             <Button variant="ghost" onClick={closeConfirm}>
               Cancel

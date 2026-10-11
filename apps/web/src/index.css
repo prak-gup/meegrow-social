@@ -47,6 +47,7 @@
     --brand-linkedin: 210 90% 40%;
     --brand-x: 0 0% 0%;
     --brand-youtube: 0 100% 50%;
+    --brand-wordpress: 199 65% 37%;
 
     /* client identity hues — the content axis, orthogonal to the Rausch accent (lib/clientHue.ts) */
     --hue-1: 252 92% 66%; /* violet */

@@ -5,6 +5,7 @@ import {
   YoutubeLogo,
   XLogo,
   GoogleLogo,
+  WordpressLogo,
   Plugs,
   type IconComponent,
 } from './icons';
@@ -55,6 +56,12 @@ const PLATFORM: Record<string, PlatformMeta> = {
     brand: 'bg-brand-youtube',
     blurb: 'Upload to a channel',
   },
+  wordpress: {
+    label: 'WordPress',
+    Icon: WordpressLogo,
+    brand: 'bg-brand-wordpress',
+    blurb: 'Publish blog articles to a site',
+  },
 };
 
 /** Icon, label and brand tile for a provider; unknown (dev/fake) providers get a generic plug. */
@@ -85,6 +92,7 @@ const SIGN_IN_WITH: Record<string, string> = {
   linkedin: 'LinkedIn',
   'linkedin-page': 'LinkedIn',
   x: 'X',
+  wordpress: 'WordPress',
 };
 
 export function signInName(p: { provider: string; providerDisplayName: string }): string {
