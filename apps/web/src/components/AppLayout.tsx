@@ -10,6 +10,7 @@ import {
   House,
   CalendarBlank,
   SquaresFour,
+  ChartLineUp,
   UsersThree,
   Plugs,
   Key,
@@ -24,6 +25,11 @@ const TABS = [
   { to: '/overview', label: 'Overview', Icon: House },
   { to: '/calendar', label: 'Calendar', Icon: CalendarBlank },
   { to: '/content', label: 'Content', Icon: SquaresFour },
+  // Hidden until the numbers are validated against the platforms (docs/dev/ANALYTICS-UI-BRIEF.md §7).
+  // The route itself is always registered.
+  ...(import.meta.env.VITE_ANALYTICS_UI === 'true'
+    ? [{ to: '/analytics', label: 'Analytics', Icon: ChartLineUp }]
+    : []),
   { to: '/clients', label: 'Clients', Icon: UsersThree },
   { to: '/connections', label: 'Connections', Icon: Plugs },
   { to: '/settings/api-keys', label: 'API keys', Icon: Key },

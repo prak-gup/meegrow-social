@@ -10,6 +10,7 @@ import { Calendar } from './pages/Calendar';
 import { Posts } from './pages/Posts';
 import { ApiKeys } from './pages/ApiKeys';
 import { ChangePassword } from './pages/ChangePassword';
+import { Analytics } from './pages/Analytics';
 import { Invite } from './pages/Invite';
 
 /** Gates the authenticated area: waits for the session probe, redirects to /login if absent. */
@@ -34,6 +35,8 @@ export function App() {
         <Route path="/overview" element={<Overview />} />
         <Route path="/calendar" element={<Calendar />} />
         <Route path="/content" element={<Posts />} />
+        {/* Always registered so it can be validated by URL; the nav entry is flag-gated (AppLayout). */}
+        <Route path="/analytics" element={<Analytics />} />
         <Route path="/clients" element={<Clients />} />
         <Route path="/connections" element={<Connections />} />
         <Route path="/composer" element={<Composer />} />
