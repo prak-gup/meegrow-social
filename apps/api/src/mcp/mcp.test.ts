@@ -31,6 +31,7 @@ vi.mock('@meegrow-social/core', async (importOriginal) => ({
   listQueues: vi.fn(),
   previewQueueSlots: vi.fn(),
   registerMediaFromUrl: vi.fn(),
+  requestPostImport: vi.fn(),
   retryPost: vi.fn(),
   updatePost: vi.fn(),
   validatePost: vi.fn(),
@@ -57,6 +58,7 @@ const EXPECTED_TOOLS = [
   'get_post',
   'get_post_group',
   'get_workspace',
+  'import_past_posts',
   'list_connections',
   'list_media',
   'list_posts',
@@ -439,6 +441,40 @@ describe('retry / validate / health / slot preview', () => {
 
     expect((await call('connection_health', { connectionId: CONN })).body).toEqual(report);
     expect(core.getConnectionHealth).toHaveBeenCalledWith(WS, CONN);
+  });
+
+  it('import_past_posts queues an import for the key workspace, 90 days unless told', async () => {
+    const state = { supported: true, status: 'queued', windowDays: 90 };
+    vi.mocked(core.requestPostImport).mockResolvedValue(state as never);
+
+    expect((await call('import_past_posts', { connectionId: CONN })).body).toEqual(state);
+    expect(core.requestPostImport).toHaveBeenLastCalledWith(WS, CONN, { windowDays: 90 });
+
+    await call('import_past_posts', { connectionId: CONN, windowDays: 365 });
+    expect(core.requestPostImport).toHaveBeenLastCalledWith(WS, CONN, { windowDays: 365 });
+  });
+
+  it('import_past_posts refuses a window that is not offered, and an unknown connection', async () => {
+    expect((await call('import_past_posts', { connectionId: CONN, windowDays: 45 })).isError).toBe(
+      true,
+    );
+    expect(core.requestPostImport).not.toHaveBeenCalled();
+
+    vi.mocked(core.requestPostImport).mockResolvedValue(null);
+    expect(await call('import_past_posts', { connectionId: CONN })).toMatchObject({
+      isError: true,
+      body: { error: 'not_found', message: 'connection not found' },
+    });
+  });
+
+  it('import_past_posts reports a platform that cannot be imported from as invalid_request', async () => {
+    vi.mocked(core.requestPostImport).mockRejectedValue(
+      new core.ImportNotSupportedError('past posts cannot be imported from "gmb"'),
+    );
+    expect(await call('import_past_posts', { connectionId: CONN })).toMatchObject({
+      isError: true,
+      body: { error: 'invalid_request' },
+    });
   });
 
   it('connection_health is not_found for a connection the workspace does not have', async () => {

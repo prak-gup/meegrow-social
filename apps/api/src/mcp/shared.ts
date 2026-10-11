@@ -2,6 +2,7 @@ import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/
 import { z, ZodError } from 'zod';
 import {
   ConnectionNotFoundError,
+  ImportNotSupportedError,
   PostStateError,
   ProviderBadRequestError,
   QueueInactiveError,
@@ -41,6 +42,7 @@ function failFrom(err: unknown): CallToolResult {
   if (err instanceof PostStateError) return fail('invalid_state', err.message);
   if (err instanceof QueueInactiveError) return fail('invalid_request', err.message);
   if (err instanceof ProviderBadRequestError) return fail('invalid_request', err.message);
+  if (err instanceof ImportNotSupportedError) return fail('invalid_request', err.message);
   if (err instanceof ZodError) {
     return fail(
       'invalid_request',

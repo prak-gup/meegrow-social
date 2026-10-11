@@ -5,6 +5,7 @@ import { buildPublishSweepWorker } from './publish-sweep.js';
 import { buildMetricsRetentionWorker, buildRetentionWorker } from './retention.js';
 import { buildTokenHealthWorker } from './token-health.js';
 import { buildAnalyticsWorker } from './analytics.js';
+import { buildPostImportWorker } from './post-import.js';
 
 const redisUrl = process.env.REDIS_URL;
 if (!redisUrl) throw new Error('REDIS_URL is not set');
@@ -19,6 +20,7 @@ buildRetentionWorker(redisUrl);
 buildMetricsRetentionWorker(redisUrl);
 buildTokenHealthWorker(redisUrl);
 buildAnalyticsWorker(redisUrl);
+buildPostImportWorker(redisUrl);
 console.log(
-  'meegrow-social worker consuming publish + publish-sweep + logs-retention + metrics-retention + token-health + analytics queues',
+  'meegrow-social worker consuming publish + publish-sweep + logs-retention + metrics-retention + token-health + analytics + post-import queues',
 );

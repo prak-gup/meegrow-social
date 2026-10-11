@@ -1,8 +1,14 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { getConnectionHealth, listConnectionHealth, listConnections } from '@meegrow-social/core';
+import { IMPORT_WINDOW_DAYS } from '@meegrow-social/contracts';
+import {
+  getConnectionHealth,
+  listConnectionHealth,
+  listConnections,
+  requestPostImport,
+} from '@meegrow-social/core';
 import type { AuthContext } from '@meegrow-social/core';
-import { notFound, READ, respond } from './shared.js';
+import { notFound, READ, respond, WRITE } from './shared.js';
 
 export function registerConnectionTools(server: McpServer, ctx: AuthContext): void {
   server.registerTool(
@@ -64,6 +70,43 @@ export function registerConnectionTools(server: McpServer, ctx: AuthContext): vo
         const health = await getConnectionHealth(ctx.workspaceId, args.connectionId);
         if (!health) throw notFound('connection');
         return health;
+      }),
+  );
+
+  server.registerTool(
+    'import_past_posts',
+    {
+      description:
+        'Import the posts a connected account ALREADY has on the platform — published there or ' +
+        'through another tool — so they appear in list_posts and collect metrics. Queues the ' +
+        'work and returns at once; read progress from `import` on list_connections (`status` ' +
+        'queued | running | paused | done | failed, with counts). Imported posts have `source: ' +
+        '"imported"`, are always `published`, and can never be edited, cancelled, retried or ' +
+        'published from here. Posts this app published are recognised and not duplicated. Reads ' +
+        'the platform only; nothing is posted. Facebook Pages and Instagram only. A new account ' +
+        'is imported automatically (90 days) and re-checked every 6 hours, so this is for a ' +
+        'longer window or an immediate re-check. Calling it while a run is queued or in progress ' +
+        'changes nothing.',
+      inputSchema: {
+        connectionId: z.string().uuid().describe('An account, as returned by list_connections.'),
+        windowDays: z
+          .number()
+          .int()
+          .refine((d) => (IMPORT_WINDOW_DAYS as readonly number[]).includes(d), {
+            message: `must be one of ${IMPORT_WINDOW_DAYS.join(', ')}`,
+          })
+          .optional()
+          .describe(`How far back to read: ${IMPORT_WINDOW_DAYS.join(', ')} days. Default 90.`),
+      },
+      annotations: { ...WRITE, idempotentHint: true },
+    },
+    (args) =>
+      respond(async () => {
+        const state = await requestPostImport(ctx.workspaceId, args.connectionId, {
+          windowDays: args.windowDays ?? 90,
+        });
+        if (!state) throw notFound('connection');
+        return state;
       }),
   );
 }
