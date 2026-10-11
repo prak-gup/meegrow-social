@@ -331,6 +331,27 @@ PR. ~2 days.
 Metered ($0.20/link-post). Build only with cost-accounting: a per-workspace monthly cap in
 `workspaces.meta`, checked in `assertPublishable`. Not a launch dependency. ~1 day.
 
+### B6 · WordPress (`wordpress`) — blog articles, built 2026-10-11, NOT yet run live
+
+Self-hosted WordPress (any site exposing the core REST API with Application Passwords). Research,
+decisions, security notes and the live bring-up checklist: `research/wordpress.md`. Off by default:
+registered only when `WORDPRESS_ENABLED=true`. No migration.
+
+- **Connect** needs no app of ours: the operator (or a client, through an invite link) enters the
+  site address, we discover its REST API and send them to the site's own
+  `authorize-application.php`; WordPress redirects back with an application password, which is
+  verified and stored encrypted as the connection's access token. This is the first provider with
+  `connectInput` (a question before the redirect) and `credentialInCallback` (every flow bound to
+  the starting browser, one attempt per flow, callback answered by redirect, never a page).
+- **`safeFetch`** (`core/src/net/safe-fetch.ts`) is the one SSRF-guarded way to call a
+  user-supplied URL. `register_media_from_url` still uses a bare `fetch` and should move onto it
+  (not done here: it would change what that tool accepts).
+- **Post** = options arm `wordpress` (title required) + `caption` as the Markdown body (up to
+  100 000 chars on the variant) + the first image as featured image. Our scheduler decides when;
+  `options.status` decides what state it lands in on WordPress.
+- **Not built:** WordPress.com OAuth, update/delete after publish, analytics (core has none),
+  multisite, inline image upload. Each is specified in the research note.
+
 ---
 
 ## 5. Workstream C — Content-ops parity
