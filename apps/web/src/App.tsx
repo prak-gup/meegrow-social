@@ -9,6 +9,7 @@ import { Composer } from './pages/Composer';
 import { Calendar } from './pages/Calendar';
 import { Posts } from './pages/Posts';
 import { ApiKeys } from './pages/ApiKeys';
+import { ChangePassword } from './pages/ChangePassword';
 import { Invite } from './pages/Invite';
 
 /** Gates the authenticated area: waits for the session probe, redirects to /login if absent. */
@@ -37,6 +38,7 @@ export function App() {
         <Route path="/connections" element={<Connections />} />
         <Route path="/composer" element={<Composer />} />
         <Route path="/settings/api-keys" element={<ApiKeys />} />
+        <Route path="/settings/password" element={<ChangePassword />} />
         {/* legacy alias */}
         <Route path="/posts" element={<Navigate to="/content" replace />} />
       </Route>
