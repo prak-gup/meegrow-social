@@ -54,7 +54,9 @@ export function Table<T>({
   return (
     <div
       className={cn(
-        'rounded-md border border-hairline bg-canvas',
+        // `relative`: screen-reader-only text in a cell is absolutely positioned, and only a
+        // positioned scroll frame clips it — otherwise a wide table widens the whole page.
+        'relative rounded-md border border-hairline bg-canvas',
         stickyHeader ? 'max-h-screen overflow-auto' : 'overflow-x-auto',
         className,
       )}

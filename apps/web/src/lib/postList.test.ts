@@ -1,19 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { PostView } from '@meegrow-social/contracts';
 import {
-  NO_FILTERS,
-  PAGE_SIZE,
   VIEW_STORAGE_KEY,
   appendPage,
   captionSnippet,
-  hasActiveFilters,
-  matchesFilters,
   mayHaveMore,
-  postActions,
   readViewMode,
-  replacePost,
   safeExternalUrl,
-  whenLabel,
   writeViewMode,
 } from './postList';
 
@@ -35,9 +28,9 @@ const post = (over: Partial<PostView> = {}): PostView => ({
 
 describe('pagination', () => {
   it('may have more only when the page was full', () => {
-    expect(mayHaveMore(PAGE_SIZE)).toBe(true);
-    expect(mayHaveMore(PAGE_SIZE - 1)).toBe(false);
-    expect(mayHaveMore(0)).toBe(false);
+    expect(mayHaveMore(50, 50)).toBe(true);
+    expect(mayHaveMore(49, 50)).toBe(false);
+    expect(mayHaveMore(0, 50)).toBe(false);
     expect(mayHaveMore(100, 100)).toBe(true);
   });
 
@@ -46,65 +39,6 @@ describe('pagination', () => {
     const b = post({ id: 'b' });
     const c = post({ id: 'c' });
     expect(appendPage([a, b], [b, c]).map((p) => p.id)).toEqual(['a', 'b', 'c']);
-  });
-});
-
-describe('local list updates', () => {
-  it('replaces a post in place', () => {
-    const a = post({ id: 'a' });
-    const b = post({ id: 'b', caption: 'old' });
-    const next = replacePost([a, b], { ...b, caption: 'new' });
-    expect(next.map((p) => p.caption)).toEqual(['Hello', 'new']);
-  });
-
-  it('matches posts against the active filters', () => {
-    expect(hasActiveFilters(NO_FILTERS)).toBe(false);
-    expect(hasActiveFilters({ status: '', provider: 'x' })).toBe(true);
-    expect(matchesFilters(post({ status: 'cancelled' }), NO_FILTERS)).toBe(true);
-    expect(
-      matchesFilters(post({ status: 'cancelled' }), { status: 'scheduled', provider: '' }),
-    ).toBe(false);
-    expect(matchesFilters(post(), { status: 'scheduled', provider: 'instagram' })).toBe(false);
-    expect(matchesFilters(post(), { status: 'scheduled', provider: 'facebook' })).toBe(true);
-  });
-});
-
-describe('whenLabel', () => {
-  it('has no date line for drafts', () => {
-    expect(whenLabel(post({ status: 'draft', publishAt: null }))).toBeNull();
-  });
-  it('words the date by status', () => {
-    expect(whenLabel(post({ status: 'scheduled' }))).toEqual({
-      prefix: 'Scheduled for',
-      showDate: true,
-    });
-    expect(whenLabel(post({ status: 'published' }))).toEqual({
-      prefix: 'Published',
-      showDate: true,
-    });
-    expect(whenLabel(post({ status: 'failed' }))).toEqual({
-      prefix: 'Was scheduled for',
-      showDate: true,
-    });
-    expect(whenLabel(post({ status: 'cancelled' }))).toEqual({
-      prefix: 'Was scheduled for',
-      showDate: true,
-    });
-  });
-  it('treats a date-less scheduled post as "post now"', () => {
-    expect(whenLabel(post({ status: 'scheduled', publishAt: null }))).toEqual({
-      prefix: 'Sending as soon as possible',
-      showDate: false,
-    });
-  });
-  it('says so when a published post has no real date', () => {
-    const missing = { prefix: 'Time not recorded', showDate: false };
-    expect(whenLabel(post({ status: 'published', publishAt: null }))).toEqual(missing);
-    expect(whenLabel(post({ status: 'published', publishAt: new Date(0) }))).toEqual(missing);
-  });
-  it('shows nothing for a missing date on a failed or cancelled post', () => {
-    expect(whenLabel(post({ status: 'failed', publishAt: null }))).toBeNull();
-    expect(whenLabel(post({ status: 'cancelled', publishAt: new Date(0) }))).toBeNull();
   });
 });
 
@@ -118,27 +52,15 @@ describe('captionSnippet', () => {
   });
 });
 
-describe('postActions', () => {
-  it('offers edit and cancel only on draft and scheduled', () => {
-    for (const status of ['draft', 'scheduled'] as const) {
-      expect(postActions(post({ status }))).toMatchObject({ edit: true, cancel: true });
-    }
-    for (const status of ['publishing', 'published', 'failed', 'cancelled'] as const) {
-      expect(postActions(post({ status }))).toMatchObject({ edit: false, cancel: false });
-    }
-  });
-  it('offers the view link only for a safe release URL', () => {
-    expect(
-      postActions(post({ status: 'published', releaseUrl: 'https://x.com/p/1' })).viewUrl,
-    ).toBe('https://x.com/p/1');
-    expect(postActions(post({ status: 'published', releaseUrl: null })).viewUrl).toBeNull();
-  });
+describe('safeExternalUrl', () => {
   it('rejects non-http(s) URLs', () => {
     expect(safeExternalUrl('javascript:alert(1)')).toBeNull();
     expect(safeExternalUrl('data:text/html,hi')).toBeNull();
     expect(safeExternalUrl('not a url')).toBeNull();
     expect(safeExternalUrl(undefined)).toBeNull();
+    expect(safeExternalUrl(null)).toBeNull();
     expect(safeExternalUrl('http://example.com/a')).toBe('http://example.com/a');
+    expect(safeExternalUrl('https://x.com/p/1')).toBe('https://x.com/p/1');
   });
 });
 

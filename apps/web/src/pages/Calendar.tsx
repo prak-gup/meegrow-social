@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type { CalendarDay, PostView } from '@meegrow-social/contracts';
 import { api } from '../lib/api';
 import { providerVisible } from '../lib/devProviders';
@@ -12,20 +13,26 @@ import {
   todayKey,
 } from '../lib/calendarGrid';
 import { cn } from '../lib/cn';
-import { platformMeta } from '../lib/platforms';
-import { formatPublishTime, postTimeLabel } from '../lib/postDate';
-import { replacePost } from '../lib/postList';
-import { STATUS_VARIANT, canEditPost } from '../lib/postStatus';
-import { EditCaptionModal } from '../components/EditCaptionModal';
-import { Badge } from '../components/ui/Badge';
+import { formatPublishTime } from '../lib/postDate';
+import { dayEntries, groupThumb, mergePosts, type CalendarEntry } from '../lib/postGroups';
+import { captionSnippet, writeViewMode, type ViewMode } from '../lib/postList';
+import { CHIP } from '../lib/statusChip';
+import { PlatformIcons, STATUS_EDGE, StatusGlyph } from '../components/PostMarks';
+import { usePostGroupActions, type PostChange } from '../components/PostGroupActions';
+import { PostThumb } from '../components/PostThumb';
 import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorState } from '../components/ui/ErrorState';
+import { ViewToggle } from '../components/ui/FilterBar';
 import { PageHeader } from '../components/ui/PageHeader';
-import { CalendarBlank, CaretLeft, CaretRight } from '../lib/icons';
+import { RowMenu, type RowMenuItem } from '../components/ui/RowMenu';
+import { StatusChip } from '../components/ui/StatusChip';
+import { CalendarBlank, CaretLeft, CaretRight, CloseIcon, Rows, SquaresFour } from '../lib/icons';
 
-/** Chips shown in a day cell before the rest fold behind "+N more". */
-const MAX_CHIPS = 3;
+/** Entries shown in a day cell before the rest fold behind "+N more". */
+const MAX_ENTRIES = 3;
+const MENU_WIDTH = 232;
+const POPOVER_WIDTH = 288;
 
 const longDate = (key: string) =>
   parseDateKey(key).toLocaleDateString(undefined, {
@@ -35,73 +42,210 @@ const longDate = (key: string) =>
     year: 'numeric',
   });
 
+type ItemsFor = (entry: CalendarEntry) => RowMenuItem[];
+
+interface EntryProps {
+  entry: CalendarEntry;
+  accounts: ReadonlyMap<string, string>;
+  items: ItemsFor;
+}
+
+const entryTime = (entry: CalendarEntry) => formatPublishTime(new Date(entry.at));
+
+/** What a screen reader hears for an entry: time, status, where it goes, and the caption. */
+const entryLabel = (entry: CalendarEntry) =>
+  `Actions for post at ${entryTime(entry)}, ${CHIP[entry.status].label}: ${captionSnippet(entry.caption)}`;
+
 /**
- * A post on the calendar. A draft or scheduled post is a button that runs the same "Edit" as
- * Content; anything already sent is read-only, so it is not offered as a control.
+ * A post on the month grid: one line — status mark, time, thumbnail, platforms, the caption's
+ * start — with its status also on the left edge. The whole entry is the button that opens the same
+ * actions the post has on Content.
  */
-function PostChip({
-  post,
-  roomy = false,
-  onEdit,
-}: {
-  post: PostView;
-  /** Agenda rows get the platform name and a two-line caption; grid chips stay compact. */
-  roomy?: boolean;
-  onEdit: (post: PostView) => void;
-}) {
-  const platform = platformMeta({ identifier: post.provider, displayName: post.provider });
-  const time = postTimeLabel(post, formatPublishTime);
-  const caption = post.caption || '(no caption)';
-  const body = (
-    <>
-      <span className="flex w-full min-w-0 items-center gap-1.5">
-        <span
-          className={cn(
-            'grid h-5 w-5 flex-none place-items-center rounded-xs text-white',
-            platform.brand,
-          )}
-          aria-hidden="true"
-        >
-          <platform.Icon size={12} weight="fill" />
-        </span>
-        {roomy && (
-          <span className="truncate text-caption font-medium text-ink">{platform.label}</span>
-        )}
-        <span className="tnum flex-none text-micro font-semibold text-ink">{time}</span>
-        <Badge variant={STATUS_VARIANT[post.status]} className="ml-auto px-1.5 py-0 text-micro">
-          {post.status}
-        </Badge>
-      </span>
+function CompactEntry({ entry, accounts, items }: EntryProps) {
+  return (
+    <RowMenu
+      label={entryLabel(entry)}
+      items={items(entry)}
+      align="start"
+      width={MENU_WIDTH}
+      className={cn(
+        'flex h-6 w-full min-w-0 items-center gap-1 rounded-xs border border-l-2 border-hairline-soft bg-canvas px-1 text-left hover:bg-surface-soft',
+        STATUS_EDGE[entry.status],
+        entry.status === 'cancelled' && 'opacity-70',
+      )}
+    >
+      <StatusGlyph status={entry.status} />
+      <span className="tnum flex-none text-micro font-semibold text-ink">{entryTime(entry)}</span>
+      <PostThumb thumb={groupThumb(entry)} size="xs" />
+      <PlatformIcons posts={entry.posts} accounts={accounts} size="sm" />
       <span
         className={cn(
-          'w-full text-caption',
-          post.caption ? 'text-body-ink' : 'text-muted',
-          roomy ? 'line-clamp-2' : 'truncate',
+          'min-w-0 flex-1 truncate text-micro',
+          entry.caption ? 'text-body-ink' : 'text-muted',
         )}
       >
-        {caption}
+        {entry.caption || '(no caption)'}
       </span>
-    </>
+    </RowMenu>
   );
-  const box =
-    'flex w-full min-w-0 flex-col gap-1 rounded-xs border border-hairline bg-canvas px-1.5 py-1 text-left';
-  if (!canEditPost(post.status)) {
-    return (
-      <div className={box}>
-        <span className="sr-only">{platform.label}, </span>
-        {body}
-      </div>
-    );
-  }
+}
+
+/** The same entry with room to breathe: the agenda on a phone, and the "+N more" list. */
+function RoomyEntry({ entry, accounts, items }: EntryProps) {
   return (
-    <button
-      type="button"
-      onClick={() => onEdit(post)}
-      aria-label={`Edit caption: ${platform.label}, ${time}, ${post.status}, ${caption}`}
-      className={cn(box, 'hover:bg-surface-soft')}
+    <RowMenu
+      label={entryLabel(entry)}
+      items={items(entry)}
+      align="start"
+      width={MENU_WIDTH}
+      className={cn(
+        'flex w-full min-w-0 items-center gap-2.5 rounded-sm border border-l-2 border-hairline bg-canvas p-2 text-left hover:bg-surface-soft',
+        STATUS_EDGE[entry.status],
+      )}
     >
-      {body}
-    </button>
+      <PostThumb
+        thumb={groupThumb(entry)}
+        caption={entry.caption}
+        size="sm"
+        className="h-10 w-10"
+      />
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="tnum flex-none text-caption font-semibold text-ink">
+            {entryTime(entry)}
+          </span>
+          <PlatformIcons posts={entry.posts} accounts={accounts} />
+          <StatusChip status={entry.status} className="ml-auto" />
+        </span>
+        <span
+          className={cn(
+            'mt-0.5 line-clamp-2 break-words text-caption',
+            entry.caption ? 'text-body-ink' : 'text-muted',
+          )}
+        >
+          {entry.caption || '(no caption)'}
+        </span>
+      </span>
+    </RowMenu>
+  );
+}
+
+/**
+ * Every post of a day that did not fit its cell, in a popover anchored to the "+N more" button.
+ * Fixed in a portal so the table can never clip it. Focus moves in on open; Escape, Tab past the
+ * end, or a click outside closes it and Escape returns focus to the button. A click in an entry's
+ * own menu or in a dialog opened from it is not "outside".
+ */
+function DayPopover({
+  date,
+  entries,
+  anchor,
+  onClose,
+  ...entryProps
+}: {
+  date: string;
+  entries: CalendarEntry[];
+  anchor: HTMLElement;
+  onClose: (restoreFocus: boolean) => void;
+} & Omit<EntryProps, 'entry'>) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const r = anchor.getBoundingClientRect();
+    const height = ref.current?.offsetHeight ?? 0;
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - POPOVER_WIDTH - 8));
+    const below = r.bottom + 4;
+    // Opens downward; above the button when there is no room below and there is above.
+    const top =
+      below + height > window.innerHeight - 8 && r.top - height - 4 > 8
+        ? r.top - height - 4
+        : below;
+    setPos({ top, left });
+  }, [anchor, entries.length]);
+
+  useEffect(() => {
+    if (pos) ref.current?.querySelector<HTMLElement>('button')?.focus();
+    // Keyed on "has a position", so a later re-placement does not steal focus from an open menu.
+  }, [pos === null]);
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Element;
+      if (ref.current?.contains(t) || anchor.contains(t)) return;
+      if (t.closest?.('[role="menu"], [aria-modal="true"]')) return;
+      onClose(false);
+    };
+    const onResize = () => onClose(false);
+    document.addEventListener('mousedown', onDown);
+    window.addEventListener('resize', onResize);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [anchor, onClose]);
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose(true);
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    // Keep Tab inside the popover: it is a small dialog, and the page behind it is still there.
+    const focusables = Array.from(ref.current?.querySelectorAll<HTMLElement>('button') ?? []);
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last?.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first?.focus();
+    }
+  };
+
+  return createPortal(
+    <div
+      ref={ref}
+      role="dialog"
+      aria-label={`Posts on ${longDate(date)}`}
+      onKeyDown={onKeyDown}
+      style={{
+        position: 'fixed',
+        width: POPOVER_WIDTH,
+        visibility: pos ? 'visible' : 'hidden',
+        ...pos,
+      }}
+      className="z-40 max-h-96 overflow-y-auto rounded-md border border-hairline bg-canvas p-2 shadow-1"
+    >
+      <div className="mb-1.5 flex items-center justify-between gap-2 pl-1">
+        <p className="text-sm font-semibold text-ink">
+          {parseDateKey(date).toLocaleDateString(undefined, {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+          })}
+          <span className="tnum ml-1.5 font-normal text-muted">{entries.length} posts</span>
+        </p>
+        <button
+          type="button"
+          onClick={() => onClose(true)}
+          aria-label="Close"
+          className="grid h-7 w-7 flex-none place-items-center rounded-sm text-muted hover:bg-surface-strong hover:text-ink"
+        >
+          <CloseIcon size={14} />
+        </button>
+      </div>
+      <ul className="space-y-1.5">
+        {entries.map((entry) => (
+          <li key={entry.id}>
+            <RoomyEntry entry={entry} {...entryProps} />
+          </li>
+        ))}
+      </ul>
+    </div>,
+    document.body,
   );
 }
 
@@ -112,116 +256,133 @@ function TodayMark() {
 function MonthGrid({
   year,
   month,
-  postsByDate,
-  expanded,
-  onToggle,
-  onEdit,
+  entriesByDate,
+  ...entryProps
 }: {
   year: number;
   month: number;
-  postsByDate: Map<string, PostView[]>;
-  expanded: ReadonlySet<string>;
-  onToggle: (date: string) => void;
-  onEdit: (post: PostView) => void;
-}) {
+  entriesByDate: Map<string, CalendarEntry[]>;
+} & Omit<EntryProps, 'entry'>) {
   const weeks = useMemo(() => buildMonthGrid(year, month), [year, month]);
+  const [open, setOpen] = useState<{ date: string; anchor: HTMLElement } | null>(null);
+  const closePopover = useCallback((restoreFocus: boolean) => {
+    setOpen((current) => {
+      if (restoreFocus) current?.anchor.focus();
+      return null;
+    });
+  }, []);
   const today = todayKey();
   const caption = parseDateKey(`${year}-${String(month).padStart(2, '0')}-01`).toLocaleDateString(
     undefined,
     { month: 'long', year: 'numeric' },
   );
+  const openEntries = open ? (entriesByDate.get(open.date) ?? []) : [];
   return (
-    // A plain table, not an ARIA grid: every chip and "+N more" is a real button in reading order,
-    // so Tab walks the month without promising arrow-key behaviour it does not have.
-    <table className="hidden w-full table-fixed border-collapse border border-hairline md:table">
-      <caption className="sr-only">Posts in {caption}</caption>
-      <thead>
-        <tr>
-          {(weeks[0] ?? []).map(({ date }) => {
-            const d = parseDateKey(date);
-            return (
-              <th
-                key={date}
-                scope="col"
-                className="border border-hairline bg-surface-soft px-2 py-2 text-left text-caption font-semibold text-muted"
-              >
-                <span aria-hidden="true">
-                  {d.toLocaleDateString(undefined, { weekday: 'short' })}
-                </span>
-                <span className="sr-only">
-                  {d.toLocaleDateString(undefined, { weekday: 'long' })}
-                </span>
-              </th>
-            );
-          })}
-        </tr>
-      </thead>
-      <tbody>
-        {weeks.map((week) => (
-          <tr key={week[0]?.date}>
-            {week.map(({ date, day, inMonth }) => {
-              const posts = postsByDate.get(date) ?? [];
-              const isToday = date === today;
-              const open = expanded.has(date);
-              const shown = open ? posts : posts.slice(0, MAX_CHIPS);
-              const hidden = posts.length - MAX_CHIPS;
+    <>
+      {/* A plain table, not an ARIA grid: every entry and "+N more" is a real button in reading
+          order, so Tab walks the month without promising arrow-key behaviour it does not have. */}
+      <table className="hidden w-full table-fixed border-collapse border border-hairline md:table">
+        <caption className="sr-only">Posts in {caption}</caption>
+        <thead>
+          <tr>
+            {(weeks[0] ?? []).map(({ date }) => {
+              const d = parseDateKey(date);
               return (
-                <td
+                <th
                   key={date}
-                  aria-current={isToday ? 'date' : undefined}
-                  className={cn(
-                    'h-28 min-w-0 border border-hairline-soft p-1.5 align-top',
-                    !inMonth && 'bg-surface-soft',
-                    isToday && 'border-2 border-ink',
-                  )}
+                  scope="col"
+                  className="border border-hairline bg-surface-soft px-2 py-1.5 text-left text-caption font-medium text-muted"
                 >
-                  <div className="mb-1 flex items-center gap-1.5">
-                    <time
-                      dateTime={date}
-                      aria-label={longDate(date)}
-                      className={cn(
-                        'tnum grid h-6 min-w-6 place-items-center rounded-full px-1 text-caption',
-                        !inMonth && 'text-muted-soft',
-                        inMonth && !isToday && 'font-medium text-ink',
-                        isToday && 'bg-ink font-bold text-white',
-                      )}
-                    >
-                      {day}
-                    </time>
-                    {isToday && <TodayMark />}
-                  </div>
-                  <div className="space-y-1">
-                    {shown.map((p) => (
-                      <PostChip key={p.id} post={p} onEdit={onEdit} />
-                    ))}
-                    {hidden > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => onToggle(date)}
-                        aria-expanded={open}
-                        aria-label={
-                          open
-                            ? `Show fewer posts on ${longDate(date)}`
-                            : `+${hidden} more posts on ${longDate(date)}`
-                        }
-                        className="w-full rounded-xs px-1.5 py-1 text-left text-caption font-semibold text-ink underline hover:bg-surface-soft"
-                      >
-                        {open ? 'Show fewer' : `+${hidden} more`}
-                      </button>
-                    )}
-                  </div>
-                </td>
+                  <span aria-hidden="true">
+                    {d.toLocaleDateString(undefined, { weekday: 'short' })}
+                  </span>
+                  <span className="sr-only">
+                    {d.toLocaleDateString(undefined, { weekday: 'long' })}
+                  </span>
+                </th>
               );
             })}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {weeks.map((week) => (
+            <tr key={week[0]?.date}>
+              {week.map(({ date, day, inMonth }) => {
+                const entries = entriesByDate.get(date) ?? [];
+                const isToday = date === today;
+                const hidden = entries.length - MAX_ENTRIES;
+                return (
+                  <td
+                    key={date}
+                    aria-current={isToday ? 'date' : undefined}
+                    className={cn(
+                      'h-28 min-w-0 border border-hairline-soft p-1 align-top',
+                      !inMonth && 'bg-surface-soft',
+                      isToday && 'border-2 border-ink',
+                    )}
+                  >
+                    <div className="mb-0.5 flex items-center gap-1.5">
+                      <time
+                        dateTime={date}
+                        aria-label={longDate(date)}
+                        className={cn(
+                          'tnum grid h-5 min-w-5 place-items-center rounded-full px-1 text-caption',
+                          !inMonth && 'text-muted-soft',
+                          inMonth && !isToday && 'font-medium text-ink',
+                          isToday && 'bg-ink font-bold text-white',
+                        )}
+                      >
+                        {day}
+                      </time>
+                      {isToday && <TodayMark />}
+                    </div>
+                    <div className="space-y-0.5">
+                      {entries.slice(0, MAX_ENTRIES).map((entry) => (
+                        <CompactEntry key={entry.id} entry={entry} {...entryProps} />
+                      ))}
+                      {hidden > 0 && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            const anchor = e.currentTarget;
+                            setOpen((current) =>
+                              current?.date === date ? null : { date, anchor },
+                            );
+                          }}
+                          aria-haspopup="dialog"
+                          aria-expanded={open?.date === date}
+                          aria-label={`All ${entries.length} posts on ${longDate(date)}`}
+                          className="w-full rounded-xs px-1 text-left text-micro font-semibold text-ink underline hover:bg-surface-soft"
+                        >
+                          +{hidden} more
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {open && openEntries.length > 0 && (
+        <DayPopover
+          date={open.date}
+          entries={openEntries}
+          anchor={open.anchor}
+          onClose={closePopover}
+          {...entryProps}
+        />
+      )}
+    </>
   );
 }
 
 /** Phone layout: only the days that have posts, in date order. */
-function Agenda({ days, onEdit }: { days: CalendarDay[]; onEdit: (post: PostView) => void }) {
+function Agenda({
+  days,
+  ...entryProps
+}: { days: Array<{ date: string; entries: CalendarEntry[] }> } & Omit<EntryProps, 'entry'>) {
   const today = todayKey();
   return (
     <ol className="space-y-4 md:hidden">
@@ -238,9 +399,9 @@ function Agenda({ days, onEdit }: { days: CalendarDay[]; onEdit: (post: PostView
             {day.date === today && <TodayMark />}
           </h2>
           <ul className="space-y-1.5">
-            {day.posts.map((p) => (
-              <li key={p.id}>
-                <PostChip post={p} roomy onEdit={onEdit} />
+            {day.entries.map((entry) => (
+              <li key={entry.id}>
+                <RoomyEntry entry={entry} {...entryProps} />
               </li>
             ))}
           </ul>
@@ -250,8 +411,13 @@ function Agenda({ days, onEdit }: { days: CalendarDay[]; onEdit: (post: PostView
   );
 }
 
-/** Month view of every post for the active client, bucketed by day in the browser's timezone. */
+/**
+ * Month view of every post for the active client, bucketed by day in the browser's timezone. One
+ * entry per composed post: a day's posts are grouped here (lib/postGroups `dayEntries`), which is
+ * safe because the calendar API returns the whole month at once.
+ */
 export function Calendar() {
+  const navigate = useNavigate();
   const [cursor, setCursor] = useState(() => {
     const now = new Date();
     return { year: now.getFullYear(), month: now.getMonth() + 1 };
@@ -259,23 +425,26 @@ export function Calendar() {
   const [days, setDays] = useState<CalendarDay[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Days whose "+N more" is open; bumping `attempt` re-runs the load (retry).
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  // Bumping `attempt` re-runs the load (retry, or a post moved to another day).
   const [attempt, setAttempt] = useState(0);
-  const [editing, setEditing] = useState<PostView | null>(null);
-  const [notice, setNotice] = useState('');
+  const [accounts, setAccounts] = useState<ReadonlyMap<string, string>>(new Map());
   const { year, month } = cursor;
+  // A reload after a change keeps the grid on screen; only a first load or a new month blanks it.
+  const shownKey = useRef('');
 
   useEffect(() => {
     // A slow response for a month the operator already left must not overwrite the current one.
     let stale = false;
-    setLoading(true);
+    const key = `${year}-${month}`;
+    if (shownKey.current !== key) setLoading(true);
     setError(null);
     api
       .calendar(year, month, Intl.DateTimeFormat().resolvedOptions().timeZone)
       .then((cal) => {
         // Dev/fake posts stay out of every view in production (lib/devProviders).
-        if (!stale) setDays(prepareDays(cal.days, providerVisible));
+        if (stale) return;
+        setDays(prepareDays(cal.days, providerVisible));
+        shownKey.current = key;
       })
       .catch((e: unknown) => {
         if (!stale) setError(e instanceof Error ? e.message : 'Please try again.');
@@ -288,39 +457,56 @@ export function Calendar() {
     };
   }, [year, month, attempt]);
 
-  const postsByDate = useMemo(() => new Map(days.map((d) => [d.date, d.posts])), [days]);
+  // Account names for hover titles and dialogs. Without them the entries just show the platform.
+  useEffect(() => {
+    void api
+      .listConnections()
+      .then((res) => setAccounts(new Map(res.connections.map((c) => [c.id, c.displayName]))))
+      .catch(() => setAccounts(new Map()));
+  }, []);
+
+  const entryDays = useMemo(
+    () => days.map((d) => ({ date: d.date, entries: dayEntries(d.posts) })),
+    [days],
+  );
+  const entriesByDate = useMemo(
+    () => new Map(entryDays.map((d) => [d.date, d.entries])),
+    [entryDays],
+  );
+
+  const onChanged = useCallback((posts: PostView[], change: PostChange) => {
+    // A caption edit, a cancel or a retry cannot move a post to another day, so the variants are
+    // swapped in place: the grid stays mounted and focus returns to the entry that opened the
+    // dialog. A new time can move it to another day or month, which only the API can bucket.
+    if (change === 'time') {
+      setAttempt((a) => a + 1);
+      return;
+    }
+    setDays((prev) => prev.map((d) => ({ ...d, posts: mergePosts(d.posts, posts) })));
+  }, []);
+  // A copy is a draft with no date, so it is not on the calendar: say where it went.
+  const onDuplicated = useCallback(() => undefined, []);
+  const actions = usePostGroupActions({ accounts, onChanged, onDuplicated });
+  const entryProps = { accounts, items: actions.items };
 
   const go = (to: { year: number; month: number }) => {
-    setExpanded(new Set());
+    actions.clearMessages();
     setCursor(to);
   };
-  const toggle = (date: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(date)) next.add(date);
-      return next;
-    });
-  // Clearing the notice first lets a second save in a row be announced again.
-  const edit = useCallback((post: PostView) => {
-    setNotice('');
-    setEditing(post);
-  }, []);
-  const closeEdit = useCallback(() => setEditing(null), []);
-  // A caption edit cannot move a post to another day, so the saved post is swapped in place: the
-  // grid stays mounted and focus returns to the chip that opened the dialog.
-  const saved = useCallback((post: PostView) => {
-    setDays((prev) => prev.map((d) => ({ ...d, posts: replacePost(d.posts, post) })));
-    setEditing(null);
-    setNotice('Caption saved.');
-  }, []);
+  const chooseView = (mode: string) => {
+    if (mode === 'calendar') return;
+    writeViewMode(mode as ViewMode);
+    navigate('/content');
+  };
 
   const first = parseDateKey(`${year}-${String(month).padStart(2, '0')}-01`);
   const monthName = first.toLocaleDateString(undefined, { month: 'long' });
   const title = first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
   const now = new Date();
+  const duplicated = actions.notice.startsWith('Duplicated');
 
   return (
-    <div className="space-y-4">
+    <div>
       <PageHeader
         title={
           <span aria-live="polite">
@@ -329,7 +515,6 @@ export function Calendar() {
           </span>
         }
         subtitle="Scheduled and published posts for this client."
-        className="mb-0"
         actions={
           <>
             <Button
@@ -339,7 +524,7 @@ export function Calendar() {
               disabled={!canShiftMonth(year, month, -1)}
               onClick={() => go(shiftMonth(year, month, -1))}
             >
-              <CaretLeft size={18} />
+              <CaretLeft size={16} />
             </Button>
             <Button
               variant="outline"
@@ -348,18 +533,48 @@ export function Calendar() {
               disabled={!canShiftMonth(year, month, 1)}
               onClick={() => go(shiftMonth(year, month, 1))}
             >
-              <CaretRight size={18} />
+              <CaretRight size={16} />
             </Button>
             <Button
               variant="outline"
-              size="sm"
               onClick={() => go({ year: now.getFullYear(), month: now.getMonth() + 1 })}
             >
               Today
             </Button>
+            <ViewToggle
+              label="View"
+              value="calendar"
+              onChange={chooseView}
+              options={[
+                { value: 'grid', label: 'Grid', icon: <SquaresFour size={16} /> },
+                { value: 'list', label: 'List', icon: <Rows size={16} /> },
+                { value: 'calendar', label: 'Calendar', icon: <CalendarBlank size={16} /> },
+              ]}
+            />
           </>
         }
       />
+
+      {/* Results of actions are shown, not only announced: a duplicate is a draft, off the calendar. */}
+      <p
+        role="status"
+        className={cn('text-caption text-muted', actions.notice ? 'mb-2' : 'sr-only')}
+      >
+        {actions.notice}
+        {duplicated && (
+          <>
+            {' '}
+            <Link to="/content" className="font-semibold text-ink underline">
+              See it in Content
+            </Link>
+          </>
+        )}
+      </p>
+      {actions.error && (
+        <p role="alert" className="mb-2 text-sm text-error">
+          {actions.error}
+        </p>
+      )}
 
       {loading ? (
         <p role="status" className="text-muted">
@@ -384,23 +599,12 @@ export function Calendar() {
         />
       ) : (
         <>
-          <MonthGrid
-            year={year}
-            month={month}
-            postsByDate={postsByDate}
-            expanded={expanded}
-            onToggle={toggle}
-            onEdit={edit}
-          />
-          <Agenda days={days} onEdit={edit} />
+          <MonthGrid year={year} month={month} entriesByDate={entriesByDate} {...entryProps} />
+          <Agenda days={entryDays} {...entryProps} />
         </>
       )}
 
-      {/* Announces a saved caption to screen readers. */}
-      <p role="status" className="sr-only">
-        {notice}
-      </p>
-      {editing && <EditCaptionModal post={editing} onSaved={saved} onClose={closeEdit} />}
+      {actions.dialogs}
     </div>
   );
 }

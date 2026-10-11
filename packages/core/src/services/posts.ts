@@ -1,20 +1,26 @@
 import {
   createPostInput,
+  groupDisplayStatus,
+  listPostGroupsQuery,
   listPostsQuery,
   type CalendarPostsQuery,
   type CalendarView,
   type CreatePostInput,
+  type ListPostGroupsQuery,
   type ListPostsQuery,
   optionsArmForProvider,
   parseStoredOptions,
   type MediaRef,
+  type PostGroupSummary,
   type PostGroupView,
+  type PostMediaView,
+  type PostOptions,
   type PostVariant,
   type PostView,
   type UpdatePostInput,
 } from '@meegrow-social/contracts';
-import { withWorkspace, schema } from '@meegrow-social/db';
-import { and, asc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
+import { withWorkspace, schema, type Tx } from '@meegrow-social/db';
+import { and, asc, desc, eq, gte, ilike, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 import { DateTime } from 'luxon';
 import { getScheduler } from './scheduler.js';
 import { nextFreeSlotForQueue } from './queues.js';
@@ -134,7 +140,7 @@ async function findByIdempotencyKey(
       .from(schema.posts)
       .where(eq(schema.posts.groupId, group.id))
       .orderBy(asc(schema.posts.createdAt), asc(schema.posts.id));
-    return rows.map(toView);
+    return toViews(tx, rows);
   });
 }
 
@@ -216,7 +222,7 @@ export async function createPost(
         publishAt,
         queueId,
       }));
-      return tx.insert(schema.posts).values(rows).returning();
+      return toViews(tx, await tx.insert(schema.posts).values(rows).returning());
     });
 
   let created: Awaited<ReturnType<typeof insertGroupAndPosts>>;
@@ -251,7 +257,7 @@ export async function createPost(
     }
   }
 
-  return created.map(toView);
+  return created;
 }
 
 /** The error a user sees on a post that was stored but could not be handed to the job queue. */
@@ -308,7 +314,7 @@ export async function abandonUnqueuedPosts(
 export async function getPost(workspaceId: string, postId: string): Promise<PostView | null> {
   return withWorkspace(workspaceId, async (tx) => {
     const [row] = await tx.select().from(schema.posts).where(eq(schema.posts.id, postId)).limit(1);
-    return row ? toView(row) : null;
+    return row ? ((await toViews(tx, [row]))[0] ?? null) : null;
   });
 }
 
@@ -342,7 +348,7 @@ export async function listPosts(
       )
       .limit(query.limit)
       .offset(query.offset);
-    return rows.map(toView);
+    return toViews(tx, rows);
   });
 }
 
@@ -429,7 +435,7 @@ export async function updatePost(
       .set(set)
       .where(eq(schema.posts.id, postId))
       .returning();
-    return { updated: updated!, action, when };
+    return { updated: (await toViews(tx, [updated!]))[0]!, action, when };
   });
   if (!result) return null;
 
@@ -449,7 +455,7 @@ export async function updatePost(
       throw err;
     }
   }
-  return toView(result.updated);
+  return result.updated;
 }
 
 /**
@@ -486,7 +492,7 @@ export async function retryPost(workspaceId: string, postId: string): Promise<Po
       .set({ status: 'scheduled', error: null })
       .where(eq(schema.posts.id, postId))
       .returning();
-    return { updated: updated!, previousError: row.error };
+    return { updated: (await toViews(tx, [updated!]))[0]!, previousError: row.error };
   });
   if (outcome === 'missing') return null;
   if (typeof outcome === 'string') {
@@ -513,7 +519,7 @@ export async function retryPost(workspaceId: string, postId: string): Promise<Po
     });
     throw err;
   }
-  return toView(outcome.updated);
+  return outcome.updated;
 }
 
 /**
@@ -567,24 +573,27 @@ export async function calendarPosts(
   const fromUtc = monthStart.toUTC().toJSDate();
   const toUtc = monthStart.endOf('month').toUTC().toJSDate();
 
-  const rows = await withWorkspace(workspaceId, async (tx) =>
-    tx
-      .select()
-      .from(schema.posts)
-      .where(
-        and(
-          isNotNull(schema.posts.publishAt),
-          gte(schema.posts.publishAt, fromUtc),
-          lte(schema.posts.publishAt, toUtc),
+  const views = await withWorkspace(workspaceId, async (tx) =>
+    toViews(
+      tx,
+      await tx
+        .select()
+        .from(schema.posts)
+        .where(
+          and(
+            isNotNull(schema.posts.publishAt),
+            gte(schema.posts.publishAt, fromUtc),
+            lte(schema.posts.publishAt, toUtc),
+          ),
         ),
-      ),
+    ),
   );
 
   const buckets = new Map<string, PostView[]>();
-  for (const r of rows) {
-    const date = DateTime.fromJSDate(r.publishAt!, { zone }).toFormat('yyyy-MM-dd');
+  for (const view of views) {
+    const date = DateTime.fromJSDate(view.publishAt!, { zone }).toFormat('yyyy-MM-dd');
     const bucket = buckets.get(date) ?? [];
-    bucket.push(toView(r));
+    bucket.push(view);
     buckets.set(date, bucket);
   }
   const days = [...buckets.entries()]
@@ -615,14 +624,231 @@ export async function getPostGroup(
       caption: group.caption,
       media: (group.media as MediaRef[] | null) ?? [],
       createdAt: group.createdAt,
-      posts: posts.map(toView),
+      posts: await toViews(tx, posts),
     };
+  });
+}
+
+type GroupRow = Pick<
+  typeof schema.postGroups.$inferSelect,
+  'id' | 'caption' | 'media' | 'createdAt'
+>;
+
+/**
+ * Group rows → list items, in the order given: every post of each group, the group's media, and the
+ * headline status. Two queries (posts, media urls) however many groups there are.
+ */
+async function toGroupSummaries(tx: Tx, groups: GroupRow[]): Promise<PostGroupSummary[]> {
+  if (groups.length === 0) return [];
+  const rows = await tx
+    .select()
+    .from(schema.posts)
+    .where(
+      inArray(
+        schema.posts.groupId,
+        groups.map((g) => g.id),
+      ),
+    )
+    .orderBy(asc(schema.posts.createdAt), asc(schema.posts.id));
+  const urls = await storedMediaUrls(tx, [
+    ...groups.map((g) => mediaRefsOf(g.media)),
+    ...rows.map((r) => mediaRefsOf(r.media)),
+  ]);
+  const byGroup = new Map<string, PostView[]>();
+  for (const row of rows) {
+    byGroup.set(row.groupId, [...(byGroup.get(row.groupId) ?? []), toView(row, urls)]);
+  }
+  return groups.map((g) => {
+    const posts = byGroup.get(g.id) ?? [];
+    return {
+      id: g.id,
+      caption: g.caption,
+      media: toMediaViews(mediaRefsOf(g.media), urls),
+      createdAt: g.createdAt,
+      status: groupDisplayStatus(posts.map((p) => p.status)),
+      posts,
+    };
+  });
+}
+
+/** `%`, `_` and the escape character itself are literal in a caption search, not wildcards. */
+const likeLiteral = (text: string): string => text.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+/**
+ * One page of post groups — one item per composed post, with all of its per-platform posts
+ * (`listPostGroupsQuery` documents the filter and ordering rules). Paginated by GROUP, which is why
+ * this exists: grouping the per-post list client-side splits a group across two pages.
+ *
+ * Three queries a page: the group page, its posts, their media urls.
+ */
+export async function listPostGroups(
+  workspaceId: string,
+  query: ListPostGroupsQuery = listPostGroupsQuery.parse({}),
+): Promise<PostGroupSummary[]> {
+  return withWorkspace(workspaceId, async (tx) => {
+    // Earliest publish time among the variants that match; a group with none (drafts, legacy
+    // "publish now" posts) sorts by when it was created. Never shown as a publish time.
+    const sortAt = sql`coalesce(min(${schema.posts.publishAt}), ${schema.postGroups.createdAt})`;
+    const direction = query.order === 'asc' ? asc : desc;
+    const groups = await tx
+      .select({
+        id: schema.postGroups.id,
+        caption: schema.postGroups.caption,
+        media: schema.postGroups.media,
+        createdAt: schema.postGroups.createdAt,
+      })
+      .from(schema.postGroups)
+      .innerJoin(schema.posts, eq(schema.posts.groupId, schema.postGroups.id))
+      .where(
+        and(
+          query.status ? eq(schema.posts.status, query.status) : undefined,
+          query.provider ? eq(schema.posts.provider, query.provider) : undefined,
+          query.connectionId ? eq(schema.posts.connectionId, query.connectionId) : undefined,
+          query.from ? gte(schema.posts.publishAt, query.from) : undefined,
+          query.to ? lte(schema.posts.publishAt, query.to) : undefined,
+          query.q ? ilike(schema.posts.caption, `%${likeLiteral(query.q)}%`) : undefined,
+        ),
+      )
+      // Grouping by the primary key lets the group's other columns be selected as they are.
+      .groupBy(schema.postGroups.id)
+      .orderBy(direction(sortAt), direction(schema.postGroups.id))
+      .limit(query.limit)
+      .offset(query.offset);
+    return toGroupSummaries(tx, groups);
+  });
+}
+
+/**
+ * Copy a whole group — every per-platform post, each with its own caption, media and options —
+ * into a NEW group of drafts. The group-level twin of `duplicatePost`, which copies one post into
+ * a group of its own and so would turn a three-platform post into three unrelated ones.
+ *
+ * Always drafts, whatever the source's statuses: duplicating must never publish by itself. Goes
+ * through `createPost`, so provider rules, the connection check and idempotency apply as usual — a
+ * source whose account has since been disconnected is refused (`ConnectionNotFoundError`).
+ */
+export async function duplicatePostGroup(
+  workspaceId: string,
+  groupId: string,
+  meta: CreatePostMeta = {},
+): Promise<PostGroupSummary | null> {
+  const source = await withWorkspace(workspaceId, async (tx) => {
+    const [group] = await tx
+      .select()
+      .from(schema.postGroups)
+      .where(eq(schema.postGroups.id, groupId))
+      .limit(1);
+    if (!group) return null;
+    const posts = await tx
+      .select()
+      .from(schema.posts)
+      .where(eq(schema.posts.groupId, groupId))
+      .orderBy(asc(schema.posts.createdAt), asc(schema.posts.id));
+    return { group, posts };
+  });
+  if (!source || source.posts.length === 0) return null;
+
+  const created = await createPost(
+    workspaceId,
+    {
+      caption: source.group.caption,
+      media: mediaRefsOf(source.group.media),
+      variants: source.posts.map((p) => ({
+        connectionId: p.connectionId,
+        provider: p.provider as PostView['provider'],
+        caption: p.caption,
+        media: mediaRefsOf(p.media),
+        options: parseStoredOptions(p.options) ?? undefined,
+      })),
+      schedule: { type: 'draft' },
+    },
+    meta,
+  );
+  const newGroupId = created[0]?.groupId;
+  if (!newGroupId) return null;
+  return withWorkspace(workspaceId, async (tx) => {
+    const groups = await tx
+      .select()
+      .from(schema.postGroups)
+      .where(eq(schema.postGroups.id, newGroupId))
+      .limit(1);
+    return (await toGroupSummaries(tx, groups))[0] ?? null;
   });
 }
 
 type PostRow = typeof schema.posts.$inferSelect;
 
-function toView(row: PostRow): PostView {
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Media refs as stored in a jsonb column. Anything that is not a list of refs reads as none. */
+function mediaRefsOf(value: unknown): MediaRef[] {
+  return Array.isArray(value) ? (value as MediaRef[]) : [];
+}
+
+/**
+ * The stored public url of every media a ref points at without carrying a url of its own — ONE
+ * query however many posts, so a list never costs a query per post. Only `id` and `url` are read:
+ * the storage key stays in the table. Ids that are not uuids are skipped rather than sent to a
+ * uuid column, where one bad stored ref would fail the whole list.
+ */
+async function storedMediaUrls(
+  tx: Tx,
+  refLists: readonly MediaRef[][],
+): Promise<Map<string, string | null>> {
+  const ids = [
+    ...new Set(
+      refLists
+        .flat()
+        .filter((r) => !r.url && UUID.test(r.mediaId))
+        .map((r) => r.mediaId),
+    ),
+  ];
+  if (ids.length === 0) return new Map();
+  const rows = await tx
+    .select({ id: schema.media.id, url: schema.media.url })
+    .from(schema.media)
+    .where(inArray(schema.media.id, ids));
+  return new Map(rows.map((r) => [r.id, r.url]));
+}
+
+/**
+ * Refs → what a view shows. A ref's own url wins (it is what gets published); otherwise the stored
+ * one; otherwise null — a missing media must not fail a read. `coverUrl` is the still of a `meta`
+ * post and belongs to its first video; nothing else has a thumbnail today.
+ */
+export function toMediaViews(
+  refs: readonly MediaRef[],
+  urls: ReadonlyMap<string, string | null>,
+  coverUrl?: string,
+): PostMediaView[] {
+  let coverUsed = false;
+  return refs.map((ref) => {
+    const cover = ref.kind === 'video' && coverUrl && !coverUsed ? coverUrl : null;
+    if (cover) coverUsed = true;
+    return {
+      id: ref.mediaId,
+      kind: ref.kind,
+      url: ref.url ?? urls.get(ref.mediaId) ?? null,
+      thumbnailUrl: cover,
+    };
+  });
+}
+
+/** Rows → views with their media resolved, in one extra query for the whole set. */
+async function toViews(tx: Tx, rows: PostRow[]): Promise<PostView[]> {
+  if (rows.length === 0) return [];
+  const urls = await storedMediaUrls(
+    tx,
+    rows.map((r) => mediaRefsOf(r.media)),
+  );
+  return rows.map((r) => toView(r, urls));
+}
+
+const coverUrlOf = (options: PostOptions | null): string | undefined =>
+  options?.kind === 'meta' ? options.coverUrl : undefined;
+
+function toView(row: PostRow, urls: ReadonlyMap<string, string | null>): PostView {
+  const options = parseStoredOptions(row.options);
   return {
     id: row.id,
     groupId: row.groupId,
@@ -630,11 +856,12 @@ function toView(row: PostRow): PostView {
     connectionId: row.connectionId,
     status: row.status as PostView['status'],
     caption: row.caption,
-    options: parseStoredOptions(row.options),
+    options,
     publishAt: row.publishAt,
     releaseUrl: row.releaseUrl,
     error: row.error,
     queueId: row.queueId,
     createdAt: row.createdAt,
+    media: toMediaViews(mediaRefsOf(row.media), urls, coverUrlOf(options)),
   };
 }

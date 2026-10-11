@@ -1,55 +1,81 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import type { PostView, ProviderView } from '@meegrow-social/contracts';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import type {
+  ConnectionView,
+  PostGroupSummary,
+  PostView,
+  ProviderView,
+} from '@meegrow-social/contracts';
 import { api } from '../lib/api';
-import { providerVisible } from '../lib/devProviders';
 import { cn } from '../lib/cn';
+import { providerVisible } from '../lib/devProviders';
 import { platformMeta } from '../lib/platforms';
-import { formatPublishAt, parsePublishAt } from '../lib/postDate';
-import { POST_STATUSES, STATUS_LABEL, STATUS_VARIANT } from '../lib/postStatus';
 import {
-  NO_FILTERS,
-  PAGE_SIZE,
-  appendPage,
+  BULK_METRICS_MAX,
+  GROUP_PAGE_SIZE,
+  NO_GROUP_FILTERS,
+  RANGES,
+  appendGroups,
+  applyPosts,
+  compactNumber,
+  groupCaption,
+  groupError,
+  groupMatchesStatus,
+  groupMetric,
+  groupQuery,
+  groupThumb,
+  groupWhen,
+  hasGroupFilters,
+  idChunks,
+  metricsToLoad,
+  topMetricNames,
+  visibleGroup,
+  type GroupFilters,
+  type LatestByPost,
+  type RangeKey,
+} from '../lib/postGroups';
+import { humanizeMetric } from '../lib/analytics';
+import {
   captionSnippet,
-  hasActiveFilters,
-  matchesFilters,
   mayHaveMore,
-  postActions,
   readViewMode,
-  replacePost,
-  whenLabel,
   writeViewMode,
-  type PostFilters,
   type ViewMode,
 } from '../lib/postList';
-import { CancelPostModal } from '../components/CancelPostModal';
-import { EditCaptionModal } from '../components/EditCaptionModal';
-import { Badge } from '../components/ui/Badge';
+import { POST_STATUSES, STATUS_LABEL } from '../lib/postStatus';
+import { PlatformIcons } from '../components/PostMarks';
+import { usePostGroupActions, type PostChange } from '../components/PostGroupActions';
+import { PostThumb } from '../components/PostThumb';
 import { Button } from '../components/ui/Button';
-import { Card, CardContent } from '../components/ui/Card';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorState } from '../components/ui/ErrorState';
-import { Label } from '../components/ui/Label';
+import { FilterBar, FilterSelect, ViewToggle } from '../components/ui/FilterBar';
 import { PageHeader } from '../components/ui/PageHeader';
-import { Select } from '../components/ui/Select';
-import { Table } from '../components/ui/Table';
-import { ArrowSquareOut, Article } from '../lib/icons';
-
-const VIEWS: { mode: ViewMode; label: string }[] = [
-  { mode: 'grid', label: 'Grid' },
-  { mode: 'list', label: 'List' },
-];
+import { RowMenu, type RowMenuItem } from '../components/ui/RowMenu';
+import { Skeleton } from '../components/ui/Skeleton';
+import { StatusChip } from '../components/ui/StatusChip';
+import { Table, type TableColumn } from '../components/ui/Table';
+import { Article, CalendarBlank, Rows, SquaresFour } from '../lib/icons';
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : 'Please try again.');
 
-/** Content: every post for the active client, filterable, with the actions valid for each status. */
+/** Typing pauses this long before the caption search goes to the API. */
+const SEARCH_DELAY_MS = 300;
+const MENU_WIDTH = 232;
+
+/**
+ * Content: every post for the active client, one card per composed post however many platforms it
+ * went to, with the actions valid for its variants.
+ */
 export function Posts() {
+  const navigate = useNavigate();
   const [view, setView] = useState<ViewMode>(() => readViewMode());
-  const [filters, setFilters] = useState<PostFilters>(NO_FILTERS);
-  const [posts, setPosts] = useState<PostView[]>([]);
-  // The list has no total: `served` counts rows the API returned (including any hidden dev posts)
-  // and is the next offset; `more` is true while the last page came back full.
+  const [filters, setFilters] = useState<GroupFilters>(NO_GROUP_FILTERS);
+  // What is in the search box; it becomes `filters.q` once typing pauses.
+  const [search, setSearch] = useState('');
+  const [groups, setGroups] = useState<PostGroupSummary[]>([]);
+  // The list has no total: `served` counts groups the API returned (including any hidden dev
+  // posts) and is the next offset; `more` is true while the last page came back full.
   const [served, setServed] = useState(0);
   const [more, setMore] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -58,37 +84,46 @@ export function Posts() {
   const [moreError, setMoreError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [providers, setProviders] = useState<ProviderView[]>([]);
-  const [accounts, setAccounts] = useState<ReadonlyMap<string, string>>(new Map());
-  const [editing, setEditing] = useState<PostView | null>(null);
-  const [cancelling, setCancelling] = useState<PostView | null>(null);
-  const [notice, setNotice] = useState('');
+  const [connections, setConnections] = useState<ConnectionView[]>([]);
+  const [latest, setLatest] = useState<LatestByPost>(new Map());
+  const [metricsFailed, setMetricsFailed] = useState(false);
 
-  const { status, provider } = filters;
-  // Which filter set (and retry) the loaded list belongs to, so a late "Load more" can be dropped.
+  const { q, status, provider, connectionId, range, order } = filters;
+  // Which filter set (and retry) the loaded list belongs to, so a late "Load more" can be dropped,
+  // and the instant its date range was resolved at, so every page uses the same bounds.
   const listKey = useRef('');
+  const loadedAt = useRef(Date.now());
+  const asked = useRef(new Set<string>());
+
+  useEffect(() => {
+    const t = window.setTimeout(
+      () => setFilters((f) => (f.q === search ? f : { ...f, q: search })),
+      SEARCH_DELAY_MS,
+    );
+    return () => window.clearTimeout(t);
+  }, [search]);
+
+  const visible = (page: PostGroupSummary[]) =>
+    // Dev/fake posts stay out of every view in production (lib/devProviders).
+    page.map((g) => visibleGroup(g, providerVisible)).filter((g) => g !== null);
 
   // First page, reloaded whenever a filter changes (or on retry). A slow response for filters the
   // operator already left must not overwrite the current list.
   useEffect(() => {
     let stale = false;
-    listKey.current = `${status}|${provider}|${attempt}`;
+    const current: GroupFilters = { q, status, provider, connectionId, range, order };
+    listKey.current = `${JSON.stringify(current)}|${attempt}`;
+    loadedAt.current = Date.now();
     setLoading(true);
     setError(null);
     setMoreError(null);
-    setNotice('');
     api
-      .listPosts({
-        status: status || undefined,
-        provider: provider || undefined,
-        limit: PAGE_SIZE,
-        offset: 0,
-      })
+      .listPostGroups(groupQuery(current, loadedAt.current, 0))
       .then((res) => {
         if (stale) return;
-        // Dev/fake posts stay out of every view in production (lib/devProviders).
-        setPosts(res.posts.filter((p) => providerVisible(p.provider)));
-        setServed(res.posts.length);
-        setMore(mayHaveMore(res.posts.length));
+        setGroups(visible(res.groups));
+        setServed(res.groups.length);
+        setMore(mayHaveMore(res.groups.length, GROUP_PAGE_SIZE));
       })
       .catch((e: unknown) => {
         if (!stale) setError(errorText(e));
@@ -99,34 +134,44 @@ export function Posts() {
     return () => {
       stale = true;
     };
-  }, [status, provider, attempt]);
+  }, [q, status, provider, connectionId, range, order, attempt]);
 
   const loadMore = async () => {
     const key = listKey.current;
     setLoadingMore(true);
     setMoreError(null);
     try {
-      const res = await api.listPosts({
-        status: status || undefined,
-        provider: provider || undefined,
-        limit: PAGE_SIZE,
-        offset: served,
-      });
+      const res = await api.listPostGroups(groupQuery(filters, loadedAt.current, served));
       if (key !== listKey.current) return;
-      setPosts((prev) =>
-        appendPage(
-          prev,
-          res.posts.filter((p) => providerVisible(p.provider)),
-        ),
-      );
-      setServed((n) => n + res.posts.length);
-      setMore(mayHaveMore(res.posts.length));
+      setGroups((prev) => appendGroups(prev, visible(res.groups)));
+      setServed((n) => n + res.groups.length);
+      setMore(mayHaveMore(res.groups.length, GROUP_PAGE_SIZE));
     } catch (e) {
       if (key === listKey.current) setMoreError(errorText(e));
     } finally {
       setLoadingMore(false);
     }
   };
+
+  // Numbers for the cards: one bulk read per page of groups, for the published variants only.
+  // A failed read leaves "—" on those cards and says so once; it never fails the list.
+  useEffect(() => {
+    const ids = metricsToLoad(groups, asked.current);
+    if (ids.length === 0) return;
+    for (const id of ids) asked.current.add(id);
+    for (const chunk of idChunks(ids, BULK_METRICS_MAX)) {
+      api
+        .latestPostMetrics(chunk)
+        .then((res) =>
+          setLatest((prev) => {
+            const next = new Map(prev);
+            for (const [id, entry] of Object.entries(res.metrics)) next.set(id, entry.latest);
+            return next;
+          }),
+        )
+        .catch(() => setMetricsFailed(true));
+    }
+  }, [groups]);
 
   // Platform filter options: the providers registered in this environment (fakes stay dev-only).
   useEffect(() => {
@@ -136,137 +181,187 @@ export function Posts() {
       .catch(() => setProviders([]));
   }, []);
 
-  // Account names for the cards: one request, joined on connectionId. Without it the cards just
-  // show the platform.
+  // Accounts for the filter and the cards: one request, joined on connectionId. Without it the
+  // cards just show the platform.
   useEffect(() => {
     void api
       .listConnections()
-      .then((res) => setAccounts(new Map(res.connections.map((c) => [c.id, c.displayName]))))
-      .catch(() => setAccounts(new Map()));
+      .then((res) => setConnections(res.connections.filter((c) => providerVisible(c.provider))))
+      .catch(() => setConnections([]));
   }, []);
-
-  const chooseView = (mode: ViewMode) => {
-    setView(mode);
-    writeViewMode(mode);
-  };
-
-  const closeEdit = useCallback(() => setEditing(null), []);
-  const closeCancel = useCallback(() => setCancelling(null), []);
-
-  const saved = useCallback((post: PostView) => {
-    setPosts((prev) => replacePost(prev, post));
-    setEditing(null);
-    setNotice('Caption saved.');
-  }, []);
-
-  const cancelled = useCallback(
-    (post: PostView) => {
-      const next: PostView = { ...post, status: 'cancelled' };
-      // Under a status filter the post no longer belongs; otherwise it stays, marked cancelled.
-      setPosts((prev) =>
-        matchesFilters(next, filters)
-          ? replacePost(prev, next)
-          : prev.filter((p) => p.id !== post.id),
-      );
-      setCancelling(null);
-      setNotice('Post cancelled.');
-    },
-    [filters],
+  const accounts = useMemo(
+    () => new Map(connections.map((c) => [c.id, c.displayName])),
+    [connections],
   );
 
-  const actions = { onEdit: setEditing, onCancel: setCancelling };
+  const onChanged = useCallback(
+    (posts: PostView[], change: PostChange) => {
+      setGroups((prev) =>
+        prev
+          .map((g) => applyPosts(g, posts))
+          // Under a status filter a group whose variants no longer match leaves the list; a new
+          // time can also move a post out of a date range, which only a reload can tell.
+          .filter((g) => groupMatchesStatus(g, status)),
+      );
+      if (change === 'time' && range !== '') setAttempt((a) => a + 1);
+    },
+    [status, range],
+  );
+  // A copy is a new draft, placed by its creation time — among today's posts, after anything still
+  // to come — so the list is reloaded and the notice offers the way straight to the drafts.
+  const onDuplicated = useCallback(() => setAttempt((a) => a + 1), []);
+  const actions = usePostGroupActions({ accounts, onChanged, onDuplicated });
 
-  const filtered = hasActiveFilters(filters);
-  const clearFilters = () => setFilters(NO_FILTERS);
+  const chooseView = (mode: string) => {
+    if (mode === 'calendar') {
+      navigate('/calendar');
+      return;
+    }
+    setView(mode as ViewMode);
+    writeViewMode(mode as ViewMode);
+  };
+
+  const set = (patch: Partial<GroupFilters>) => {
+    actions.clearMessages();
+    setFilters((f) => ({ ...f, ...patch }));
+  };
+  const filtered = hasGroupFilters(filters) || search.trim() !== '';
+  const clearFilters = () => {
+    setSearch('');
+    set({ ...NO_GROUP_FILTERS, order });
+  };
+
+  const names = useMemo(() => topMetricNames(groups, latest), [groups, latest]);
+  const count = more ? `First ${groups.length} posts` : `${groups.length} posts`;
 
   return (
-    <div className="space-y-4">
-      <PageHeader
-        title="Content"
-        subtitle="Every post for this client, across platforms."
-        className="mb-0"
-        actions={
-          <div role="group" aria-label="View" className="flex gap-1">
-            {VIEWS.map(({ mode, label }) => (
-              <Button
-                key={mode}
-                variant={view === mode ? 'default' : 'outline'}
-                size="sm"
-                aria-pressed={view === mode}
-                onClick={() => chooseView(mode)}
-              >
-                {label}
+    <div>
+      <PageHeader title="Content" subtitle="Every post for this client, across platforms." />
+
+      <FilterBar
+        search={{
+          value: search,
+          onChange: setSearch,
+          placeholder: 'Search captions…',
+          label: 'Search captions',
+        }}
+        filters={
+          <>
+            <FilterSelect
+              label="Status"
+              value={status}
+              onChange={(v) => set({ status: v as GroupFilters['status'] })}
+              options={[
+                { value: '', label: 'All statuses' },
+                ...POST_STATUSES.map((s) => ({ value: s, label: STATUS_LABEL[s] })),
+              ]}
+            />
+            <FilterSelect
+              label="Platform"
+              value={provider}
+              onChange={(v) => set({ provider: v })}
+              options={[
+                { value: '', label: 'All platforms' },
+                ...providers.map((p) => ({
+                  value: p.identifier,
+                  label: platformMeta(p).label,
+                })),
+              ]}
+            />
+            <FilterSelect
+              label="Account"
+              value={connectionId}
+              onChange={(v) => set({ connectionId: v })}
+              options={[
+                { value: '', label: 'All accounts' },
+                ...connections.map((c) => ({
+                  value: c.id,
+                  label: `${c.displayName} · ${platformMeta({ identifier: c.provider, displayName: c.provider }).label}`,
+                })),
+              ]}
+            />
+            <FilterSelect
+              label="Date"
+              value={range}
+              onChange={(v) => set({ range: v as RangeKey })}
+              options={RANGES.map((r) => ({ value: r.value, label: r.label }))}
+            />
+            <FilterSelect
+              label="Sort"
+              value={order}
+              onChange={(v) => set({ order: v as GroupFilters['order'] })}
+              options={[
+                { value: 'desc', label: 'Newest first' },
+                { value: 'asc', label: 'Oldest first' },
+              ]}
+            />
+            {filtered && (
+              <Button variant="ghost" size="sm" onClick={clearFilters}>
+                Clear filters
               </Button>
-            ))}
-          </div>
+            )}
+          </>
+        }
+        actions={
+          <>
+            {!loading && !error && groups.length > 0 && (
+              <p className="tnum text-caption text-muted">
+                {count}
+                {metricsFailed && ' · some numbers could not be loaded'}
+              </p>
+            )}
+            <ViewToggle
+              label="View"
+              value={view}
+              onChange={chooseView}
+              options={[
+                { value: 'grid', label: 'Grid', icon: <SquaresFour size={16} /> },
+                { value: 'list', label: 'List', icon: <Rows size={16} /> },
+                { value: 'calendar', label: 'Calendar', icon: <CalendarBlank size={16} /> },
+              ]}
+            />
+          </>
         }
       />
 
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="filter-status">Status</Label>
-          <Select
-            id="filter-status"
-            value={status}
-            onChange={(e) =>
-              setFilters((f) => ({ ...f, status: e.target.value as PostFilters['status'] }))
-            }
-            className="w-40"
-          >
-            <option value="">All statuses</option>
-            {POST_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {STATUS_LABEL[s]}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="filter-platform">Platform</Label>
-          <Select
-            id="filter-platform"
-            value={provider}
-            onChange={(e) => setFilters((f) => ({ ...f, provider: e.target.value }))}
-            className="w-48"
-          >
-            <option value="">All platforms</option>
-            {providers.map((p) => (
-              <option key={p.identifier} value={p.identifier}>
-                {p.displayName}
-              </option>
-            ))}
-          </Select>
-        </div>
-        {filtered && (
-          <Button variant="ghost" size="sm" onClick={clearFilters}>
-            Clear filters
-          </Button>
+      {/* Results of actions are shown, not only announced: a duplicate can land off-screen. */}
+      <p
+        role="status"
+        className={cn('text-caption text-muted', actions.notice ? 'mb-2' : 'sr-only')}
+      >
+        {loading ? 'Loading posts' : actions.notice || `${groups.length} posts shown`}
+        {!loading && actions.notice.startsWith('Duplicated') && status !== 'draft' && (
+          <>
+            {' '}
+            <button
+              type="button"
+              className="font-semibold text-ink underline"
+              onClick={() => setFilters((f) => ({ ...f, status: 'draft' }))}
+            >
+              Show drafts
+            </button>
+          </>
         )}
-        {!loading && !error && posts.length > 0 && (
-          <p className="tnum pb-2.5 text-caption text-muted">
-            {more ? `Showing the first ${posts.length} posts` : `${posts.length} posts`}
-          </p>
-        )}
-      </div>
-
-      {/* Announces results of actions and filter changes to screen readers. */}
-      <p role="status" className="sr-only">
-        {loading ? 'Loading posts' : notice || `${posts.length} posts shown`}
       </p>
+      {actions.error && (
+        <p role="alert" className="mb-2 text-sm text-error">
+          {actions.error}
+        </p>
+      )}
 
       {loading ? (
-        <p className="text-muted">Loading…</p>
+        <GridSkeleton />
       ) : error ? (
         <ErrorState
           title="Couldn't load posts"
           message={error}
           onRetry={() => setAttempt((a) => a + 1)}
         />
-      ) : posts.length === 0 && !more ? (
+      ) : groups.length === 0 && !more ? (
         filtered ? (
           <EmptyState
             title="No posts match these filters"
-            description="Try a different status or platform."
+            description="Try a different search, status, platform or date."
             icon={Article}
             action={
               <Button variant="outline" onClick={clearFilters}>
@@ -287,14 +382,26 @@ export function Posts() {
           />
         )
       ) : (
-        <>
+        <div className="space-y-3">
           {view === 'list' ? (
-            <PostList posts={posts} accounts={accounts} {...actions} />
+            <GroupTable
+              groups={groups}
+              accounts={accounts}
+              names={names}
+              latest={latest}
+              items={actions.items}
+            />
           ) : (
-            <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-              {posts.map((p) => (
-                <li key={p.id} className="min-w-0">
-                  <PostCard post={p} account={accounts.get(p.connectionId)} {...actions} />
+            <ul className="grid grid-cols-posts gap-3">
+              {groups.map((g) => (
+                <li key={g.id} className="min-w-0">
+                  <GroupCard
+                    group={g}
+                    accounts={accounts}
+                    names={names}
+                    latest={latest}
+                    items={actions.items(g)}
+                  />
                 </li>
               ))}
             </ul>
@@ -311,224 +418,234 @@ export function Posts() {
               </Button>
             </div>
           )}
-        </>
+        </div>
       )}
 
-      {editing && <EditCaptionModal post={editing} onSaved={saved} onClose={closeEdit} />}
-      {cancelling && (
-        <CancelPostModal post={cancelling} onCancelled={cancelled} onClose={closeCancel} />
-      )}
+      {actions.dialogs}
     </div>
   );
 }
 
-interface PostHandlers {
-  onEdit: (post: PostView) => void;
-  onCancel: (post: PostView) => void;
-}
-
-/** Brand-coloured platform mark. The platform is always named in text next to it. */
-function PlatformTile({ provider }: { provider: string }) {
-  const platform = platformMeta({ identifier: provider, displayName: provider });
+/** Same card geometry as the loaded grid, so nothing jumps when the posts arrive. */
+function GridSkeleton() {
   return (
-    <span
-      className={cn(
-        'grid h-10 w-10 flex-none place-items-center rounded-sm text-white',
-        platform.brand,
-      )}
-      aria-hidden="true"
-    >
-      <platform.Icon size={22} weight="fill" />
-    </span>
+    <ul className="grid grid-cols-posts gap-3" aria-hidden="true">
+      {Array.from({ length: 12 }, (_, i) => (
+        <li key={i} className="rounded-md border border-hairline p-3">
+          <Skeleton className="h-5 w-24" />
+          <div className="mt-2 flex gap-3">
+            <div className="flex-1 space-y-1.5">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-2/3" />
+            </div>
+            <Skeleton className="h-16 w-16" />
+          </div>
+          <Skeleton className="mt-2 h-5 w-32" />
+        </li>
+      ))}
+    </ul>
   );
 }
 
-/**
- * "Scheduled for <date>" and friends. With nothing to say (a draft, say) it renders nothing, or a
- * dash when `dash` is set so a table cell is not left blank.
- */
-function When({ post, className, dash }: { post: PostView; className?: string; dash?: boolean }) {
-  const label = whenLabel(post);
-  if (!label) {
-    return dash ? (
-      <p className={cn('text-caption text-muted', className)}>
-        <span aria-hidden="true">—</span>
-        <span className="sr-only">No time</span>
-      </p>
-    ) : null;
-  }
-  const date = parsePublishAt(post.publishAt);
+interface GroupViewProps {
+  accounts: ReadonlyMap<string, string>;
+  /** Metric names shown on this page, most common first. */
+  names: string[];
+  latest: LatestByPost;
+}
+
+/** "Empower and Shine NDIS +2": who the post is for, by account name where it is known. */
+function accountLine(group: PostGroupSummary, accounts: ReadonlyMap<string, string>): string {
+  const first = group.posts[0];
+  if (!first) return '';
+  const name =
+    accounts.get(first.connectionId) ??
+    platformMeta({ identifier: first.provider, displayName: first.provider }).label;
+  return group.posts.length > 1 ? `${name} +${group.posts.length - 1}` : name;
+}
+
+/** When the post goes or went out. A real date is a <time>; a stand-in is plain words. */
+function When({ group, className }: { group: PostGroupSummary; className?: string }) {
+  const when = groupWhen(group);
+  return when.date ? (
+    <time dateTime={when.date.toISOString()} className={cn('tnum', className)}>
+      {when.text}
+    </time>
+  ) : (
+    <span className={className}>{when.text}</span>
+  );
+}
+
+/** One metric of a group: a number, or a dash that says why for screen readers. Never a 0 stand-in. */
+function MetricValue({ value, name }: { value: number | null; name: string }) {
+  return value === null ? (
+    <>
+      <span aria-hidden="true" className="font-normal text-muted">
+        —
+      </span>
+      <span className="sr-only">No {humanizeMetric(name)}</span>
+    </>
+  ) : (
+    <span title={value.toLocaleString()}>{compactNumber(value)}</span>
+  );
+}
+
+/** The provider's reason a variant failed, kept on the card: a failure has to be seen. */
+function FailureLine({ group }: { group: PostGroupSummary }) {
+  const failure = groupError(group.posts);
+  if (!failure) return null;
+  const platform = platformMeta({ identifier: failure.provider, displayName: failure.provider });
+  const text = `${platform.label}: ${failure.message}`;
   return (
-    <p className={cn('tnum text-caption text-muted', className)}>
-      {label.prefix}
-      {label.showDate && date && (
-        <>
-          {' '}
-          <time dateTime={date.toISOString()}>{formatPublishAt(post.publishAt)}</time>
-        </>
-      )}
+    // Clamped, not `truncate`: nowrap text in a table cell would force the column to its full width.
+    <p className="line-clamp-1 break-words text-caption text-status-bad" title={text}>
+      {text}
+      {failure.count > 1 && ` (+${failure.count - 1} more)`}
     </p>
   );
 }
 
-/** The provider's reason a post failed, set apart so it isn't read as caption text. */
-function ProviderError({ message }: { message: string }) {
-  return (
-    <div className="rounded-sm border border-status-bad/30 bg-status-bad/5 p-3 text-caption">
-      <p className="font-semibold text-status-bad">Provider error</p>
-      <p className="mt-0.5 break-words text-body-ink">{message}</p>
-    </div>
-  );
-}
-
-/**
- * Only the actions the API will accept for this status. Each name carries the caption so a screen
- * reader's button list isn't twenty identical "Edit"s.
- */
-function PostActions({ post, onEdit, onCancel }: { post: PostView } & PostHandlers) {
-  const platform = platformMeta({ identifier: post.provider, displayName: post.provider });
-  const snippet = captionSnippet(post.caption);
-  const { edit, cancel, viewUrl } = postActions(post);
-  return (
-    <>
-      {edit && (
-        <Button
-          variant="outline"
-          size="sm"
-          aria-label={`Edit post: ${snippet}`}
-          onClick={() => onEdit(post)}
-        >
-          Edit
-        </Button>
-      )}
-      {/* Cancel is routine, so a ghost here; the confirm dialog carries the destructive button. */}
-      {cancel && (
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label={`Cancel post: ${snippet}`}
-          onClick={() => onCancel(post)}
-        >
-          Cancel
-        </Button>
-      )}
-      {viewUrl && (
-        <Button asChild variant="outline" size="sm">
-          <a
-            href={viewUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={`View post on ${platform.label}: ${snippet} (opens in a new tab)`}
-          >
-            View post
-            <ArrowSquareOut size={16} aria-hidden="true" />
-          </a>
-        </Button>
-      )}
-    </>
-  );
-}
-
-function PostCard({
-  post,
-  account,
-  onEdit,
-  onCancel,
-}: { post: PostView; account?: string } & PostHandlers) {
-  const platform = platformMeta({ identifier: post.provider, displayName: post.provider });
-  const { edit, cancel, viewUrl } = postActions(post);
-  return (
-    <Card className={cn('h-full', post.status === 'cancelled' && 'bg-surface-soft')}>
-      <CardContent className="flex h-full flex-col gap-3 p-4">
-        <div className="flex items-start gap-3">
-          <PlatformTile provider={post.provider} />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-ink">{platform.label}</p>
-            {account && <p className="truncate text-caption text-muted">{account}</p>}
-          </div>
-          <Badge variant={STATUS_VARIANT[post.status]}>{STATUS_LABEL[post.status]}</Badge>
-        </div>
-        <When post={post} />
-        <p className="line-clamp-4 whitespace-pre-line break-words text-body leading-snug text-ink">
-          {post.caption || <span className="text-muted">(no caption)</span>}
-        </p>
-        {post.error && <ProviderError message={post.error} />}
-        {(edit || cancel || viewUrl) && (
-          <div className="mt-auto flex flex-wrap gap-2 pt-1">
-            <PostActions post={post} onEdit={onEdit} onCancel={onCancel} />
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function PostList({
-  posts,
+function GroupCard({
+  group,
   accounts,
-  onEdit,
-  onCancel,
-}: { posts: PostView[]; accounts: ReadonlyMap<string, string> } & PostHandlers) {
+  names,
+  latest,
+  items,
+}: GroupViewProps & { group: PostGroupSummary; items: RowMenuItem[] }) {
+  const published = group.posts.some((p) => p.status === 'published');
+  const failed = groupError(group.posts) !== null;
+  return (
+    <article
+      className={cn(
+        'flex h-full flex-col rounded-md border border-hairline bg-canvas',
+        group.status === 'cancelled' && 'bg-surface-soft',
+      )}
+    >
+      <div className="flex items-center gap-2 px-3 pt-2">
+        <PlatformIcons posts={group.posts} accounts={accounts} />
+        <When group={group} className="ml-auto truncate text-caption text-muted" />
+        <RowMenu
+          label={`Actions for post: ${captionSnippet(groupCaption(group))}`}
+          items={items}
+          width={MENU_WIDTH}
+          className="-mr-1.5"
+        />
+      </div>
+      <div className="flex flex-1 items-start gap-3 px-3 pb-2.5 pt-1">
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <p className="line-clamp-2 min-h-10 whitespace-pre-line break-words text-sm text-ink">
+            {groupCaption(group) || <span className="text-muted">(no caption)</span>}
+          </p>
+          <div className="flex min-w-0 items-center gap-2">
+            <StatusChip status={group.status} />
+            {!failed && (
+              <span className="min-w-0 truncate text-caption text-muted">
+                {accountLine(group, accounts)}
+              </span>
+            )}
+          </div>
+          {failed && <FailureLine group={group} />}
+        </div>
+        <PostThumb thumb={groupThumb(group)} caption={groupCaption(group)} />
+      </div>
+      {published && names.length > 0 && (
+        <dl className="mt-auto flex gap-3 border-t border-hairline-soft px-3 py-1.5">
+          {names.map((name) => (
+            <div key={name} className="min-w-0 flex-1">
+              <dt className="truncate text-micro text-muted" title={name}>
+                {humanizeMetric(name)}
+              </dt>
+              <dd className="tnum text-sm font-semibold text-ink">
+                <MetricValue value={groupMetric(group.posts, latest, name)} name={name} />
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </article>
+  );
+}
+
+function GroupTable({
+  groups,
+  accounts,
+  names,
+  latest,
+  items,
+}: GroupViewProps & {
+  groups: PostGroupSummary[];
+  items: (group: PostGroupSummary) => RowMenuItem[];
+}) {
+  const columns: TableColumn<PostGroupSummary>[] = [
+    {
+      key: 'post',
+      header: 'Post',
+      className: 'w-full min-w-0',
+      cell: (g) => (
+        <div className="flex min-w-0 items-center gap-2.5">
+          <PostThumb thumb={groupThumb(g)} caption={groupCaption(g)} size="sm" />
+          <div className="min-w-0 flex-1">
+            <p className="line-clamp-1 break-words text-ink">
+              {groupCaption(g) || <span className="text-muted">(no caption)</span>}
+            </p>
+            {/* Phones drop the Platforms, Status and When columns, so the cell carries them. */}
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 md:hidden">
+              <StatusChip status={g.status} />
+              <PlatformIcons posts={g.posts} accounts={accounts} />
+              <When group={g} className="text-caption text-muted" />
+            </div>
+            <FailureLine group={g} />
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'platforms',
+      header: 'Platforms',
+      className: 'hidden whitespace-nowrap md:table-cell',
+      cell: (g) => (
+        <span className="flex items-center gap-2">
+          <PlatformIcons posts={g.posts} accounts={accounts} />
+          <span className="hidden max-w-44 truncate text-caption text-muted xl:inline">
+            {accountLine(g, accounts)}
+          </span>
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      className: 'hidden whitespace-nowrap md:table-cell',
+      cell: (g) => <StatusChip status={g.status} />,
+    },
+    {
+      key: 'when',
+      header: 'When',
+      className: 'hidden whitespace-nowrap md:table-cell',
+      cell: (g) => <When group={g} className="text-caption text-muted" />,
+    },
+    ...names.map((name): TableColumn<PostGroupSummary> => ({
+      key: `metric:${name}`,
+      header: <span title={name}>{humanizeMetric(name)}</span>,
+      align: 'right',
+      className: 'hidden whitespace-nowrap lg:table-cell',
+      cell: (g) => <MetricValue value={groupMetric(g.posts, latest, name)} name={name} />,
+    })),
+  ];
   return (
     <Table
       caption="Posts"
-      rows={posts}
-      rowKey={(p) => p.id}
-      columns={[
-        {
-          key: 'status',
-          header: 'Status',
-          className: 'hidden whitespace-nowrap md:table-cell',
-          cell: (p) => <Badge variant={STATUS_VARIANT[p.status]}>{STATUS_LABEL[p.status]}</Badge>,
-        },
-        {
-          key: 'platform',
-          header: 'Platform',
-          className: 'hidden md:table-cell',
-          cell: (p) => <PlatformCell post={p} account={accounts.get(p.connectionId)} />,
-        },
-        {
-          key: 'caption',
-          header: 'Caption',
-          className: 'w-full min-w-0',
-          cell: (p) => (
-            <div className="min-w-0 space-y-1.5">
-              {/* Phones drop the Status, Platform and When columns, so the cell carries them. */}
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 md:hidden">
-                <Badge variant={STATUS_VARIANT[p.status]}>{STATUS_LABEL[p.status]}</Badge>
-                <span className="text-caption font-medium text-ink">
-                  {platformMeta({ identifier: p.provider, displayName: p.provider }).label}
-                </span>
-              </div>
-              <p className="line-clamp-2 whitespace-pre-line break-words text-body-ink">
-                {p.caption || <span className="text-muted">(no caption)</span>}
-              </p>
-              <When post={p} className="md:hidden" />
-              {p.error && <ProviderError message={p.error} />}
-            </div>
-          ),
-        },
-        {
-          key: 'when',
-          header: 'When',
-          className: 'hidden md:table-cell md:min-w-40 xl:whitespace-nowrap',
-          cell: (p) => <When post={p} dash />,
-        },
-      ]}
-      rowActions={(p) => <PostActions post={p} onEdit={onEdit} onCancel={onCancel} />}
+      dense
+      rows={groups}
+      rowKey={(g) => g.id}
+      columns={columns}
+      rowActions={(g) => (
+        <RowMenu
+          label={`Actions for post: ${captionSnippet(groupCaption(g))}`}
+          items={items(g)}
+          width={MENU_WIDTH}
+        />
+      )}
     />
-  );
-}
-
-function PlatformCell({ post, account }: { post: PostView; account?: string }) {
-  const platform = platformMeta({ identifier: post.provider, displayName: post.provider });
-  return (
-    <div className="flex items-center gap-2.5">
-      <PlatformTile provider={post.provider} />
-      <div className="min-w-0">
-        <p className="whitespace-nowrap font-medium text-ink">{platform.label}</p>
-        {account && <p className="truncate text-caption text-muted">{account}</p>}
-      </div>
-    </div>
   );
 }

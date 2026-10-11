@@ -6,6 +6,27 @@ has moved, trust the file, not this page.
 **Reads with:** `BUILD-SPEC-V2.md` §8 F3 (lines 533–537), invariant 7 (lines 102–103), the client-role
 decision (lines 46–61) · `DESIGN-airbnb.md` (tokens) · issue #28 (acceptance criteria).
 
+> **Update 2026-10-11 (UI pass 2) — where this brief is now out of date.** The page was reworked
+> and two of §9's questions were answered with small API additions, so read the following over the
+> matching parts below:
+>
+> - **§9 Q1, bulk metrics — answered.** `POST /v1/posts/metrics/latest` (`{ postIds }`, up to 200)
+>   returns the newest value per metric name per post, names verbatim. The page loads its numbers
+>   with it — one request per 200 posts — so the chunks-of-10 loading and the **300-post cap in §3
+>   are gone**. The per-post `GET /v1/posts/:id/metrics` is now read only for an expanded row's
+>   history. The honesty rules are unchanged: a failed read marks its posts and withholds the
+>   comparison; a post list cut short at the paging limit says so and compares nothing.
+> - **§9 Q2, last / next sync — answered.** `GET /v1/analytics/status` returns the workspace's
+>   newest `capturedAt`, its last sweep, when the next poll falls due (by the sweep's own rules) and
+>   the cadence as data. The sync line in §3 is built from it; no cadence text is hardcoded.
+> - **§3 layout.** The stat tiles are one bordered strip (followers, posts published, then every
+>   metric the period's posts report, then the best post by the chosen metric). The metric picker
+>   moved from the chart to the filter row and is kept in the URL (`?metric=`). Post views carry
+>   `media`, so the table and the best post show thumbnails.
+>
+> Everything else — invariant 7, the `—`-never-`0` rule, the preview badge, the undated-posts note,
+> §6 and the §7 validation checklist — stands as written.
+
 ---
 
 ## 1. Goal, non-goals, where it lives

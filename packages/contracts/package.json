@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./group-status": {
+      "types": "./dist/group-status.d.ts",
+      "default": "./dist/group-status.js"
     }
   },
   "main": "./dist/index.js",

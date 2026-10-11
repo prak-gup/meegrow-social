@@ -5,6 +5,7 @@ import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import {
+  bulkPostMetricsInput,
   calendarPostsQuery,
   changePasswordInput,
   createApiKeyInput,
@@ -12,6 +13,7 @@ import {
   inviteIdParam,
   inviteScopeQuery,
   createPostInput,
+  listPostGroupsQuery,
   createWorkspaceInput,
   createQueueInput,
   finishConnectInput,
@@ -48,10 +50,13 @@ import {
   DEFAULT_MEDIA_DISK_DIR,
   deleteConnection,
   deleteQueue,
+  duplicatePostGroup,
   finishConnect,
   finishInviteConnect,
+  getAnalyticsStatus,
   getConnectionHealth,
   getInviteFlow,
+  getLatestPostMetrics,
   getMedia,
   getPost,
   getPostGroup,
@@ -64,6 +69,7 @@ import {
   listConnectionHealth,
   listConnections,
   overviewForUser,
+  listPostGroups,
   listPosts,
   loginWithPassword,
   previewQueueSlots,
@@ -829,6 +835,17 @@ export async function buildServer(): Promise<FastifyInstance> {
     return calendarPosts(req.authContext!.workspaceId, parsed.data);
   });
 
+  // Latest metrics for up to 200 posts in one read (#28) — the list screens need a number per card
+  // and one request per post does not scale. Static path, so it wins over `/v1/posts/:id/…`. A POST
+  // only because the id list does not fit a query string; it reads and writes nothing.
+  app.post('/v1/posts/metrics/latest', async (req, reply) => {
+    const parsed = bulkPostMetricsInput.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    return {
+      metrics: await getLatestPostMetrics(req.authContext!.workspaceId, parsed.data.postIds),
+    };
+  });
+
   // Per-post metrics (#9): newest value per metric name + the full append-only series. 404s when
   // the post doesn't exist, rather than returning an empty series that looks like "no data yet".
   app.get<{ Params: { id: string } }>('/v1/posts/:id/metrics', async (req, reply) => {
@@ -881,11 +898,46 @@ export async function buildServer(): Promise<FastifyInstance> {
     }
   });
 
+  // One item per composed post, with every per-platform post in it. Paginated by group, so a
+  // group is never split across pages the way grouping `GET /v1/posts` client-side would.
+  app.get('/v1/post-groups', async (req, reply) => {
+    const parsed = listPostGroupsQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    return { groups: await listPostGroups(req.authContext!.workspaceId, parsed.data) };
+  });
+
+  // Copy a whole group into a new group of drafts. Never publishes. `Idempotency-Key` as on create.
+  app.post<{ Params: { id: string } }>('/v1/post-groups/:id/duplicate', async (req, reply) => {
+    const rawKey = req.headers['idempotency-key'];
+    const idempotencyKey = (Array.isArray(rawKey) ? rawKey[0] : rawKey)?.trim() || undefined;
+    if (idempotencyKey && idempotencyKey.length > 255) {
+      return reply.code(400).send({ error: 'Idempotency-Key must be at most 255 characters' });
+    }
+    try {
+      const group = await duplicatePostGroup(req.authContext!.workspaceId, req.params.id, {
+        idempotencyKey,
+      });
+      if (!group) return reply.code(404).send({ error: 'not found' });
+      return reply.code(201).send({ group });
+    } catch (err) {
+      // An account of the source has since been disconnected: nothing is copied.
+      if (err instanceof ConnectionNotFoundError)
+        return reply.code(404).send({ error: err.message });
+      if (err instanceof ProviderBadRequestError)
+        return reply.code(400).send({ error: err.message });
+      throw err;
+    }
+  });
+
   app.get<{ Params: { id: string } }>('/v1/post-groups/:id', async (req, reply) => {
     const group = await getPostGroup(req.authContext!.workspaceId, req.params.id);
     if (!group) return reply.code(404).send({ error: 'not found' });
     return { group };
   });
+
+  // When this workspace's metrics were last collected and when the next poll falls due, with the
+  // cadence rules as data — so no client hardcodes "refreshes hourly".
+  app.get('/v1/analytics/status', async (req) => getAnalyticsStatus(req.authContext!.workspaceId));
 
   app.post('/v1/media', async (req, reply) => {
     const file = await req.file();

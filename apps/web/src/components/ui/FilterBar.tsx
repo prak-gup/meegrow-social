@@ -55,17 +55,20 @@ export interface FilterSelectProps {
   options: { value: string; label: string }[];
 }
 
-/** A compact pill dropdown (native <select>, so keyboard and screen readers just work). */
+/**
+ * A compact pill dropdown (native <select>, so keyboard and screen readers just work). The pill is
+ * capped in width and truncates, so one long option (an account name) cannot stretch the bar.
+ */
 export function FilterSelect({ label, value, onChange, options }: FilterSelectProps) {
   const active = value !== options[0]?.value;
   return (
-    <label className="relative inline-block">
+    <label className="relative inline-block max-w-full">
       <span className="sr-only">{label}</span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className={cn(
-          'h-11 appearance-none rounded-full border bg-canvas pl-3 pr-7 text-lg text-ink hover:bg-surface-soft focus:border-ink focus:outline-none focus:ring-1 focus:ring-ink md:h-8 md:text-sm',
+          'h-11 max-w-full appearance-none truncate rounded-full border bg-canvas pl-3 pr-7 text-lg text-ink hover:bg-surface-soft sm:max-w-48 focus:border-ink focus:outline-none focus:ring-1 focus:ring-ink md:h-8 md:text-sm',
           active ? 'border-ink bg-surface-strong font-medium' : 'border-muted-soft',
         )}
       >

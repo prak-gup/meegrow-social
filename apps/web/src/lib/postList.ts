@@ -1,27 +1,13 @@
-import type { PostStatus, PostView } from '@meegrow-social/contracts';
-import { TIME_NOT_RECORDED, parsePublishAt } from './postDate';
-import { canCancelPost, canEditPost } from './postStatus';
-
-/** `listPostsQuery` default; the API caps `limit` at 100. */
-export const PAGE_SIZE = 50;
+import type { PostView } from '@meegrow-social/contracts';
 
 /** `createPostInput` / `updatePostInput` caption limit. */
 export const CAPTION_MAX = 5000;
-
-export interface PostFilters {
-  status: PostStatus | '';
-  provider: string;
-}
-
-export const NO_FILTERS: PostFilters = { status: '', provider: '' };
-
-export const hasActiveFilters = (f: PostFilters): boolean => f.status !== '' || f.provider !== '';
 
 /**
  * The list endpoint returns a bare page (no total), so a full page is the only hint that more may
  * exist. Pass the RAW page length: posts hidden client-side (dev providers) still count as served.
  */
-export function mayHaveMore(rawPageLength: number, limit: number = PAGE_SIZE): boolean {
+export function mayHaveMore(rawPageLength: number, limit: number): boolean {
   return rawPageLength >= limit;
 }
 
@@ -31,68 +17,11 @@ export function appendPage(current: PostView[], incoming: PostView[]): PostView[
   return [...current, ...incoming.filter((p) => !seen.has(p.id))];
 }
 
-/** Swap in an updated post, keeping its position. */
-export function replacePost(posts: PostView[], next: PostView): PostView[] {
-  return posts.map((p) => (p.id === next.id ? next : p));
-}
-
-/** Does this post still belong under the active filters? (After a local status change.) */
-export function matchesFilters(post: PostView, f: PostFilters): boolean {
-  return (
-    (f.status === '' || post.status === f.status) &&
-    (f.provider === '' || post.provider === f.provider)
-  );
-}
-
-/**
- * How to introduce a post's date, or null when there is nothing honest to show. `publishAt` is the
- * scheduled time until a post is sent and the send time after, so the wording follows the status.
- * Drafts carry no date; a scheduled post with no date was created as "post now" (core statusFor)
- * and is waiting on the worker, not on a time. A published post with no date says so (lib/postDate
- * TIME_NOT_RECORDED). The status badge already says what the post is, so the prefix only says which
- * date this is.
- */
-export function whenLabel(
-  post: Pick<PostView, 'status' | 'publishAt'>,
-): { prefix: string; showDate: boolean } | null {
-  const hasDate = parsePublishAt(post.publishAt) !== null;
-  switch (post.status) {
-    case 'draft':
-      return null;
-    case 'scheduled':
-      return hasDate
-        ? { prefix: 'Scheduled for', showDate: true }
-        : { prefix: 'Sending as soon as possible', showDate: false };
-    case 'publishing':
-      return hasDate ? { prefix: 'Scheduled for', showDate: true } : null;
-    case 'published':
-      return hasDate
-        ? { prefix: 'Published', showDate: true }
-        : { prefix: TIME_NOT_RECORDED, showDate: false };
-    case 'failed':
-    case 'cancelled':
-      return hasDate ? { prefix: 'Was scheduled for', showDate: true } : null;
-  }
-}
-
 /** Short, single-line caption excerpt for accessible names ("Edit post: Spring sale…"). */
 export function captionSnippet(caption: string, max = 40): string {
   const flat = caption.replace(/\s+/g, ' ').trim();
   if (!flat) return 'no caption';
   return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
-}
-
-/** Actions valid for a post, in display order. `view` needs a safe release URL. */
-export function postActions(post: Pick<PostView, 'status' | 'releaseUrl'>): {
-  edit: boolean;
-  cancel: boolean;
-  viewUrl: string | null;
-} {
-  return {
-    edit: canEditPost(post.status),
-    cancel: canCancelPost(post.status),
-    viewUrl: safeExternalUrl(post.releaseUrl),
-  };
 }
 
 /** Provider-supplied links are only followed when they are plain http(s). */

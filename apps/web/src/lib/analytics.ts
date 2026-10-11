@@ -1,4 +1,4 @@
-import type { ConnectionView, PostView } from '@meegrow-social/contracts';
+import type { AnalyticsStatusView, ConnectionView, PostView } from '@meegrow-social/contracts';
 import { parsePublishAt } from './postDate';
 
 /**
@@ -21,10 +21,8 @@ export const DEFAULT_DAYS: RangeDays = 30;
 export const LIST_PAGE = 100;
 /** Stop paging the post list here; past it the newest posts may be missing and the page says so. */
 export const LIST_MAX_PAGES = 20;
-/** There is no bulk metrics read, so it is one request per post: this many at a time… */
-export const METRICS_CHUNK = 10;
-/** …and at most this many posts per view. */
-export const POST_CAP = 300;
+/** Follower series are one request per connection: this many at a time. */
+export const FOLLOWERS_CHUNK = 10;
 export const TABLE_PAGE = 50;
 
 export const DASH = '—';
@@ -144,28 +142,18 @@ export function windowPosts(posts: readonly PostView[], w: Windows): WindowedPos
   return out.sort((a, b) => b.at - a.at);
 }
 
-export interface CappedPosts {
-  /** Posts in the period whose metrics are loaded, newest first. */
+export interface PeriodPosts {
+  /** Posts published in the period, newest first. */
   current: WindowedPost[];
-  /** Posts in the prior period whose metrics are loaded, newest first. */
+  /** Posts published in the period before it, newest first. */
   prior: WindowedPost[];
-  /** Posts in the period before the cap. */
-  currentTotal: number;
-  /** False when the cap cut prior-period posts, so a comparison against them would be wrong. */
-  priorComplete: boolean;
 }
 
-/** Apply the per-view cap: the period's newest posts first, the prior period with what is left. */
-export function capPosts(windowed: readonly WindowedPost[], cap: number = POST_CAP): CappedPosts {
-  const current = windowed.filter((p) => p.window === 'current');
-  const prior = windowed.filter((p) => p.window === 'prior');
-  const keptCurrent = current.slice(0, cap);
-  const keptPrior = prior.slice(0, Math.max(0, cap - keptCurrent.length));
+/** Windowed posts split by the period they fall in. Every post is kept: nothing caps the view. */
+export function splitPeriods(windowed: readonly WindowedPost[]): PeriodPosts {
   return {
-    current: keptCurrent,
-    prior: keptPrior,
-    currentTotal: current.length,
-    priorComplete: keptPrior.length === prior.length,
+    current: windowed.filter((p) => p.window === 'current'),
+    prior: windowed.filter((p) => p.window === 'prior'),
   };
 }
 
@@ -224,10 +212,42 @@ export function parsePoints(points: readonly WirePoint[]): MetricPoint[] {
     .sort((a, b) => a.at - b.at);
 }
 
-/** One post's metrics once its request settled. A post still loading has no entry. */
+/**
+ * One post's latest metrics once the bulk read that carried it settled. A post still loading has
+ * no entry. `capturedAt` is the newest capture behind `latest` (epoch ms), null when the post has
+ * none; the full history is a separate, per-post read made only for an expanded row.
+ */
 export type PostMetrics =
-  | { status: 'ok'; latest: Record<string, number>; series: MetricPoint[] }
+  | { status: 'ok'; latest: Record<string, number>; capturedAt: number | null }
   | { status: 'error'; message: string };
+
+interface WireLatest {
+  latest: Record<string, number>;
+  capturedAt: Date | string | null;
+}
+
+/**
+ * The settled state of every id one bulk request asked for. An id the API left out (not a post of
+ * this workspace any more) reads as a post with nothing collected, not as a failure.
+ */
+export function bulkEntries(
+  ids: readonly string[],
+  metrics: Readonly<Record<string, WireLatest>>,
+): Array<[string, PostMetrics]> {
+  return ids.map((id) => {
+    const entry = metrics[id];
+    const at = entry?.capturedAt ? new Date(entry.capturedAt).getTime() : NaN;
+    return [
+      id,
+      { status: 'ok', latest: entry?.latest ?? {}, capturedAt: Number.isNaN(at) ? null : at },
+    ];
+  });
+}
+
+/** Every id of a bulk request that failed: each row is marked, the table is not. */
+export function bulkFailure(ids: readonly string[], message: string): Array<[string, PostMetrics]> {
+  return ids.map((id) => [id, { status: 'error', message }]);
+}
 
 export type MetricsByPost = ReadonlyMap<string, PostMetrics>;
 
@@ -288,14 +308,14 @@ function sumLatest(posts: readonly WindowedPost[], metrics: MetricsByPost): Map<
  * One tile per metric name returned for posts published in the period: the sum of each post's
  * latest (all-time) value, against the same sum for posts published in the prior period. The
  * comparison is withheld when either side is incomplete (a post failed or is still loading, or the
- * cap cut the prior period) — a partial sum would produce a confident wrong percentage.
+ * post list itself was cut short) — a partial sum would produce a confident wrong percentage.
  */
-export function postTiles(capped: CappedPosts, metrics: MetricsByPost): Tile[] {
-  const current = sumLatest(capped.current, metrics);
-  const prior = sumLatest(capped.prior, metrics);
+export function postTiles(period: PeriodPosts, metrics: MetricsByPost, complete = true): Tile[] {
+  const current = sumLatest(period.current, metrics);
+  const prior = sumLatest(period.prior, metrics);
   const comparable =
-    capped.priorComplete &&
-    [...capped.current, ...capped.prior].every((p) => metrics.get(p.post.id)?.status === 'ok');
+    complete &&
+    [...period.current, ...period.prior].every((p) => metrics.get(p.post.id)?.status === 'ok');
   return [...current.keys()]
     .sort((a, b) => a.localeCompare(b))
     .map((name) => ({
@@ -349,15 +369,52 @@ export function followersTile(series: Iterable<readonly MetricPoint[]>, w: Windo
   };
 }
 
+/**
+ * How many posts were published in the period, against the period before. Not a metric the
+ * platforms report — a count of our own rows — so it carries no metric name. The comparison is
+ * withheld when the post list was cut short.
+ */
+export function postCount(
+  period: PeriodPosts,
+  complete = true,
+): { value: number; delta: number | null } {
+  return {
+    value: period.current.length,
+    delta: complete ? percentChange(period.current.length, period.prior.length) : null,
+  };
+}
+
+/**
+ * The post of the period with the highest value of one metric; the newest wins a tie. Null when no
+ * loaded post reports that metric — there is no "best" among posts that have no number.
+ */
+export function bestPost(
+  posts: readonly WindowedPost[],
+  metrics: MetricsByPost,
+  name: string,
+): { post: PostView; value: number } | null {
+  let best: { post: PostView; value: number; at: number } | null = null;
+  for (const p of posts) {
+    const entry = metrics.get(p.post.id);
+    const value = entry?.status === 'ok' ? entry.latest[name] : undefined;
+    if (value === undefined) continue;
+    if (!best || value > best.value || (value === best.value && p.at > best.at)) {
+      best = { post: p.post, value, at: p.at };
+    }
+  }
+  return best && { post: best.post, value: best.value };
+}
+
 /** Followers first (when any selected connection has the series), then the per-post names. */
 export function buildTiles(
-  capped: CappedPosts,
+  period: PeriodPosts,
   metrics: MetricsByPost,
   followers: Iterable<readonly MetricPoint[]>,
   w: Windows,
+  complete = true,
 ): Tile[] {
   const account = followersTile(followers, w);
-  const posts = postTiles(capped, metrics);
+  const posts = postTiles(period, metrics, complete);
   // The account-level series owns the name if a platform ever reports a per-post metric called the same.
   return account ? [account, ...posts.filter((t) => t.name !== FOLLOWERS)] : posts;
 }
@@ -521,7 +578,7 @@ export function metricHistories(series: readonly MetricPoint[]): MetricHistory[]
 
 // --- Sync line ---
 
-/** Newest capture per connection, across its follower series and its loaded posts' series. */
+/** Newest capture per connection, across its follower series and its loaded posts' latest metrics. */
 export function lastCaptureByConnection(
   posts: readonly WindowedPost[],
   metrics: MetricsByPost,
@@ -534,17 +591,54 @@ export function lastCaptureByConnection(
   for (const [id, points] of followers) for (const p of points) see(id, p.at);
   for (const p of posts) {
     const entry = metrics.get(p.post.id);
-    if (entry?.status === 'ok')
-      for (const point of entry.series) see(p.post.connectionId, point.at);
+    if (entry?.status === 'ok' && entry.capturedAt !== null) {
+      see(p.post.connectionId, entry.capturedAt);
+    }
   }
   return last;
 }
 
-/** Newest capture across everything loaded, or null when nothing has been collected. */
-export function latestCapture(lastByConnection: ReadonlyMap<string, number>): number | null {
-  let max: number | null = null;
-  for (const at of lastByConnection.values()) if (max === null || at > max) max = at;
-  return max;
+const HOUR_MS = 3_600_000;
+
+/** "hourly", "daily", or "every N hours" — an interval as the API reports it, in words. */
+export function cadenceWord(ms: number): string {
+  if (ms === HOUR_MS) return 'hourly';
+  if (ms === DAY_MS) return 'daily';
+  const hours = ms / HOUR_MS;
+  return Number.isInteger(hours)
+    ? `every ${hours} hours`
+    : `every ${Math.round(ms / 60_000)} minutes`;
+}
+
+/**
+ * The collection rules as one line, from the cadence the API reports — never from text written
+ * here. e.g. "posts refresh hourly for 48 h, then daily · followers daily".
+ */
+export function cadenceText(cadence: AnalyticsStatusView['cadence']): string {
+  const fresh = Math.round(cadence.freshPostWindowMs / HOUR_MS);
+  return (
+    `posts refresh ${cadenceWord(cadence.freshPostIntervalMs)} for ${fresh} h, ` +
+    `then ${cadenceWord(cadence.postIntervalMs)} · followers ${cadenceWord(cadence.accountIntervalMs)}`
+  );
+}
+
+export type NextRefresh =
+  /** Nothing can be polled: no account with a working connection. */
+  | { kind: 'none' }
+  /** Something is already due; it is collected at the next run. */
+  | { kind: 'due' }
+  /** Nothing is due before `at` (epoch ms); the first run at or after it collects. */
+  | { kind: 'at'; at: number };
+
+/** When the next collection falls due, from `GET /v1/analytics/status`. */
+export function nextRefresh(
+  status: Pick<AnalyticsStatusView, 'nextDueAt'>,
+  now: number,
+): NextRefresh {
+  if (status.nextDueAt === null) return { kind: 'none' };
+  const at = new Date(status.nextDueAt).getTime();
+  if (Number.isNaN(at)) return { kind: 'none' };
+  return at <= now ? { kind: 'due' } : { kind: 'at', at };
 }
 
 /** The analytics sweep skips a connection in this state, so its numbers silently stop. */

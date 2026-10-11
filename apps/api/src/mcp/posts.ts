@@ -173,7 +173,8 @@ export function registerPostTools(server: McpServer, ctx: AuthContext): void {
         '`status` (draft | scheduled | publishing | published | failed | cancelled), `provider`, ' +
         '`connectionId`, and a `from`/`to` window on `publishAt`. Paginate with `limit` (max ' +
         '100, default 50) and `offset`. Each item is one per-platform post; a failed post ' +
-        'carries the reason in `error` and a published one its `releaseUrl`. Read-only.',
+        'carries the reason in `error` and a published one its `releaseUrl`; `media` lists the ' +
+        "post's own media. Read-only.",
       inputSchema: listPostsQuery.shape,
       annotations: READ,
     },
@@ -186,7 +187,8 @@ export function registerPostTools(server: McpServer, ctx: AuthContext): void {
       description:
         'Get one per-platform post by id: status, caption, options, `publishAt`, and after ' +
         'publishing its `releaseUrl` or `error`. Use it to read back the outcome of a scheduled ' +
-        'post. Media is not included here; get_post_group returns it. Read-only.',
+        'post. `media` lists its own media (id, kind, public `url`, and a `thumbnailUrl` where ' +
+        'a video has a cover). Read-only.',
       inputSchema: { postId },
       annotations: READ,
     },

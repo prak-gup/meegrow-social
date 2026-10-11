@@ -187,6 +187,21 @@ export const createPostInput = z.object({
 });
 export type CreatePostInput = z.infer<typeof createPostInput>;
 
+/**
+ * A media item as a post view shows it: enough to draw a thumbnail, nothing about where it is
+ * stored. `url` is the public URL the platform itself is given (null when the ref carries none and
+ * no stored media answers to its id). `thumbnailUrl` is a still for a video where one exists — today
+ * only the cover of a `meta` post (`options.coverUrl`); no thumbnail is generated on upload.
+ */
+export const postMediaView = z.object({
+  /** The media id — `mediaRef.mediaId`. */
+  id: z.string().uuid(),
+  kind: mediaKind,
+  url: z.string().url().nullable(),
+  thumbnailUrl: z.string().url().nullable(),
+});
+export type PostMediaView = z.infer<typeof postMediaView>;
+
 export const postView = z.object({
   id: z.string().uuid(),
   groupId: z.string().uuid(),
@@ -202,6 +217,11 @@ export const postView = z.object({
   /** Set when this post was created via a queue's next-free-slot assignment (PRD F3.4). */
   queueId: z.string().uuid().nullable(),
   createdAt: z.coerce.date(),
+  /**
+   * This post's own media, in carousel order. Optional only so a consumer holding an older payload
+   * still parses: every read and write in core fills it (an empty array for a text-only post).
+   */
+  media: z.array(postMediaView).optional(),
 });
 export type PostView = z.infer<typeof postView>;
 
@@ -262,6 +282,35 @@ export const postGroupView = z.object({
   posts: z.array(postView),
 });
 export type PostGroupView = z.infer<typeof postGroupView>;
+
+/** What a whole group reads as when its per-platform posts disagree. See `groupDisplayStatus`. */
+export const postGroupStatus = z.enum([...postStatus.options, 'partly_failed']);
+export { groupDisplayStatus, type PostGroupStatus } from './group-status.js';
+
+/**
+ * Post groups, one item per composed post (`GET /v1/post-groups`). The filters are `listPostsQuery`'s
+ * and apply to the VARIANTS: a group is listed when at least one of its posts matches, and it is then
+ * returned with all of its posts. `q` matches a variant's caption, case-insensitively. Ordered by
+ * the earliest `publishAt` among the matching variants — the group's creation time when none has
+ * one — newest first unless `order=asc`. `limit`/`offset` count groups, so a group is never split
+ * across pages.
+ */
+export const listPostGroupsQuery = listPostsQuery.extend({
+  q: z.string().trim().min(1).max(200).optional(),
+  order: z.enum(['desc', 'asc']).default('desc'),
+});
+export type ListPostGroupsQuery = z.infer<typeof listPostGroupsQuery>;
+
+/** One item of the group list: the shared fields, the headline status, and every variant. */
+export const postGroupSummary = z.object({
+  id: z.string().uuid(),
+  caption: z.string(),
+  media: z.array(postMediaView),
+  createdAt: z.coerce.date(),
+  status: postGroupStatus,
+  posts: z.array(postView),
+});
+export type PostGroupSummary = z.infer<typeof postGroupSummary>;
 
 /**
  * Why a dry-run rejected a post (`POST /v1/posts/validate`, MCP `validate_post`). The first four

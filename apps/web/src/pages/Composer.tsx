@@ -36,25 +36,32 @@ import { Input } from '../components/ui/Input';
 import { Label } from '../components/ui/Label';
 import { Modal } from '../components/ui/Modal';
 import { PageHeader } from '../components/ui/PageHeader';
+import { PlatformBadge } from '../components/ui/PlatformBadge';
 import { Select } from '../components/ui/Select';
 import { Textarea } from '../components/ui/Textarea';
 import {
   CalendarBlank,
+  Check,
   CheckCircle,
   Clock,
   CloseIcon,
   ImageIcon,
+  Play,
   Plugs,
-  PlayCircle,
+  Plus,
   WarningCircle,
 } from '../lib/icons';
 
-const MODE_COPY: Record<ScheduleMode, { title: string; description: string }> = {
-  draft: { title: 'Save as draft', description: 'Keep it for later. Nothing is sent.' },
-  now: { title: 'Publish now', description: 'Posts straight away to the selected accounts.' },
-  at: { title: 'Schedule', description: 'Pick a date and time.' },
-  queue: { title: 'Add to queue', description: 'Takes the next free slot in a queue.' },
+/** The segment's word, and the line under the control once it is picked. */
+const MODE_COPY: Record<ScheduleMode, { label: string; description: string }> = {
+  draft: { label: 'Draft', description: 'Keep it for later. Nothing is sent.' },
+  now: { label: 'Now', description: 'Posts straight away to the selected accounts.' },
+  at: { label: 'Schedule', description: 'Pick a date and time.' },
+  queue: { label: 'Queue', description: 'Takes the next free slot in a queue.' },
 };
+
+/** Platforms whose posts lead with the picture; elsewhere the text comes first. */
+const MEDIA_FIRST = new Set(['instagram', 'youtube']);
 
 /** An uploaded file: the ref the API needs, plus the file name for labels. */
 interface MediaItem {
@@ -68,13 +75,7 @@ interface Outcome {
   failed: boolean;
 }
 
-/** Selected state is never colour alone: a thicker ring plus (for chips) a check icon. */
-const choiceBox =
-  'flex w-full min-w-0 cursor-pointer items-start gap-3 rounded-md border bg-canvas p-3 text-left transition-colors peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ink';
-const choiceOn = 'border-ink bg-surface-soft ring-1 ring-ink';
-const choiceOff = 'border-hairline hover:bg-surface-soft';
-
-/** A titled block of the editor. `fieldset` groups a set of checkboxes/radios under a legend. */
+/** One block of the editor: a small heading, then its controls. `fieldset` groups checkboxes/radios. */
 function Section({
   title,
   hint,
@@ -87,29 +88,26 @@ function Section({
   children: ReactNode;
 }) {
   const head = (
-    <>
+    <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3">
       {fieldset ? (
-        <legend className="p-0 text-base font-semibold text-ink">{title}</legend>
+        <legend className="float-left p-0 text-sm font-semibold text-ink">{title}</legend>
       ) : (
-        <h2 className="text-base font-semibold text-ink">{title}</h2>
+        <h2 className="text-sm font-semibold text-ink">{title}</h2>
       )}
-      {hint && <p className="mt-0.5 text-caption text-muted">{hint}</p>}
-    </>
+      {hint && <p className="text-caption text-muted">{hint}</p>}
+    </div>
   );
-  return (
-    <Card>
-      {fieldset ? (
-        <fieldset className="min-w-0 p-6">
-          {head}
-          <div className="mt-4 space-y-3">{children}</div>
-        </fieldset>
-      ) : (
-        <section className="min-w-0 p-6">
-          {head}
-          <div className="mt-4 space-y-3">{children}</div>
-        </section>
-      )}
-    </Card>
+  const box = 'min-w-0 border-b border-hairline-soft p-4 last:border-b-0';
+  return fieldset ? (
+    <fieldset className={box}>
+      {head}
+      <div className="clear-both space-y-2">{children}</div>
+    </fieldset>
+  ) : (
+    <section className={box}>
+      {head}
+      <div className="space-y-2">{children}</div>
+    </section>
   );
 }
 
@@ -123,23 +121,8 @@ function FieldError({ id, children }: { id: string; children: ReactNode }) {
   );
 }
 
-function PlatformTile({ conn, size = 'md' }: { conn: ConnectionView; size?: 'sm' | 'md' }) {
-  const platform = platformMeta({ identifier: conn.provider, displayName: conn.provider });
-  return (
-    <span
-      className={cn(
-        'grid flex-none place-items-center rounded-sm text-white',
-        platform.brand,
-        size === 'md' ? 'h-9 w-9' : 'h-8 w-8',
-      )}
-      aria-hidden="true"
-    >
-      <platform.Icon size={size === 'md' ? 20 : 18} weight="fill" />
-    </span>
-  );
-}
-
-function AccountChip({
+/** An account as a compact selectable row. Selected is never colour alone: darker frame + a check. */
+function AccountRow({
   conn,
   selected,
   onToggle,
@@ -160,174 +143,237 @@ function AccountChip({
         onChange={onToggle}
         aria-describedby={describedBy}
       />
-      <span className={cn(choiceBox, 'items-center', selected ? choiceOn : choiceOff)}>
-        <PlatformTile conn={conn} />
+      <span
+        className={cn(
+          'flex h-11 w-full min-w-0 cursor-pointer items-center gap-2.5 rounded-sm border bg-canvas px-2 text-left transition-colors peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ink md:h-10',
+          selected ? 'border-ink bg-surface-soft' : 'border-hairline hover:bg-surface-soft',
+        )}
+      >
+        <PlatformBadge provider={conn.provider} name={conn.displayName} size="sm" />
         <span className="flex min-w-0 flex-1 flex-col leading-tight">
-          <span className="truncate text-body font-semibold text-ink">{conn.displayName}</span>
-          <span className="truncate text-caption text-muted">
+          <span className="truncate text-sm font-medium text-ink">{conn.displayName}</span>
+          <span
+            className={cn(
+              'truncate text-micro',
+              conn.needsReconnect ? 'text-status-bad' : 'text-muted',
+            )}
+          >
             {platform.label}
             {conn.needsReconnect && ' · needs reconnect'}
           </span>
         </span>
-        {selected && (
-          <CheckCircle size={20} weight="fill" className="flex-none text-ink" aria-hidden="true" />
-        )}
+        <span
+          aria-hidden="true"
+          className={cn(
+            'grid h-4 w-4 flex-none place-items-center rounded-xs border',
+            selected ? 'border-ink bg-ink text-white' : 'border-hairline-strong',
+          )}
+        >
+          {selected && <Check size={10} weight="bold" />}
+        </span>
       </span>
     </label>
   );
 }
 
-function ModeCard({
+/** The four ways to send, as one segmented control. Real radios, so arrow keys move between them. */
+function ModeSegments({
   mode,
-  selected,
-  onSelect,
+  onChange,
 }: {
   mode: ScheduleMode;
-  selected: boolean;
-  onSelect: () => void;
+  onChange: (mode: ScheduleMode) => void;
 }) {
   return (
-    <label className="relative block">
-      <input
-        type="radio"
-        name="schedule-mode"
-        className="peer sr-only"
-        checked={selected}
-        onChange={onSelect}
-      />
-      <span className={cn(choiceBox, 'h-full', selected ? choiceOn : choiceOff)}>
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="text-body font-semibold text-ink">{MODE_COPY[mode].title}</span>
-          <span className="text-caption text-muted">{MODE_COPY[mode].description}</span>
-        </span>
-        {selected && (
-          <CheckCircle size={20} weight="fill" className="flex-none text-ink" aria-hidden="true" />
-        )}
-      </span>
-    </label>
+    <div className="inline-flex w-full rounded-sm border border-muted-soft p-0.5 sm:w-auto">
+      {SCHEDULE_MODES.map((m) => (
+        <label key={m} className="relative flex-1 sm:flex-none">
+          <input
+            type="radio"
+            name="schedule-mode"
+            className="peer sr-only"
+            checked={mode === m}
+            onChange={() => onChange(m)}
+          />
+          <span className="flex h-10 cursor-pointer items-center justify-center rounded-xs px-3.5 text-base font-medium text-muted hover:text-ink peer-checked:bg-ink peer-checked:text-white peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ink md:h-7 md:text-sm">
+            {MODE_COPY[m].label}
+          </span>
+        </label>
+      ))}
+    </div>
   );
 }
 
 function MediaThumb({ item, onRemove }: { item: MediaItem; onRemove: () => void }) {
   const { ref, name } = item;
   return (
-    <li className="relative">
+    <li className="relative flex-none">
       {ref.kind === 'image' && ref.url ? (
         <img
           src={ref.url}
           alt={name}
-          className="h-20 w-20 rounded-sm border border-hairline object-cover"
+          className="h-14 w-14 rounded-sm border border-hairline object-cover"
         />
       ) : (
-        <span className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-sm border border-hairline bg-surface-soft px-1 text-center">
+        <span
+          className="flex h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-sm border border-hairline bg-surface-soft px-1 text-center"
+          title={name}
+        >
           {ref.kind === 'video' ? (
-            <PlayCircle size={24} className="text-muted" aria-hidden="true" />
+            <Play size={16} weight="fill" className="text-muted" aria-hidden="true" />
           ) : (
-            <ImageIcon size={24} className="text-muted" aria-hidden="true" />
+            <ImageIcon size={16} className="text-muted" aria-hidden="true" />
           )}
-          <span className="w-full truncate text-micro font-semibold text-ink">
-            {ref.kind === 'video' ? 'Video' : 'Image'}
+          <span className="w-full truncate text-micro text-muted">
+            <span className="sr-only">{ref.kind === 'video' ? 'Video: ' : 'Image: '}</span>
+            {name}
           </span>
-          <span className="w-full truncate text-micro text-muted">{name}</span>
         </span>
       )}
       <button
         type="button"
         onClick={onRemove}
         aria-label={`Remove ${name}`}
-        className="absolute -right-2 -top-2 grid h-7 w-7 place-items-center rounded-full border border-hairline bg-canvas text-ink shadow-1 hover:bg-surface-soft"
+        className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full border border-hairline bg-canvas text-ink shadow-1 hover:bg-surface-soft"
       >
-        <CloseIcon size={14} weight="bold" />
+        <CloseIcon size={10} weight="bold" />
       </button>
     </li>
   );
 }
 
-/** Neutral post card: not an imitation of any network, just what will go out and when. */
+/**
+ * What goes out, laid out like a post: the account, the caption, the media. Neutral on purpose —
+ * it follows each platform's order (picture first or text first) but imitates no network's chrome.
+ * With several accounts selected, a switcher picks whose post is shown.
+ */
 function Preview({
   accounts,
   caption,
-  firstMedia,
-  mediaCount,
+  media,
   when,
 }: {
   accounts: ConnectionView[];
   caption: string;
-  firstMedia: MediaItem | undefined;
-  mediaCount: number;
+  media: MediaItem[];
   when: string;
 }) {
-  const first = accounts[0];
-  const platform = first
-    ? platformMeta({ identifier: first.provider, displayName: first.provider })
+  const [pickedId, setPickedId] = useState('');
+  const current = accounts.find((c) => c.id === pickedId) ?? accounts[0];
+  const platform = current
+    ? platformMeta({ identifier: current.provider, displayName: current.provider })
     : null;
+  const first = media[0];
+  const mediaFirst = current ? MEDIA_FIRST.has(current.provider) : false;
+
+  const text = (
+    <p
+      className={cn(
+        'max-h-72 overflow-y-auto whitespace-pre-wrap break-words px-3 py-2.5 text-sm',
+        caption ? 'text-body-ink' : 'text-muted',
+      )}
+    >
+      {caption || 'Your caption will appear here.'}
+    </p>
+  );
+  const picture = first && (
+    <div className="relative">
+      {first.ref.kind === 'image' && first.ref.url ? (
+        <img
+          src={first.ref.url}
+          alt={`Preview of ${first.name}`}
+          className="aspect-square w-full object-cover"
+        />
+      ) : (
+        <div className="flex aspect-video w-full flex-col items-center justify-center gap-1 bg-surface-strong text-muted">
+          {first.ref.kind === 'video' ? (
+            <Play size={28} weight="fill" aria-hidden="true" />
+          ) : (
+            <ImageIcon size={28} aria-hidden="true" />
+          )}
+          <span className="max-w-full truncate px-4 text-caption">
+            {first.ref.kind === 'video' ? 'Video' : 'Image'}: {first.name}
+          </span>
+        </div>
+      )}
+      {media.length > 1 && (
+        <span className="tnum absolute right-2 top-2 rounded-full bg-scrim/60 px-2 py-0.5 text-micro font-medium text-white">
+          1 / {media.length}
+          <span className="sr-only"> media items</span>
+        </span>
+      )}
+    </div>
+  );
+
   return (
     <section aria-labelledby="preview-title" className="min-w-0">
-      <h2 id="preview-title" className="mb-3 text-base font-semibold text-ink">
-        Preview
-      </h2>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h2 id="preview-title" className="text-sm font-semibold text-ink">
+          Preview
+        </h2>
+        {accounts.length > 1 && (
+          <div role="group" aria-label="Preview as" className="flex flex-wrap justify-end gap-1">
+            {accounts.map((c) => {
+              const on = c.id === current?.id;
+              const label = platformMeta({ identifier: c.provider, displayName: c.provider }).label;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  aria-pressed={on}
+                  aria-label={`Preview as ${c.displayName}, ${label}`}
+                  title={`${c.displayName} · ${label}`}
+                  onClick={() => setPickedId(c.id)}
+                  className={cn(
+                    'grid h-11 w-11 place-items-center rounded-sm border md:h-8 md:w-8',
+                    on ? 'border-ink bg-surface-soft' : 'border-transparent hover:bg-surface-soft',
+                  )}
+                >
+                  <PlatformBadge provider={c.provider} name={c.displayName} size="sm" />
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
       <Card className="overflow-hidden">
-        <div className="flex items-center gap-3 p-4">
-          {first ? (
-            <PlatformTile conn={first} />
+        <div className="flex items-center gap-2.5 border-b border-hairline-soft px-3 py-2.5">
+          {current ? (
+            <PlatformBadge provider={current.provider} name={current.displayName} />
           ) : (
             <span
-              className="grid h-9 w-9 flex-none place-items-center rounded-sm bg-surface-strong text-muted"
+              className="grid h-7 w-7 flex-none place-items-center rounded-md bg-surface-strong text-muted"
               aria-hidden="true"
             >
-              <Plugs size={20} />
+              <Plugs size={16} />
             </span>
           )}
           <div className="flex min-w-0 flex-col leading-tight">
-            <span className="truncate text-body font-semibold text-ink">
-              {first ? first.displayName : 'No account selected'}
+            <span className="truncate text-sm font-semibold text-ink">
+              {current ? current.displayName : 'No account selected'}
             </span>
-            <span className="truncate text-caption text-muted">
+            <span className="truncate text-micro text-muted">
               {platform ? platform.label : 'Select an account to post as'}
-              {accounts.length > 1 && ` · +${plural(accounts.length - 1, 'more account')}`}
+              {accounts.length > 1 && ` · 1 of ${accounts.length} accounts`}
             </span>
           </div>
         </div>
-
-        <p
-          className={cn(
-            'whitespace-pre-wrap break-words px-4 pb-4 text-body',
-            caption ? 'text-body-ink' : 'text-muted',
-          )}
-        >
-          {caption || 'Your caption will appear here.'}
-        </p>
-
-        {firstMedia &&
-          (firstMedia.ref.kind === 'image' && firstMedia.ref.url ? (
-            <img
-              src={firstMedia.ref.url}
-              alt={`Preview of ${firstMedia.name}`}
-              className="aspect-cover w-full object-cover"
-            />
-          ) : (
-            <div className="flex aspect-cover w-full flex-col items-center justify-center gap-1 bg-surface-strong text-muted">
-              {firstMedia.ref.kind === 'video' ? (
-                <PlayCircle size={36} aria-hidden="true" />
-              ) : (
-                <ImageIcon size={36} aria-hidden="true" />
-              )}
-              <span className="max-w-full truncate px-4 text-caption font-medium">
-                {firstMedia.ref.kind === 'video' ? 'Video' : 'Image'}: {firstMedia.name}
-              </span>
-            </div>
-          ))}
-        {mediaCount > 1 && (
-          <p className="px-4 pt-3 text-caption text-muted">
-            +{plural(mediaCount - 1, 'more media item')}
-          </p>
+        {mediaFirst ? (
+          <>
+            {picture}
+            {text}
+          </>
+        ) : (
+          <>
+            {text}
+            {picture}
+          </>
         )}
-
-        <p className="flex items-start gap-2 border-t border-hairline-soft p-4 text-caption text-muted">
-          <Clock size={16} className="mt-0.5 flex-none" aria-hidden="true" />
-          <span>{when}</span>
-        </p>
       </Card>
+      <p className="mt-2 flex items-start gap-1.5 text-caption text-muted">
+        <Clock size={14} className="mt-0.5 flex-none" aria-hidden="true" />
+        <span>{when}</span>
+      </p>
     </section>
   );
 }
@@ -561,8 +607,8 @@ export function Composer() {
     return (
       <div>
         {header}
-        <Card className="p-6">
-          <CheckCircle size={32} weight="fill" className="text-status-ok" aria-hidden="true" />
+        <Card className="p-4">
+          <CheckCircle size={28} weight="fill" className="text-status-ok" aria-hidden="true" />
           <h2
             ref={outcomeHeading}
             tabIndex={-1}
@@ -606,16 +652,12 @@ export function Composer() {
   return (
     <div>
       {header}
-      <div className="grid gap-6 lg:grid-cols-composer lg:items-start">
-        <div className="min-w-0 space-y-6">
-          <Section
-            title="Post to"
-            fieldset
-            hint="Choose one or more of this client's connected accounts."
-          >
-            <div className="grid gap-2 sm:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-composer lg:items-start">
+        <Card className="min-w-0">
+          <Section title="Post to" fieldset hint={`${targets.length} of ${conns.length} selected`}>
+            <div className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
               {conns.map((c) => (
-                <AccountChip
+                <AccountRow
                   key={c.id}
                   conn={c}
                   selected={connectionIds.includes(c.id)}
@@ -627,7 +669,14 @@ export function Composer() {
             {accountsError && <FieldError id={accountsErrorId}>{accountsError}</FieldError>}
           </Section>
 
-          <Section title="Caption">
+          <Section
+            title="Caption"
+            hint={
+              <span id="caption-count" className={cn('tnum', over && 'font-semibold text-error')}>
+                {caption.length.toLocaleString()} / {CAPTION_MAX.toLocaleString()}
+              </span>
+            }
+          >
             <Label htmlFor="caption" className="sr-only">
               Caption
             </Label>
@@ -636,32 +685,16 @@ export function Composer() {
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
               placeholder="Write something…"
-              rows={6}
+              rows={7}
               aria-invalid={over}
               aria-describedby={cn('caption-count', over && captionErrorId)}
             />
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                {over && errors.caption && (
-                  <FieldError id={captionErrorId}>{errors.caption}</FieldError>
-                )}
-              </div>
-              <p
-                id="caption-count"
-                className={cn(
-                  'tnum text-caption',
-                  over ? 'font-semibold text-error' : 'text-muted',
-                )}
-              >
-                {caption.length} / {CAPTION_MAX}
-              </p>
-            </div>
+            {over && errors.caption && (
+              <FieldError id={captionErrorId}>{errors.caption}</FieldError>
+            )}
           </Section>
 
-          <Section
-            title="Media"
-            hint={`Photos and videos, up to ${MEDIA_MAX}. ${media.length} of ${MEDIA_MAX} attached.`}
-          >
+          <Section title="Media" hint={`${media.length} of ${MEDIA_MAX} · photos and videos`}>
             <div
               onDragOver={(e) => {
                 e.preventDefault();
@@ -674,30 +707,44 @@ export function Composer() {
                 void addFiles(e.dataTransfer.files);
               }}
               className={cn(
-                'rounded-md border border-dashed p-4 text-center transition-colors',
+                'rounded-sm border border-dashed p-2 transition-colors',
                 dragging ? 'border-ink bg-surface-soft' : 'border-hairline-strong',
               )}
             >
-              <Button
-                type="button"
-                variant="outline"
-                disabled={mediaFull}
-                onClick={() => fileInput.current?.click()}
-                aria-describedby={mediaError ? mediaErrorId : undefined}
-              >
-                <ImageIcon size={18} />
-                {uploading > 0 ? 'Uploading…' : 'Add photos or videos'}
-              </Button>
-              <p
-                className="mt-2 text-caption text-muted"
-                role={uploading > 0 ? 'status' : undefined}
-              >
-                {uploading > 0
-                  ? `Uploading ${plural(uploading, 'file')}…`
-                  : mediaFull
-                    ? `Maximum of ${MEDIA_MAX} reached. Remove one to add another.`
-                    : 'Click to choose, or drop files here.'}
-              </p>
+              <ul className="flex flex-wrap items-center gap-2.5" aria-label="Attached media">
+                {media.map((item) => (
+                  <MediaThumb
+                    key={item.ref.mediaId}
+                    item={item}
+                    onRemove={() =>
+                      setMedia((prev) => prev.filter((m) => m.ref.mediaId !== item.ref.mediaId))
+                    }
+                  />
+                ))}
+                <li className="flex min-w-0 items-center gap-2.5">
+                  <button
+                    type="button"
+                    disabled={mediaFull}
+                    onClick={() => fileInput.current?.click()}
+                    aria-label={uploading > 0 ? 'Uploading' : 'Add photos or videos'}
+                    aria-describedby={cn('media-hint', mediaError && mediaErrorId)}
+                    className="grid h-14 w-14 flex-none place-items-center rounded-sm border border-hairline-strong bg-canvas text-ink hover:bg-surface-soft disabled:opacity-50"
+                  >
+                    <Plus size={18} aria-hidden="true" />
+                  </button>
+                  <p
+                    id="media-hint"
+                    className="text-caption text-muted"
+                    role={uploading > 0 ? 'status' : undefined}
+                  >
+                    {uploading > 0
+                      ? `Uploading ${plural(uploading, 'file')}…`
+                      : mediaFull
+                        ? `Maximum of ${MEDIA_MAX} reached. Remove one to add another.`
+                        : 'Add photos or videos, or drop files here.'}
+                  </p>
+                </li>
+              </ul>
               <input
                 ref={fileInput}
                 type="file"
@@ -712,30 +759,16 @@ export function Composer() {
               />
             </div>
             {mediaError && <FieldError id={mediaErrorId}>{mediaError}</FieldError>}
-            {media.length > 0 && (
-              <ul className="flex flex-wrap gap-3 pt-1" aria-label="Attached media">
-                {media.map((item) => (
-                  <MediaThumb
-                    key={item.ref.mediaId}
-                    item={item}
-                    onRemove={() =>
-                      setMedia((prev) => prev.filter((m) => m.ref.mediaId !== item.ref.mediaId))
-                    }
-                  />
-                ))}
-              </ul>
-            )}
           </Section>
 
           <Section title="When to post" fieldset>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {SCHEDULE_MODES.map((m) => (
-                <ModeCard key={m} mode={m} selected={mode === m} onSelect={() => setMode(m)} />
-              ))}
-            </div>
+            <ModeSegments mode={mode} onChange={setMode} />
+            {(mode === 'draft' || mode === 'now') && (
+              <p className="text-caption text-muted">{MODE_COPY[mode].description}</p>
+            )}
 
             {mode === 'at' && (
-              <div className="space-y-1.5 pt-2">
+              <div className="max-w-xs space-y-1.5">
                 <Label htmlFor="at">Publish at</Label>
                 <Input
                   id="at"
@@ -750,7 +783,7 @@ export function Composer() {
               </div>
             )}
             {mode === 'queue' && (
-              <div className="space-y-1.5 pt-2">
+              <div className="max-w-xs space-y-1.5">
                 <Label htmlFor="queue">Queue</Label>
                 {queues.length > 0 ? (
                   <Select
@@ -769,7 +802,7 @@ export function Composer() {
                     ))}
                   </Select>
                 ) : (
-                  <p className="text-body text-muted">This client has no queues yet.</p>
+                  <p className="text-sm text-muted">This client has no queues yet.</p>
                 )}
                 {/* A live region, so changing the queue announces its slot. */}
                 <p id={queueSlotId} role="status" className="tnum text-caption text-muted">
@@ -780,20 +813,25 @@ export function Composer() {
             )}
           </Section>
 
-          {error && (
-            <ErrorState title="Could not create the post" message={error} className="py-6" />
-          )}
-          <Button className="w-full sm:w-auto" disabled={busy || uploading > 0} onClick={onSubmit}>
-            {busy ? busyLabel(mode) : submitLabel(mode, targets.length)}
-          </Button>
-        </div>
+          <div className="space-y-3 p-4">
+            {error && (
+              <ErrorState title="Could not create the post" message={error} className="py-5" />
+            )}
+            <Button
+              className="w-full sm:w-auto"
+              disabled={busy || uploading > 0}
+              onClick={onSubmit}
+            >
+              {busy ? busyLabel(mode) : submitLabel(mode, targets.length)}
+            </Button>
+          </div>
+        </Card>
 
-        <div className="min-w-0 lg:sticky lg:top-6">
+        <div className="min-w-0 lg:sticky lg:top-5">
           <Preview
             accounts={targets}
             caption={caption}
-            firstMedia={media[0]}
-            mediaCount={media.length}
+            media={media}
             when={scheduleSummary(mode, at, queueName, nextSlot)}
           />
         </div>
@@ -806,11 +844,11 @@ export function Composer() {
           </p>
           <ul className="mt-3 space-y-2">
             {targets.map((c) => (
-              <li key={c.id} className="flex items-center gap-3">
-                <PlatformTile conn={c} size="sm" />
+              <li key={c.id} className="flex items-center gap-2.5">
+                <PlatformBadge provider={c.provider} name={c.displayName} size="sm" />
                 <span className="flex min-w-0 flex-col leading-tight">
-                  <span className="truncate text-body font-semibold text-ink">{c.displayName}</span>
-                  <span className="truncate text-caption text-muted">
+                  <span className="truncate text-sm font-medium text-ink">{c.displayName}</span>
+                  <span className="truncate text-micro text-muted">
                     {platformMeta({ identifier: c.provider, displayName: c.provider }).label}
                   </span>
                 </span>

@@ -39,14 +39,17 @@ export function StatTile({
   return (
     <div className={cn('rounded-md border border-hairline bg-canvas p-3', className)} title={hint}>
       <div className="flex items-center justify-between gap-2 text-caption font-medium text-muted">
-        <span>{label}</span>
+        {/* One line: a long metric name must not make one tile taller than its neighbours. */}
+        <span className="min-w-0 truncate" title={label}>
+          {label}
+        </span>
         {Icon && <Icon size={16} className="flex-none" />}
       </div>
       <div className="tnum mt-0.5 text-2xl font-semibold text-ink">{value}</div>
       {hasDelta && (
         <div
           className={cn(
-            'tnum mt-0.5 flex items-center gap-1 text-caption font-medium',
+            'tnum mt-0.5 flex items-center gap-1 whitespace-nowrap text-caption font-medium',
             flat ? 'text-muted' : good ? 'text-status-ok' : 'text-status-bad',
           )}
         >

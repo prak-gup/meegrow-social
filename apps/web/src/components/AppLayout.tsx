@@ -7,6 +7,7 @@ import { ClientSwitcher } from './ClientSwitcher';
 import { AddClientModal } from './AddClientModal';
 import { Logo } from './Logo';
 import { Button } from './ui/Button';
+import { RowMenu } from './ui/RowMenu';
 import {
   House,
   CalendarBlank,
@@ -20,6 +21,7 @@ import {
   List,
   CloseIcon,
   SignOut,
+  CaretUpDown,
 } from '../lib/icons';
 
 const TABS = [
@@ -92,33 +94,47 @@ function SidebarContent({
         ))}
       </nav>
 
-      <div className="mt-auto flex flex-col gap-0.5 border-t border-hairline-soft pt-3">
-        {/* Account-level, so it sits with the user rather than in the per-client nav above. */}
-        <NavLink to="/settings/password" onClick={onNavigate} className={navClass}>
-          <LockKey size={18} />
-          Change password
-        </NavLink>
-        <div className="mt-1 flex items-center gap-2 px-1">
+      {/* Account-level actions live in one menu on the user row, so the name gets the row's full
+          width instead of sharing it with icons. */}
+      <div className="mt-auto border-t border-hairline-soft pt-2">
+        <RowMenu
+          label={`Account: ${displayName}`}
+          align="start"
+          items={[
+            {
+              label: 'Change password',
+              icon: <LockKey size={14} />,
+              onSelect: () => {
+                onNavigate?.();
+                navigate('/settings/password');
+              },
+            },
+            {
+              label: 'Sign out',
+              icon: <SignOut size={14} />,
+              onSelect: () => void logout().then(() => navigate('/login')),
+            },
+          ]}
+          className="flex h-11 w-full items-center gap-2 rounded-sm px-1 text-left hover:bg-surface-soft aria-expanded:bg-surface-strong"
+        >
           <span
             className="grid h-7 w-7 flex-none place-items-center rounded-full bg-surface-strong text-xs font-semibold text-ink"
             aria-hidden="true"
           >
             {initial}
           </span>
-          <div className="min-w-0 flex-1 leading-tight">
-            <p className="truncate text-sm font-medium text-ink">{displayName}</p>
-            {me?.user.name && <p className="truncate text-micro text-muted">{me.user.email}</p>}
-          </div>
-          <button
-            type="button"
-            onClick={() => void logout().then(() => navigate('/login'))}
-            className="grid h-11 w-11 flex-none place-items-center rounded-sm text-muted hover:bg-surface-strong hover:text-ink md:h-8 md:w-8"
-            aria-label="Sign out"
-            title="Sign out"
-          >
-            <SignOut size={16} />
-          </button>
-        </div>
+          {/* The name has the row to itself; the caret sits on the email line, which truncates
+              anyway. */}
+          <span className="min-w-0 flex-1 leading-tight">
+            <span className="block truncate text-sm font-medium text-ink">{displayName}</span>
+            <span className="flex items-center gap-1 text-micro text-muted">
+              <span className="min-w-0 flex-1 truncate">
+                {me?.user.name ? me.user.email : 'Account'}
+              </span>
+              <CaretUpDown size={10} className="flex-none" aria-hidden="true" />
+            </span>
+          </span>
+        </RowMenu>
       </div>
     </div>
   );

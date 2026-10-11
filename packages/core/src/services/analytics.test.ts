@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { accountIsDue, FRESH_POST_WINDOW_MS, postIsDue } from './analytics.js';
+import {
+  accountIsDue,
+  ANALYTICS_CADENCE,
+  ANALYTICS_SWEEP_INTERVAL_MS,
+  FRESH_POST_WINDOW_MS,
+  nextAccountDueAt,
+  nextPostDueAt,
+  postIsDue,
+} from './analytics.js';
 
 /**
  * Cadence rules (#9): a post is polled hourly for its first 48h and daily after that; accounts are
@@ -86,5 +94,79 @@ describe('accountIsDue', () => {
   it('is due once a day has passed, and not before', () => {
     expect(accountIsDue({ lastAnalyticsAt: ago(23 * HOUR), now })).toBe(false);
     expect(accountIsDue({ lastAnalyticsAt: ago(DAY), now })).toBe(true);
+  });
+});
+
+describe('nextPostDueAt', () => {
+  it('is now for a post that has never been swept', () => {
+    expect(nextPostDueAt({ publishAt: ago(HOUR), lastAnalyticsAt: null, now })).toEqual(now);
+  });
+
+  it('is an hour after the last sweep while the post is fresh', () => {
+    const last = ago(20 * MINUTE);
+    expect(nextPostDueAt({ publishAt: ago(3 * HOUR), lastAnalyticsAt: last, now })).toEqual(
+      new Date(last.getTime() + HOUR),
+    );
+  });
+
+  it('is a day after the last sweep once the post is past the fresh window, or has no publish time', () => {
+    const last = ago(2 * HOUR);
+    const daily = new Date(last.getTime() + DAY);
+    expect(nextPostDueAt({ publishAt: ago(10 * DAY), lastAnalyticsAt: last, now })).toEqual(daily);
+    expect(nextPostDueAt({ publishAt: null, lastAnalyticsAt: last, now })).toEqual(daily);
+  });
+
+  it('is daily for a post that leaves the fresh window before its hourly poll comes round', () => {
+    const publishAt = ago(FRESH_POST_WINDOW_MS - 10 * MINUTE);
+    const last = ago(30 * MINUTE);
+    expect(nextPostDueAt({ publishAt, lastAnalyticsAt: last, now })).toEqual(
+      new Date(last.getTime() + DAY),
+    );
+  });
+
+  it('agrees with postIsDue: not due a millisecond before, due at the instant it names', () => {
+    const publishAges = [
+      0,
+      5 * MINUTE,
+      47 * HOUR,
+      FRESH_POST_WINDOW_MS - MINUTE,
+      49 * HOUR,
+      9 * DAY,
+    ];
+    const sweepAges = [0, MINUTE, 59 * MINUTE, 5 * HOUR];
+    for (const publishAge of [...publishAges, null]) {
+      for (const sweepAge of sweepAges) {
+        const publishAt = publishAge === null ? null : ago(publishAge);
+        const lastAnalyticsAt = ago(sweepAge);
+        const due = nextPostDueAt({ publishAt, lastAnalyticsAt, now });
+        const before = new Date(due.getTime() - 1);
+        expect(postIsDue({ publishAt, lastAnalyticsAt, now: due })).toBe(true);
+        expect(postIsDue({ publishAt, lastAnalyticsAt, now: before })).toBe(false);
+      }
+    }
+  });
+});
+
+describe('nextAccountDueAt', () => {
+  it('is now when never swept, else a day after the last sweep — where accountIsDue turns true', () => {
+    expect(nextAccountDueAt({ lastAnalyticsAt: null, now })).toEqual(now);
+    const lastAnalyticsAt = ago(3 * HOUR);
+    const due = nextAccountDueAt({ lastAnalyticsAt, now });
+    expect(due).toEqual(new Date(lastAnalyticsAt.getTime() + DAY));
+    expect(accountIsDue({ lastAnalyticsAt, now: due })).toBe(true);
+    expect(accountIsDue({ lastAnalyticsAt, now: new Date(due.getTime() - 1) })).toBe(false);
+  });
+});
+
+describe('ANALYTICS_CADENCE', () => {
+  it('states the rules the due checks apply, and a sweep no coarser than the finest of them', () => {
+    expect(ANALYTICS_CADENCE).toEqual({
+      sweepIntervalMs: HOUR,
+      freshPostWindowMs: 48 * HOUR,
+      freshPostIntervalMs: HOUR,
+      postIntervalMs: DAY,
+      accountIntervalMs: DAY,
+    });
+    expect(ANALYTICS_SWEEP_INTERVAL_MS).toBeLessThanOrEqual(ANALYTICS_CADENCE.freshPostIntervalMs);
   });
 });

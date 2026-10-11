@@ -167,7 +167,12 @@ Notes that are easy to get wrong:
   first, and all targets of one `add_to_queue` call share one slot. It returns fewer than `count`
   when the queue has no more free slots in the next 90 days.
 - `list_media` exists only over MCP. REST has no `GET /v1/media`; that is a REST gap, not an MCP one.
-- `get_post` and `list_posts` do not return a post's media; `get_post_group` returns the group's.
+- Every post a tool returns (`get_post`, `list_posts`, `calendar`, `get_post_group`, and the posts
+  returned by the create / update / retry / duplicate tools) carries `media`: its own media in
+  carousel order, each `{ id, kind, url, thumbnailUrl }`. `url` is the public URL the platform is
+  given, or `null` when the ref has none and no stored media matches its id. `thumbnailUrl` is set
+  only for a video with a cover (`options.coverUrl` of a `meta` post); no thumbnail is generated.
+  `get_post_group` still returns the group's shared media as refs (`{ mediaId, kind, url? }`).
 
 ## 5. REST routes for the same features
 
@@ -195,4 +200,6 @@ Each of these calls the same `core` function as the tool beside it.
 | `POST /v1/media/:id/validate`                                                  | Not in the D1 tool list                                                                 |
 | Queue management: create, get, update, delete                                  | Not in the D1 tool list (`list_queues`, `preview_queue_slots` and `add_to_queue` exist) |
 | `/v1/logs`, `/v1/logs/aggregate`                                               | Not in the D1 tool list                                                                 |
+| `GET /v1/post-groups` (list), `POST /v1/post-groups/:id/duplicate`             | Dashboard reads added with the UI pass; `list_posts` / `duplicate_post` cover the tools |
+| `POST /v1/posts/metrics/latest`, `GET /v1/analytics/status`                    | Dashboard reads added with the UI pass; `post_metrics` covers one post                  |
 | Tags, reviews                                                                  | Workstreams C1 and B2 are not built; their tools are added with them                    |
