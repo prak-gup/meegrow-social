@@ -15,6 +15,8 @@ import type {
   CreatedInviteView,
   InviteView,
   CreatedApiKeyView,
+  PostMetricsView,
+  FollowerSeriesView,
 } from '@meegrow-social/contracts';
 
 /**
@@ -128,6 +130,14 @@ export const api = {
   calendar: (year: number, month: number, timezone: string) =>
     request<CalendarView>('GET', '/v1/posts/calendar', undefined, { year, month, timezone }),
   getPostGroup: (id: string) => request<{ group: PostGroupView }>('GET', `/v1/post-groups/${id}`),
+
+  // --- Analytics (#9, #28) ---
+  // `capturedAt` arrives as an ISO string (responses are not run through the Zod parsers). The post
+  // series is oldest first; the follower series is newest first.
+  postMetrics: (id: string) =>
+    request<PostMetricsView>('GET', `/v1/posts/${encodeURIComponent(id)}/metrics`),
+  connectionFollowers: (id: string) =>
+    request<FollowerSeriesView>('GET', `/v1/connections/${encodeURIComponent(id)}/followers`),
 
   // --- Queues (#4) — composer queue picker ---
   listQueues: () => request<{ queues: QueueView[] }>('GET', '/v1/queues'),

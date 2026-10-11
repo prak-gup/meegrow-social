@@ -11,6 +11,10 @@ export interface StatTileProps {
   /** For metrics where down is good (failures, errors): flips the up/down colouring. */
   invertDelta?: boolean;
   deltaLabel?: string;
+  /** Render a muted "—" in the delta slot when there is no prior value, instead of leaving it empty. */
+  showMissingDelta?: boolean;
+  /** How the number is defined, shown on hover. */
+  hint?: string;
   icon?: IconComponent;
   className?: string;
 }
@@ -22,6 +26,8 @@ export function StatTile({
   delta,
   invertDelta = false,
   deltaLabel = 'vs prior',
+  showMissingDelta = false,
+  hint,
   icon: Icon,
   className,
 }: StatTileProps) {
@@ -31,7 +37,7 @@ export function StatTile({
   const good = up !== invertDelta;
   const DeltaIcon = up ? ArrowUp : ArrowDown;
   return (
-    <div className={cn('rounded-md border border-hairline bg-canvas p-4', className)}>
+    <div className={cn('rounded-md border border-hairline bg-canvas p-4', className)} title={hint}>
       <div className="flex items-center justify-between gap-2 text-caption font-semibold text-muted">
         <span>{label}</span>
         {Icon && <Icon size={18} className="flex-none" />}
@@ -48,6 +54,13 @@ export function StatTile({
           {!flat && <span className="sr-only">{up ? 'Up ' : 'Down '}</span>}
           {Math.abs(delta).toLocaleString(undefined, { maximumFractionDigits: 1 })}%
           <span className="font-normal text-muted">{deltaLabel}</span>
+        </div>
+      )}
+      {!hasDelta && showMissingDelta && (
+        <div className="mt-1 flex items-center gap-1 text-caption text-muted">
+          <span aria-hidden="true">—</span>
+          <span className="sr-only">No comparison</span>
+          <span>{deltaLabel}</span>
         </div>
       )}
     </div>
