@@ -11,6 +11,7 @@ import {
 } from './fake.js';
 import { FacebookPagesProvider } from './meta/facebook.js';
 import { InstagramProvider } from './meta/instagram.js';
+import { GbpProvider } from './google/gbp.js';
 
 /**
  * Explicit registry (Postiz pattern — no decorator auto-discovery). Real providers get added to
@@ -66,6 +67,14 @@ export function registerConfiguredProviders(): void {
     const config = { appId, appSecret, loginConfigId: process.env.FACEBOOK_LOGIN_CONFIG_ID };
     registerProvider(new FacebookPagesProvider(config));
     registerProvider(new InstagramProvider(config));
+  }
+
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  if (clientId && clientSecret) {
+    // GBP (#21). Built against Google's documented shapes only — the API sits at 0 QPM until the
+    // access request clears (BUILD-SPEC-V2 §A1) — so leaving these unset keeps `gmb` absent.
+    registerProvider(new GbpProvider({ clientId, clientSecret }));
   }
 }
 

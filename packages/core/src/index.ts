@@ -6,6 +6,8 @@ export * from './providers/registry.js';
 export * from './providers/meta/client.js';
 export * from './providers/meta/facebook.js';
 export * from './providers/meta/instagram.js';
+export * from './providers/google/client.js';
+export * from './providers/google/gbp.js';
 export * from './media/validate.js';
 export * from './media/ffprobe.js';
 export * from './media/storage/index.js';

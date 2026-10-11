@@ -96,6 +96,49 @@ Docs: [Using OAuth 2.0](https://developers.google.com/identity/protocols/oauth2)
 - **Media on posts is URL-only** (`sourceUrl`) — you must host images somewhere publicly reachable first.
 - Rate-limit defensively: 300 QPM shared across all read+write calls per project; batch review reads via `batchGetReviews`.
 
+### A7. Provider build (#21) — fixture provenance and the live bring-up checklist
+
+Added 2026-10-11 with `packages/core/src/providers/google/{client,gbp}.ts`.
+
+**Provenance, stated plainly.** The GBP provider was built with **no API access and no credentials**. Nothing in it has been run against Google. Every fixture in `gbp.test.ts` is **hand-built from the documented shapes in A1–A6 above — not recorded from live traffic**, and Google's reference pages were not re-fetched during the build (no network access to Google was permitted), so the shapes are only as good as this note. The 95 tests prove the code agrees with the documentation. They do not prove the documentation agrees with Google. Meta taught us the difference: `post_impressions_unique` passed every fixture and was rejected live.
+
+Registration is env-gated on `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` (`providers/registry.ts`). With either unset, `gmb` is not registered and nothing changes anywhere.
+
+**Decisions taken in the build that differ from BUILD-SPEC-V2 §4 B1** (each is a one-line change if the call is reversed):
+
+| Spec says | Built | Why |
+| --- | --- | --- |
+| `authenticate` returns `expiresAt: now + expires_in` | No `expiresAt` stored | `computeHealth` uses a 7-day window; a 1-hour expiry would show every GBP connection as `expiring` forever and count it in Overview's "tokens expiring". #21 asks for non-expiring health. |
+| Sweeper refreshes the token | Provider mints an access token from the refresh token on every call (in-memory cache, 60s skew) | With no stored expiry the sweeper's candidate filter skips the row. A stored access token is stale within the hour anyway, so a scheduled post could not rely on it. |
+| The `token-health` sweeper surfaces the 7-day trap | The next publish or analytics sweep surfaces it (`invalid_grant` → auth error → `needs_reconnect`) | Same consequence, detected within a day by the daily account sweep rather than within the hour. |
+| `assertPublishable` requires the media to carry a public `url` | Arity only at create time; the URL is required in `post()` | `services/posts.ts` passes unresolved refs at create time and says a provider must not key off `url`. |
+| Body shaping for all four `topicType`s | `ALERT` is rejected at create time | Google requires `alertType` on ALERT posts and documents one value, `COVID_19`. The options contract has no such field, and defaulting it would label a client's post a COVID-19 update. |
+| (not stated) | `event` on a STANDARD post is rejected | Same reasoning as the spec's "offer on a non-OFFER post". |
+| Scope `business.manage` only | `business.manage` + `userinfo.email` + `userinfo.profile` | #21 names userinfo. Nothing reads it — drop the two before the A2 verification submission unless something will. |
+| `401` → auth error | `401 invalid_client` from the token endpoint → bad request | That is our own bad secret; calling it an auth error would flag every connection `needs_reconnect` on a bad deploy. |
+| 403 gate only | Also: `429` whose ErrorInfo carries `quota_limit_value: "0"` → bad request, same message | A limit of zero may surface as 429 rather than 403, and that is the retry-storm the spec is trying to prevent. Unconfirmed — see below. |
+| trailing 2 days is an "idempotent re-sweep" | Points are stamped with the day they belong to (UTC midnight) | `metrics` is append-only with no unique key, so each day is still stored twice. Read models must take the latest row per `(connection, metric, captured_at)` or they will double-count. |
+| Fix `services/overview.ts` for follower "—" | Not touched | The provider emits no follower metric, and Overview already yields `null` when there is no row. |
+
+**Bring-up checklist — every item is an assumption a live run must confirm.** Re-record the fixtures from this traffic.
+
+1. **Token endpoint.** `expires_in` is present and ~3599; a refresh response carries no `refresh_token`; a dead refresh token answers `400 {"error":"invalid_grant"}`.
+2. **Re-consent returns a refresh token** with `prompt=consent` + `access_type=offline`. `authenticate` refuses the connection otherwise.
+3. **The 0-QPM response.** Capture the real status and body before access is granted. Assumed: `403` with status `PERMISSION_DENIED` and/or "has not been used in project". If it is `429`, confirm the ErrorInfo metadata key is `quota_limit_value` and its value is `"0"`.
+4. **`accounts.list`** returns `accounts[].name` as `accounts/{id}`; a personal account with no locations returns `{}` on `locations.list` rather than an error. A 403 on one account currently fails the whole picker.
+5. **`locations.list`** returns `name` as `locations/{id}` (no account prefix) and accepts `readMask=name,title,storefrontAddress` with `pageSize=100`. The composite `accounts/{a}/locations/{l}` is assembled from the two.
+6. **`localPosts.create`** accepts the composite path, returns `name`, `state` and `searchUrl`. If `searchUrl` is missing (assumed possible while `PROCESSING`) the stored `releaseUrl` is `https://business.google.com/` — a placeholder, not a link to the post.
+7. **`REJECTED`** — the spec asks for Google's reason verbatim, but no reason field is documented on `LocalPost`. Only the state is surfaced today. Capture a real rejection and see what it carries.
+8. **`languageCode` is hardcoded `"en"`.** Confirm Google accepts it for a Hindi-language caption, or carry the location's language.
+9. **Event times are sent as UTC wall-clock.** Google's schedule has no zone and is read as the location's local time, so an IST event will show 5h30 early. **This needs a decision before EVENT/OFFER ship** — the options contract carries an instant and no zone.
+10. **OFFER** — whether Google accepts an offer post with no `offer` object, and whether it tolerates a `callToAction` on one.
+11. **Video.** `kind: 'video'` is sent as `mediaFormat: "VIDEO"`. Unconfirmed that local posts accept video at all.
+12. **`localPosts:reportInsights`** — the least certain endpoint here; the v4 insights surface has been progressively retired. Confirm it still answers, that `metricRequests` needs no `options`, that the 30-day `timeRange` is accepted, and that `totalValue.value` is a string. A permanent 4xx currently resolves to no metrics (silently) so one post cannot be re-polled forever.
+13. **Performance API.** Confirm the `dailyRange.start_date.year` query spelling, which of the nine `DailyMetric` names return data, and **how many days the data lags**. If the lag exceeds two days the 2-day window records nothing — widen `DAILY_WINDOW_DAYS`.
+14. **Zero days.** Google omits `value` for a zero count. Those days are skipped, not stored as 0, because a not-yet-computed day looks identical. Decide whether charts should treat a gap as zero.
+15. **The 7-day trap (A5).** Leave a connection idle 8 days before and after OAuth verification.
+16. **`.env.production.example`** still needs `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` added by hand — the build session was not permitted to open env files.
+
 ---
 
 ## PART B — LinkedIn API
