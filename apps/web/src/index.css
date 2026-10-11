@@ -3,17 +3,18 @@
 @tailwind utilities;
 
 /*
- * Airbnb DLS token layer (from docs/dev/DESIGN-airbnb.md). Replaces the shadcn zinc starter.
- * Light-only, deliberately: Airbnb has no dark web theme, and the whole system leans on the white
- * canvas. Rausch (#ff385c) is the single accent, used scarcely (primary CTAs, the search orb).
- * Client hues are a SEPARATE, orthogonal axis (content identity), never the accent.
+ * Token layer. Palette lineage: docs/dev/DESIGN-airbnb.md; the density scale (tailwind.config.js)
+ * is a work-tool scale and departs from it. Light-only: the system leans on the white canvas.
+ * Neutral greys carry the UI; Rausch is the single accent and is used once per screen (the Create
+ * post action). The default Button is ink, not Rausch. Client hues are a SEPARATE, orthogonal axis
+ * (content identity); platform colours appear only on small platform badges.
  * Colors are HSL triplets consumed as hsl(var(--token)) by the tailwind theme.
  */
 @layer base {
   :root {
     color-scheme: light;
-    --rausch: 344 100% 61%; /* #ff385c */
-    --rausch-active: 342 89% 46%; /* #e00b41 */
+    --rausch: 342 89% 46%; /* #de0d44, white text 4.9:1 (the old #ff385c was 3.5:1) */
+    --rausch-active: 342 89% 38%; /* hover/pressed */
     --rausch-disabled: 348 100% 91%; /* #ffd1da */
     --error: 16 76% 42%; /* #c13515 */
 
@@ -31,9 +32,10 @@
     --border-strong: 0 0% 76%; /* #c1c1c1 */
 
     /* semantic status (separate from Rausch accent) */
-    --status-ok: 140 49% 36%; /* healthy / published */
-    --status-warn: 40 100% 33%; /* expiring / warning */
-    --status-bad: 16 76% 42%; /* failed / reconnect */
+    /* all three read >= 4.5:1 as text on white and on their own 10% tint (chips) */
+    --status-ok: 140 60% 28%; /* healthy / published */
+    --status-warn: 34 100% 27%; /* expiring / warning */
+    --status-bad: 16 80% 38%; /* failed / reconnect */
     --status-idle: 0 0% 57%; /* draft / cancelled */
 
     --scrim: 0 0% 0%;
@@ -67,9 +69,8 @@
     --chart-4: 37 87% 53%;
     --chart-5: 252 92% 66%;
 
-    /* the single Airbnb elevation tier */
-    --shadow-1:
-      rgba(0, 0, 0, 0.02) 0 0 0 1px, rgba(0, 0, 0, 0.04) 0 2px 6px 0, rgba(0, 0, 0, 0.1) 0 4px 8px 0;
+    /* the single elevation tier — overlays only */
+    --shadow-1: rgba(0, 0, 0, 0.04) 0 0 0 1px, rgba(0, 0, 0, 0.08) 0 6px 20px -4px;
   }
 }
 
@@ -94,8 +95,8 @@ body {
     'Helvetica Neue',
     Roboto,
     sans-serif;
-  font-size: 16px;
-  line-height: 1.5;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
 }
 
 .tnum {
@@ -105,5 +106,4 @@ body {
 *:focus-visible {
   outline: 2px solid hsl(var(--ink));
   outline-offset: 2px;
-  border-radius: 6px;
 }

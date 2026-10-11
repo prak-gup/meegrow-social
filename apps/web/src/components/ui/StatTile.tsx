@@ -37,16 +37,16 @@ export function StatTile({
   const good = up !== invertDelta;
   const DeltaIcon = up ? ArrowUp : ArrowDown;
   return (
-    <div className={cn('rounded-md border border-hairline bg-canvas p-4', className)} title={hint}>
-      <div className="flex items-center justify-between gap-2 text-caption font-semibold text-muted">
+    <div className={cn('rounded-md border border-hairline bg-canvas p-3', className)} title={hint}>
+      <div className="flex items-center justify-between gap-2 text-caption font-medium text-muted">
         <span>{label}</span>
-        {Icon && <Icon size={18} className="flex-none" />}
+        {Icon && <Icon size={16} className="flex-none" />}
       </div>
-      <div className="tnum mt-1 text-title font-semibold text-ink">{value}</div>
+      <div className="tnum mt-0.5 text-2xl font-semibold text-ink">{value}</div>
       {hasDelta && (
         <div
           className={cn(
-            'tnum mt-1 flex items-center gap-1 text-caption font-semibold',
+            'tnum mt-0.5 flex items-center gap-1 text-caption font-medium',
             flat ? 'text-muted' : good ? 'text-status-ok' : 'text-status-bad',
           )}
         >
@@ -57,7 +57,7 @@ export function StatTile({
         </div>
       )}
       {!hasDelta && showMissingDelta && (
-        <div className="mt-1 flex items-center gap-1 text-caption text-muted">
+        <div className="mt-0.5 flex items-center gap-1 text-caption text-muted">
           <span aria-hidden="true">—</span>
           <span className="sr-only">No comparison</span>
           <span>{deltaLabel}</span>

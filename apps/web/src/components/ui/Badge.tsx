@@ -2,18 +2,18 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import type { HTMLAttributes } from 'react';
 import { cn } from '../../lib/cn';
 
-// Status chips through semantic tokens (not raw Tailwind pastels). White pill + colored dot/text,
-// so status reads at a glance without competing with the Rausch accent or client hues.
-const badgeVariants = cva(
-  'inline-flex items-center gap-1.5 rounded-full border border-hairline bg-canvas px-2.5 py-1 text-xs font-semibold',
+// The one chip look: 20px, tinted by tone, text at >= 4.5:1 on its own tint. StatusChip maps the
+// domain statuses onto these tones so every page shows a status the same way.
+export const badgeVariants = cva(
+  'inline-flex h-5 items-center gap-1 whitespace-nowrap rounded-full px-2 text-xs font-medium',
   {
     variants: {
       variant: {
-        neutral: 'text-muted',
-        success: 'text-status-ok',
-        warning: 'text-status-warn',
-        danger: 'text-status-bad',
-        info: 'text-ink',
+        neutral: 'bg-surface-strong text-muted',
+        success: 'bg-status-ok/10 text-status-ok',
+        warning: 'bg-status-warn/10 text-status-warn',
+        danger: 'bg-status-bad/10 text-status-bad',
+        info: 'bg-surface-strong text-ink',
       },
     },
     defaultVariants: { variant: 'neutral' },
