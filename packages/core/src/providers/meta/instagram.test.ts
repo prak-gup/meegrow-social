@@ -142,6 +142,61 @@ describe('listAccounts', () => {
   });
 });
 
+/**
+ * DOCUMENTATION-BUILT fixtures, never recorded — the same unverified fallback as the Facebook
+ * provider (see facebook.test.ts and RESEARCH meta.md §2.5), reaching the IG account through the
+ * Page the person ticked.
+ */
+describe('listAccounts when me/accounts is empty (granular-scope fallback, unverified)', () => {
+  const USER = { accessToken: 'LONG-USER-TOKEN', externalId: 'pending', displayName: 'pending' };
+  const FALLBACK: Recorded[] = [
+    { match: 'me/accounts', body: { data: [] } },
+    {
+      match: 'debug_token',
+      body: {
+        data: {
+          is_valid: true,
+          granular_scopes: [
+            { scope: 'pages_show_list', target_ids: ['1112223334', '5556667778'] },
+            { scope: 'instagram_basic', target_ids: ['17841400000000001'] },
+          ],
+        },
+      },
+    },
+    {
+      match: '/1112223334?',
+      body: {
+        id: '1112223334',
+        name: 'Business-Owned Page',
+        access_token: 'PAGE-TOKEN',
+        instagram_business_account: { id: '17841400000000001', username: 'meegrow' },
+      },
+    },
+    {
+      match: '/5556667778?',
+      body: { id: '5556667778', name: 'Page With No IG', access_token: 'PAGE-TOKEN-2' },
+    },
+  ];
+
+  it('offers the IG account linked to a ticked Page, and still hides a Page with none', async () => {
+    const { ig, calls } = provider(FALLBACK);
+    expect(await ig.listAccounts(USER)).toEqual([
+      { externalId: '17841400000000001', displayName: '@meegrow' },
+    ]);
+    expect(decodeURIComponent(calls[2]!.url)).toContain('instagram_business_account{id,username}');
+  });
+
+  it('connects it with the Page token of that Page', async () => {
+    const { ig } = provider(FALLBACK);
+    const tokens = await ig.finalizeAccount(USER, {
+      externalId: '17841400000000001',
+      displayName: '@meegrow',
+    });
+    expect(tokens.accessToken).toBe('PAGE-TOKEN');
+    expect(tokens.externalId).toBe('17841400000000001');
+  });
+});
+
 describe('finalizeAccount', () => {
   it('stores the IG user id as identity and the PAGE token as credential, with no expiry', async () => {
     const { ig } = provider([ME_ACCOUNTS]);

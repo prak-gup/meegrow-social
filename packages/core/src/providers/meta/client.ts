@@ -162,14 +162,25 @@ export class MetaClient {
     return { accessToken: long.access_token, expiresIn: long.expires_in };
   }
 
-  /** `debug_token` — drives the health cron and lets us assert a Page token really is non-expiring. */
+  /**
+   * `debug_token` — drives the health cron and lets us assert a Page token really is non-expiring.
+   * `granularScopes` is the per-permission asset grant of a Login-for-Business token: the ids the
+   * person ticked for each permission. Meta leaves `target_ids` out when the permission was granted
+   * for every asset ("all current and future"), so an empty list means "not narrowed", not "none".
+   */
   async debugToken(token: string): Promise<{
     isValid: boolean;
     expiresAt: Date | null;
     scopes: string[];
+    granularScopes: GranularScope[];
   }> {
     const res = await this.graphGet<{
-      data?: { is_valid?: boolean; expires_at?: number; scopes?: string[] };
+      data?: {
+        is_valid?: boolean;
+        expires_at?: number;
+        scopes?: string[];
+        granular_scopes?: Array<{ scope?: string; target_ids?: unknown[] }>;
+      };
     }>('debug_token', {
       input_token: token,
       access_token: `${this.appId}|${this.appSecret}`,
@@ -177,6 +188,68 @@ export class MetaClient {
     const data = res.data ?? {};
     // expires_at === 0 means "never expires" — that's what Page tokens report.
     const expiresAt = data.expires_at ? new Date(data.expires_at * 1000) : null;
-    return { isValid: data.is_valid ?? false, expiresAt, scopes: data.scopes ?? [] };
+    const granularScopes = (data.granular_scopes ?? []).flatMap((g) =>
+      g.scope ? [{ scope: g.scope, targetIds: (g.target_ids ?? []).flatMap(targetId) }] : [],
+    );
+    return {
+      isValid: data.is_valid ?? false,
+      expiresAt,
+      scopes: data.scopes ?? [],
+      granularScopes,
+    };
   }
+
+  /**
+   * FALLBACK page discovery for when `me/accounts` comes back empty — UNVERIFIED AGAINST META
+   * (RESEARCH meta.md §2.5). A Page owned through a Meta Business portfolio is not listed by
+   * `me/accounts` unless the token carries `business_management`; this reads the Page ids the person
+   * ticked from the token's granular scopes and asks for each Page node by id instead.
+   *
+   * Never throws: this only ever runs where the answer would otherwise be "no pages", so a refused
+   * call (or a Page the person holds no role on) degrades to that same answer.
+   */
+  async pagesFromGrantedScopes<T extends { id: string }>(
+    userAccessToken: string,
+    fields: string,
+  ): Promise<T[]> {
+    let pageIds: string[];
+    try {
+      const { granularScopes } = await this.debugToken(userAccessToken);
+      pageIds = [
+        ...new Set(
+          granularScopes.filter((g) => PAGE_SCOPES.has(g.scope)).flatMap((g) => g.targetIds),
+        ),
+      ];
+    } catch {
+      return [];
+    }
+    const pages: T[] = [];
+    for (const pageId of pageIds) {
+      try {
+        const page = await this.graphGet<T>(pageId, { fields, access_token: userAccessToken });
+        if (page?.id) pages.push(page);
+      } catch {
+        // Not readable with this token — leave it out rather than fail the whole connect.
+      }
+    }
+    return pages;
+  }
+}
+
+export interface GranularScope {
+  scope: string;
+  targetIds: string[];
+}
+
+/** The permissions whose granular targets are Page ids (the instagram_* ones target IG account ids). */
+const PAGE_SCOPES = new Set(['pages_show_list', 'pages_read_engagement', 'pages_manage_posts']);
+
+/**
+ * A granular-scope target as a decimal id string. Meta documents `target_ids` as integers; an id
+ * past 2^53 parsed as a JSON number has already lost digits, so it is dropped rather than queried.
+ */
+function targetId(raw: unknown): string[] {
+  if (typeof raw === 'string' && /^\d+$/.test(raw)) return [raw];
+  if (typeof raw === 'number' && Number.isSafeInteger(raw) && raw > 0) return [String(raw)];
+  return [];
 }

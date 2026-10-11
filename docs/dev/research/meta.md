@@ -102,6 +102,67 @@ Docs:
   response (no error). Filter those out of the account picker rather than offering one that fails at
   publish. `prakgup` (110548613724876) has no linked IG account — #13 needs one for live bring-up.
 
+### 2.5 Business-owned Pages: `me/accounts` comes back empty (live 2026-10-11) — and an UNVERIFIED fallback
+
+**Observed live (a real client, invite link, 2026-10-11).** Login configuration with 7 permissions
+(`pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `read_insights`,
+`instagram_basic`, `instagram_content_publish`, `instagram_manage_insights`): consent completed, the
+Page was ticked, and `GET me/accounts` returned `{"data": []}`. After `business_management` was added
+to the configuration, Meta's dialog gained a "Choose the Businesses" step and `me/accounts` listed the
+Page. So a Page owned through a Meta Business portfolio is not listed without `business_management`.
+That permission is broad and needs its own App Review justification.
+
+**What Meta's documentation says (read 2026-10-11; nothing here was called):**
+
+- `GET /debug_token` returns `granular_scopes` — "List of granular permissions that the user has
+  granted for the app in this access token. If permission applies to all, targets will not be
+  shown." — typed `shape('scope' => string, 'target_ids' => ?int[])[]`. It needs "an app access
+  token or an app developer's user access token".
+  https://developers.facebook.com/docs/graph-api/reference/debug_token/
+- The Page node has an `access_token` field: "The Page's access token. Only returned if the User
+  making the request has a role (other than Live Contributor) on the Page."
+  https://developers.facebook.com/docs/graph-api/reference/page/
+- The `/{user-id}/accounts` reference does not mention `business_management` or business-owned Pages
+  at all; it says only that the edge returns Pages the user has a role on.
+  https://developers.facebook.com/docs/graph-api/reference/user/accounts/
+- The Facebook Login for Business guide does not say how an app finds which assets were granted.
+  https://developers.facebook.com/docs/facebook-login/facebook-login-for-business
+
+**What Meta does NOT document:** that reading `/{page-id}?fields=access_token` with the user token
+works for a business-owned Page when `me/accounts` omits it. The two halves are documented
+separately; nobody at Meta says they compose.
+
+**Third-party reports that they do compose (not Meta, not ours):**
+
+- A developer in Meta's community forum reports `me/accounts` empty, the Page id visible in the
+  token's granular scopes in the debugger, and the Page token readable by id — with no
+  `business_management` in the token. No Meta staff reply.
+  https://developers.secure.facebook.com/community/threads/985555656616468
+- An open-source PR describes the same fallback and reports it working live for one user, one app,
+  two Pages. https://github.com/moudabdelwahab/social-center/pull/3
+
+**What we built (`MetaClient.pagesFromGrantedScopes`):** only when `me/accounts` returns nothing,
+read `granular_scopes`, take the `target_ids` of `pages_show_list` / `pages_read_engagement` /
+`pages_manage_posts`, and `GET /{page-id}?fields=…` each with the user token (Instagram adds
+`instagram_business_account{id,username}`). `me/accounts` stays the primary path, and the fallback
+never throws, so today's behaviour cannot get worse. Fixtures are documentation-built.
+
+**Known limits, even if it works:**
+
+- `target_ids` is omitted when the person granted "all current and future" Pages — Meta's default
+  for a new consent. The fallback then finds nothing. It can only help a person who ticked specific
+  Pages (which is what the invite page now asks them to do).
+- The `access_token` field needs a role on the Page. Whether access held through a business
+  portfolio counts as a role for this read is exactly the thing that is unconfirmed.
+- Ids are documented as integers; one past 2^53 would be corrupted by JSON parsing and is dropped.
+  Page ids are well under that; Instagram ids are not, which is why IG is reached through its Page.
+
+**The live test that settles it:** remove `business_management` from the login configuration; send
+an invite to an admin of a business-owned Page; at "Continue as …?" choose "Edit settings" and tick
+that one Page (not "all current and future"). If the picker lists the Page and connecting it then
+publishes a post, the fallback works and `business_management` can stay out of App Review. If the
+picker is empty, it does not, and `business_management` is required for business-owned Pages.
+
 ---
 
 ## 3. Publishing to Instagram (container → publish, 2 steps)
