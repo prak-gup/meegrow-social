@@ -1,9 +1,16 @@
-import type { PostOptions, PostView } from '@meegrow-social/contracts';
+import type {
+  ConnectMethod,
+  ConnectionView,
+  PostOptions,
+  PostView,
+  SiteCheck,
+} from '@meegrow-social/contracts';
 
 /**
  * Pure logic for WordPress in the dashboard: what the Connect dialog can say about a typed address
- * before the server is asked, and how the Composer's article fields become the `wordpress` options
- * arm. Unit-testable in node (apps/web vitest has no DOM).
+ * before the server is asked, which connect method it offers once the server has looked, and how
+ * the Composer's article fields become the `wordpress` options arm. Unit-testable in node
+ * (apps/web vitest has no DOM).
  *
  * The limits mirror `packages/contracts/src/posts.ts`; wordpress.test.ts parses against the real
  * schema so they cannot drift unnoticed.
@@ -189,4 +196,96 @@ export function siteAddressProblem(input: string): string | null {
   }
   if (!url.hostname.includes('.')) return 'Enter the full address, like https://example.com.';
   return null;
+}
+
+/**
+ * The method the dialog starts on once the site has been checked: approval wherever the site
+ * offers it (WordPress then issues a separate password and none is typed here), a username and
+ * password only where it does not. Null when the site can be connected neither way.
+ */
+export function defaultConnectMethod(
+  check: Pick<SiteCheck, 'approval' | 'password'>,
+): ConnectMethod | null {
+  if (check.approval.available) return 'approval';
+  return check.password.available ? 'password' : null;
+}
+
+export interface MethodGuidance {
+  /** `switch`: approval is out but a login works. `stop`: nothing works yet. */
+  kind: 'switch' | 'stop';
+  title: string;
+  detail: string;
+}
+
+/**
+ * What to say above the two methods when the recommended one is not available — so a site with
+ * Application Passwords switched off is offered the other way in, not an error to stare at. Null
+ * when approval is available: there is nothing to explain.
+ */
+export function methodGuidance(
+  check: Pick<SiteCheck, 'approval' | 'password'>,
+): MethodGuidance | null {
+  if (check.approval.available) return null;
+  if (check.password.available) {
+    return {
+      kind: 'switch',
+      title: 'This site cannot be connected by approval',
+      detail: 'It can be connected with a WordPress username and password instead.',
+    };
+  }
+  return {
+    kind: 'stop',
+    title: 'This site cannot be connected yet',
+    detail: 'Neither way of connecting works on it right now. The reasons are below.',
+  };
+}
+
+/**
+ * A WordPress can be read at one address and managed at another (Site Address and WordPress
+ * Address in its settings). When they differ the dialog says so, because the person typed one and
+ * is about to see the other. Null when they are the same, or unknown.
+ */
+export function separateAddressesNote(
+  check: Pick<SiteCheck, 'separateAddresses' | 'siteAddress' | 'homeAddress'>,
+): string | null {
+  if (!check.separateAddresses || !check.siteAddress || !check.homeAddress) return null;
+  return (
+    `This WordPress has two addresses: visitors read it at ${check.homeAddress}, and it is ` +
+    `managed at ${check.siteAddress}. Either one works here.`
+  );
+}
+
+/** WordPress's own limit on a login name; a password this long is not one. Mirrors contracts. */
+export const SITE_USERNAME_MAX = 100;
+export const SITE_PASSWORD_MAX = 512;
+
+/** What is wrong with the login form as typed, per field. The password is never trimmed. */
+export function siteLoginProblems(login: { username: string; password: string }): {
+  username?: string;
+  password?: string;
+} {
+  const problems: { username?: string; password?: string } = {};
+  const username = login.username.trim();
+  if (username === '') problems.username = 'Enter the WordPress username.';
+  else if (username.length > SITE_USERNAME_MAX) problems.username = 'That username is too long.';
+  if (login.password === '') problems.password = 'Enter the password.';
+  else if (login.password.length > SITE_PASSWORD_MAX) {
+    problems.password = 'That password is too long.';
+  }
+  return problems;
+}
+
+/**
+ * The line under an account's name on the Connections table. A connection that holds a login
+ * password says so — "WordPress · password · https://…" — so it stays visible long after whoever
+ * typed it has forgotten.
+ */
+export function connectionSubline(
+  platformLabel: string,
+  connection: Pick<ConnectionView, 'externalId' | 'method'>,
+): string {
+  const parts = [platformLabel];
+  if (connection.method === 'password') parts.push('password');
+  parts.push(connection.externalId);
+  return parts.join(' · ');
 }

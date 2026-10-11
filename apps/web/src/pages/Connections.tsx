@@ -16,6 +16,7 @@ import { ImportPostsModal } from '../components/ImportPostsModal';
 import { IMPORT_POLL_MS, canImport, importMoving, importRowNote } from '../lib/postImport';
 import { connectionChip, type ChipStatus } from '../lib/statusChip';
 import { canReconnect, expiryLabel, filterConnections, shortDate } from '../lib/connectionRows';
+import { connectionSubline } from '../lib/wordpress';
 import { clientHue } from '../lib/clientHue';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
@@ -335,8 +336,15 @@ export function Connections() {
                           <div className="truncate font-medium leading-4 text-ink">
                             {c.displayName}
                           </div>
-                          <div className="truncate text-caption leading-4 text-muted">
-                            {m.label} · {c.externalId}
+                          <div
+                            className="truncate text-caption leading-4 text-muted"
+                            title={
+                              c.method === 'password'
+                                ? 'Connected with a WordPress username and password, stored encrypted'
+                                : undefined
+                            }
+                          >
+                            {connectionSubline(m.label, c)}
                           </div>
                           {importRowNote(c.import) && (
                             <div
@@ -551,6 +559,11 @@ export function Connections() {
             setMsg(
               'Approve in the new window. This page updates when you are done — if it does not, press Refresh.',
             );
+          }}
+          onConnected={(connection) => {
+            setAsking(null);
+            setMsg(`${connection.displayName} is connected with a username and password.`);
+            void load();
           }}
           onClose={() => setAsking(null)}
         />
