@@ -14,6 +14,7 @@ import { buildMcpServer } from './index.js';
 vi.mock('@meegrow-social/core', async (importOriginal) => ({
   ...(await importOriginal<typeof core>()),
   calendarPosts: vi.fn(),
+  getAnalyticsReport: vi.fn(),
   cancelPost: vi.fn(),
   createPost: vi.fn(),
   duplicatePost: vi.fn(),
@@ -46,6 +47,7 @@ const QUEUE = '66666666-6666-4666-8666-666666666666';
 
 const EXPECTED_TOOLS = [
   'add_to_queue',
+  'analytics_report',
   'calendar',
   'cancel_post',
   'connection_followers',
@@ -75,6 +77,7 @@ const EXPECTED_TOOLS = [
 ];
 
 const READ_ONLY_TOOLS = [
+  'analytics_report',
   'calendar',
   'connection_followers',
   'connection_health',
@@ -333,6 +336,33 @@ describe('every tool calls core with the workspace of the key', () => {
     vi.mocked(core.getConnectionFollowers).mockResolvedValue([]);
     await call('connection_followers', { connectionId: CONN });
     expect(core.getConnectionFollowers).toHaveBeenCalledWith(WS, CONN);
+  });
+
+  it("analytics_report reads the key's workspace only and trims the top posts", async () => {
+    const posts = Array.from({ length: 30 }, (_, i) => ({ id: `p${i}` }));
+    vi.mocked(core.getAnalyticsReport).mockResolvedValue({
+      topPosts: posts,
+      postsOmitted: 2,
+    } as never);
+
+    const out = await call('analytics_report', { days: 7, timezone: 'Asia/Kolkata', topPosts: 5 });
+
+    expect(core.getAnalyticsReport).toHaveBeenCalledWith(WS, {
+      days: 7,
+      timezone: 'Asia/Kolkata',
+      scope: 'workspace',
+    });
+    expect(out.body).toEqual({ topPosts: posts.slice(0, 5), postsOmitted: 27 });
+  });
+
+  it('analytics_report reports a bad timezone as invalid_request (REST 400)', async () => {
+    vi.mocked(core.getAnalyticsReport).mockRejectedValue(
+      new core.AnalyticsQueryError('invalid IANA timezone: Mars/Olympus'),
+    );
+    expect(await call('analytics_report', { timezone: 'Mars/Olympus' })).toMatchObject({
+      isError: true,
+      body: { error: 'invalid_request' },
+    });
   });
 });
 

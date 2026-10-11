@@ -35,6 +35,8 @@ export * from './services/logs.js';
 export * from './services/webhooks.js';
 export * from './services/token-health.js';
 export * from './services/analytics.js';
+export * from './services/metric-concepts.js';
+export * from './services/analytics-report.js';
 export * from './services/post-import.js';
 export * from './services/metrics-retention.js';
 export * from './services/overview.js';
