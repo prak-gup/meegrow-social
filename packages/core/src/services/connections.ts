@@ -1,5 +1,5 @@
 import { db, schema, withWorkspace } from '@meegrow-social/db';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, or } from 'drizzle-orm';
 import type {
   CallbackResult,
   ConnectionView,
@@ -10,6 +10,7 @@ import type {
   TokenModel,
 } from '@meegrow-social/contracts';
 import { getProvider } from '../providers/registry.js';
+import { METRIC_RETENTION_DAYS } from './metrics-retention.js';
 import type { AuthTokens } from '../providers/types.js';
 import { decryptToken, encryptToken } from '../crypto.js';
 
@@ -350,8 +351,29 @@ export async function deleteConnection(workspaceId: string, id: string): Promise
     const deleted = await tx
       .delete(schema.connections)
       .where(eq(schema.connections.id, id))
-      .returning({ id: schema.connections.id });
-    return deleted.length > 0;
+      .returning({ id: schema.connections.id, provider: schema.connections.provider });
+    const [conn] = deleted;
+    if (!conn) return false;
+    // A platform with a storage limit (YouTube, #61) also wants its data gone promptly when the
+    // account is removed — Developer Policies III.E.4.g allows 7 days, and the retention sweep
+    // would take ~29. Same transaction as the delete; other platforms keep their history.
+    if (METRIC_RETENTION_DAYS[conn.provider as ProviderIdentifier] !== undefined) {
+      await tx
+        .delete(schema.metrics)
+        .where(
+          or(
+            eq(schema.metrics.connectionId, id),
+            inArray(
+              schema.metrics.postId,
+              tx
+                .select({ id: schema.posts.id })
+                .from(schema.posts)
+                .where(eq(schema.posts.connectionId, id)),
+            ),
+          ),
+        );
+    }
+    return true;
   });
 }
 
