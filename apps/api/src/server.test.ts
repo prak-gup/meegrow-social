@@ -32,11 +32,19 @@ vi.mock('@meegrow-social/core', async (importOriginal) => ({
   previewQueueSlots: vi.fn(),
   retryPost: vi.fn(),
   validatePost: vi.fn(),
+  duplicatePostGroup: vi.fn(),
+  getAnalyticsStatus: vi.fn(),
+  getLatestPostMetrics: vi.fn(),
+  getPost: vi.fn(),
+  getPostGroup: vi.fn(),
+  getPostMetrics: vi.fn(),
+  listPostGroups: vi.fn(),
 }));
 
 const WS = '11111111-1111-4111-8111-111111111111';
 const POST = '22222222-2222-4222-8222-222222222222';
 const CONN = '33333333-3333-4333-8333-333333333333';
+const GROUP = '77777777-7777-4777-8777-777777777777';
 const QUEUE = '66666666-6666-4666-8666-666666666666';
 const auth = { authorization: 'Bearer sk_live_good' };
 
@@ -322,6 +330,155 @@ describe('POST /v1/posts/:id/retry', () => {
     const res = await app.inject({ method: 'POST', url: `/v1/posts/${POST}/retry` });
     expect(res.statusCode).toBe(401);
     expect(core.retryPost).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /v1/post-groups', () => {
+  it('lists groups with the parsed filters, defaults filled in', async () => {
+    vi.mocked(core.listPostGroups).mockResolvedValue([
+      { id: GROUP, status: 'partly_failed' },
+    ] as never);
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/post-groups?status=failed&connectionId=${CONN}&q=open%20day&order=asc&limit=20`,
+      headers: auth,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ groups: [{ id: GROUP, status: 'partly_failed' }] });
+    expect(core.listPostGroups).toHaveBeenCalledWith(WS, {
+      status: 'failed',
+      connectionId: CONN,
+      q: 'open day',
+      order: 'asc',
+      limit: 20,
+      offset: 0,
+    });
+  });
+
+  it('is the list, not the group whose id is missing: the single-group route is untouched', async () => {
+    vi.mocked(core.listPostGroups).mockResolvedValue([]);
+    vi.mocked(core.getPostGroup).mockResolvedValue({ id: GROUP } as never);
+    expect(
+      (await app.inject({ method: 'GET', url: '/v1/post-groups', headers: auth })).json(),
+    ).toEqual({
+      groups: [],
+    });
+    const one = await app.inject({ method: 'GET', url: `/v1/post-groups/${GROUP}`, headers: auth });
+    expect(one.json()).toEqual({ group: { id: GROUP } });
+    expect(core.getPostGroup).toHaveBeenCalledWith(WS, GROUP);
+  });
+
+  it('400s on a filter the contract rejects and never reaches core', async () => {
+    for (const query of ['status=sent', 'limit=500', 'order=random', 'q=']) {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/v1/post-groups?${query}`,
+        headers: auth,
+      });
+      expect(res.statusCode, query).toBe(400);
+    }
+    expect(core.listPostGroups).not.toHaveBeenCalled();
+  });
+
+  it('401s without a key', async () => {
+    expect((await app.inject({ method: 'GET', url: '/v1/post-groups' })).statusCode).toBe(401);
+  });
+});
+
+describe('POST /v1/post-groups/:id/duplicate', () => {
+  const duplicate = (headers: Record<string, string> = {}) =>
+    app.inject({
+      method: 'POST',
+      url: `/v1/post-groups/${GROUP}/duplicate`,
+      headers: { ...auth, ...headers },
+    });
+
+  it('returns the new group with 201 and passes the idempotency key on', async () => {
+    vi.mocked(core.duplicatePostGroup).mockResolvedValue({ id: 'new', status: 'draft' } as never);
+    const res = await duplicate({ 'idempotency-key': ' dup-1 ' });
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toEqual({ group: { id: 'new', status: 'draft' } });
+    expect(core.duplicatePostGroup).toHaveBeenCalledWith(WS, GROUP, { idempotencyKey: 'dup-1' });
+  });
+
+  it('404s for a group the workspace does not have', async () => {
+    vi.mocked(core.duplicatePostGroup).mockResolvedValue(null);
+    expect((await duplicate()).statusCode).toBe(404);
+  });
+
+  it('404s when an account of the source is gone, 400s when a platform rule now rejects it', async () => {
+    vi.mocked(core.duplicatePostGroup).mockRejectedValue(
+      new core.ConnectionNotFoundError(`connection ${CONN} not found`),
+    );
+    const gone = await duplicate();
+    expect(gone.statusCode).toBe(404);
+    expect(gone.json()).toEqual({ error: `connection ${CONN} not found` });
+
+    vi.mocked(core.duplicatePostGroup).mockRejectedValue(
+      new core.ProviderBadRequestError('a title is required'),
+    );
+    expect((await duplicate()).statusCode).toBe(400);
+  });
+
+  it('400s on an oversized idempotency key', async () => {
+    expect((await duplicate({ 'idempotency-key': 'k'.repeat(256) })).statusCode).toBe(400);
+    expect(core.duplicatePostGroup).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /v1/posts/metrics/latest', () => {
+  const read = (payload: object) =>
+    app.inject({ method: 'POST', url: '/v1/posts/metrics/latest', headers: auth, payload });
+
+  it('returns core’s map for the ids, metric names untouched', async () => {
+    const metrics = {
+      [POST]: { latest: { post_media_view: 12, LOCAL_POST_VIEWS_SEARCH: 3 }, capturedAt: null },
+    };
+    vi.mocked(core.getLatestPostMetrics).mockResolvedValue(metrics);
+    const res = await read({ postIds: [POST] });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ metrics });
+    expect(core.getLatestPostMetrics).toHaveBeenCalledWith(WS, [POST]);
+  });
+
+  it('is its own route: the static path wins over /v1/posts/:id/…', async () => {
+    vi.mocked(core.getLatestPostMetrics).mockResolvedValue({});
+    await read({ postIds: [POST] });
+    expect(core.retryPost).not.toHaveBeenCalled();
+    expect(core.getPost).not.toHaveBeenCalled();
+  });
+
+  it('400s on no ids, more than 200, or a non-uuid, without reaching core', async () => {
+    const tooMany = Array.from({ length: 201 }, () => POST);
+    for (const payload of [{}, { postIds: [] }, { postIds: tooMany }, { postIds: ['metrics'] }]) {
+      expect((await read(payload)).statusCode).toBe(400);
+    }
+    expect(core.getLatestPostMetrics).not.toHaveBeenCalled();
+  });
+
+  it('401s without a key', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/posts/metrics/latest',
+      payload: { postIds: [POST] },
+    });
+    expect(res.statusCode).toBe(401);
+    expect(core.getLatestPostMetrics).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /v1/analytics/status', () => {
+  it('returns core’s status for the key’s workspace', async () => {
+    const status = { lastCapturedAt: null, lastSweptAt: null, nextDueAt: null, cadence: {} };
+    vi.mocked(core.getAnalyticsStatus).mockResolvedValue(status as never);
+    const res = await app.inject({ method: 'GET', url: '/v1/analytics/status', headers: auth });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual(status);
+    expect(core.getAnalyticsStatus).toHaveBeenCalledWith(WS);
+  });
+
+  it('401s without a key', async () => {
+    expect((await app.inject({ method: 'GET', url: '/v1/analytics/status' })).statusCode).toBe(401);
   });
 });
 

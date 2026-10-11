@@ -6,6 +6,7 @@ export {
   METRIC_RETENTION_SWEEP_MS,
   refreshExpiringTokens,
   sweepAnalytics,
+  ANALYTICS_SWEEP_INTERVAL_MS,
   sweepStrandedPublishes,
   PUBLISH_SWEEP_INTERVAL_MS,
   PUBLISH_QUEUE,

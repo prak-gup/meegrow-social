@@ -1,13 +1,14 @@
 import { Queue, Worker } from 'bullmq';
-import { sweepAnalytics } from './deps.js';
+import { ANALYTICS_SWEEP_INTERVAL_MS, sweepAnalytics } from './deps.js';
 
 export const ANALYTICS_QUEUE = 'analytics';
-const HOURLY_MS = 60 * 60 * 1000;
 
 /**
- * Analytics sweeper (issue #9, PRD F5). Fires hourly; the per-post/per-account cadence rules live
- * in `core/services/analytics.ts` and decide what's actually due on each tick — hourly is just the
- * finest granularity anything needs, so the job is cheap and mostly a no-op.
+ * Analytics sweeper (issue #9, PRD F5). Fires hourly (`ANALYTICS_SWEEP_INTERVAL_MS`, defined in
+ * core so `GET /v1/analytics/status` reports the cadence this worker really runs at); the
+ * per-post/per-account cadence rules live in `core/services/analytics.ts` and decide what's
+ * actually due on each tick — hourly is just the finest granularity anything needs, so the job is
+ * cheap and mostly a no-op.
  *
  * THIN, like the token-health worker: schedule + dispatch only, no logic here.
  */
@@ -21,7 +22,7 @@ export function buildAnalyticsWorker(redisUrl: string): Worker {
     'sweep',
     {},
     {
-      repeat: { every: HOURLY_MS },
+      repeat: { every: ANALYTICS_SWEEP_INTERVAL_MS },
       jobId: 'analytics-hourly',
       removeOnComplete: true,
       removeOnFail: false,
