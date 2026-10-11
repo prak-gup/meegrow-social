@@ -19,6 +19,8 @@ vi.mock('@meegrow-social/core', async (importOriginal) => ({
   loginWithPassword: vi.fn(),
   recordApiRequestLog: vi.fn(),
   createPost: vi.fn(),
+  createConnectInvite: vi.fn(),
+  isWorkspaceMember: vi.fn(),
   finishInviteConnect: vi.fn(),
   getInviteFlow: vi.fn(),
   handleCallback: vi.fn(),
@@ -694,5 +696,85 @@ describe('invite connect path (public)', () => {
       headers: { cookie },
     });
     expect(res.statusCode).toBe(401);
+  });
+});
+
+/**
+ * Minting an invite for a client other than the active one (the Clients page lists them all). The
+ * session is never switched; membership is what allows it.
+ */
+describe('POST /v1/connections/:provider/invite', () => {
+  const OTHER_WS = '77777777-7777-4777-8777-777777777777';
+  const USER = '88888888-8888-4888-8888-888888888888';
+  const ORIGIN = 'http://localhost:8990';
+  const session = { cookie: 'mg_sid=good', origin: ORIGIN };
+  const mint = (payload: unknown, headers: Record<string, string>) =>
+    app.inject({
+      method: 'POST',
+      url: '/v1/connections/fake/invite',
+      headers,
+      ...(payload === undefined ? {} : { payload: payload as object }),
+    });
+  let previousAppUrl: string | undefined;
+
+  beforeAll(() => {
+    previousAppUrl = process.env.APP_URL;
+    delete process.env.APP_URL;
+  });
+  afterAll(() => {
+    if (previousAppUrl !== undefined) process.env.APP_URL = previousAppUrl;
+  });
+  beforeEach(() => {
+    vi.mocked(core.authenticateSession).mockImplementation(async (token) =>
+      token === 'good'
+        ? ({ workspaceId: WS, userId: USER, sessionId: 'session-1' } as never)
+        : null,
+    );
+    vi.mocked(core.createConnectInvite).mockImplementation(async (_ws, provider) => ({
+      token: 'tok123',
+      provider,
+      expiresAt: new Date('2026-11-01T00:00:00.000Z'),
+    }));
+  });
+
+  it('mints for the active client when no workspace is named, body or no body', async () => {
+    for (const payload of [undefined, {}]) {
+      const res = await mint(payload, session);
+      expect(res.statusCode).toBe(201);
+      expect(res.json<{ url: string }>().url).toBe(`${ORIGIN}/i/tok123`);
+      expect(core.createConnectInvite).toHaveBeenLastCalledWith(WS, 'fake', USER);
+    }
+    expect(core.isWorkspaceMember).not.toHaveBeenCalled();
+  });
+
+  it('mints for another client the user belongs to', async () => {
+    vi.mocked(core.isWorkspaceMember).mockResolvedValue(true);
+    const res = await mint({ workspaceId: OTHER_WS }, session);
+    expect(res.statusCode).toBe(201);
+    expect(core.isWorkspaceMember).toHaveBeenCalledWith(USER, OTHER_WS);
+    expect(core.createConnectInvite).toHaveBeenCalledWith(OTHER_WS, 'fake', USER);
+  });
+
+  it('refuses a client the user does not belong to', async () => {
+    vi.mocked(core.isWorkspaceMember).mockResolvedValue(false);
+    const res = await mint({ workspaceId: OTHER_WS }, session);
+    expect(res.statusCode).toBe(403);
+    expect(core.createConnectInvite).not.toHaveBeenCalled();
+  });
+
+  it('an API key cannot reach past its own workspace', async () => {
+    const res = await mint({ workspaceId: OTHER_WS }, auth);
+    expect(res.statusCode).toBe(403);
+    expect(core.isWorkspaceMember).not.toHaveBeenCalled();
+    expect(core.createConnectInvite).not.toHaveBeenCalled();
+    // Naming its own workspace is the same as naming none.
+    expect((await mint({ workspaceId: WS }, auth)).statusCode).toBe(201);
+    expect(core.createConnectInvite).toHaveBeenLastCalledWith(WS, 'fake', WS);
+  });
+
+  it('400s on a workspace id that is not a uuid, and 401s without credentials', async () => {
+    expect((await mint({ workspaceId: 'nope' }, session)).statusCode).toBe(400);
+    expect((await mint({ workspaceId: OTHER_WS }, {})).statusCode).toBe(401);
+    expect(core.createConnectInvite).not.toHaveBeenCalled();
   });
 });

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { closeDb, db, schema } from '@meegrow-social/db';
 import { createConnectInvite, listConnections, startConnect } from '@meegrow-social/core';
-import { createUser, createWorkspace, resetDb } from '@meegrow-social/testing';
+import { createMembership, createUser, createWorkspace, resetDb } from '@meegrow-social/testing';
 import type { FastifyInstance } from 'fastify';
 import { buildServer } from './server.js';
 
@@ -238,5 +238,57 @@ describe('invite connect path', () => {
     const res = await app.inject({ method: 'POST', url: '/v1/invite/not-a-real-token/start' });
     expect(res.statusCode).toBe(404);
     expect(res.headers['set-cookie']).toBeUndefined();
+  });
+});
+
+/** The Clients page mints for any client in the list, without switching the operator's active one. */
+describe('minting an invite for a named client', () => {
+  const ORIGIN = 'http://localhost:8990';
+
+  async function operator() {
+    const active = await createWorkspace('Active');
+    const user = await createUser('op@test.local', 's3cret-pass');
+    await createMembership(user.id, active, 'owner');
+    const login = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/login',
+      payload: { email: user.email, password: user.password },
+    });
+    expect(login.statusCode).toBe(200);
+    return { userId: user.id, active, headers: { cookie: cookiesOf(login), origin: ORIGIN } };
+  }
+
+  it('mints for another client the operator belongs to, and stays on the active client', async () => {
+    const { userId, active, headers } = await operator();
+    const other = await createWorkspace('Jaipur Eye');
+    await createMembership(userId, other, 'owner');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/connections/fake_2step/invite',
+      headers,
+      payload: { workspaceId: other },
+    });
+    expect(res.statusCode).toBe(201);
+    const { token } = res.json<{ token: string }>();
+    const landing = await app.inject({ method: 'GET', url: `/v1/invite/${token}` });
+    expect(landing.json<{ workspaceName: string }>().workspaceName).toBe('Jaipur Eye');
+
+    const me = await app.inject({ method: 'GET', url: '/v1/auth/me', headers });
+    expect(me.json<{ activeWorkspaceId: string }>().activeWorkspaceId).toBe(active);
+  });
+
+  it("refuses a client the operator does not belong to, the same as one that doesn't exist", async () => {
+    const { headers } = await operator();
+    const foreign = await createWorkspace('Not Mine');
+    for (const workspaceId of [foreign, NONEXISTENT]) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/connections/fake_2step/invite',
+        headers,
+        payload: { workspaceId },
+      });
+      expect(res.statusCode).toBe(403);
+    }
   });
 });

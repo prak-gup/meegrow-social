@@ -177,6 +177,17 @@ describe('callback page without an opener', () => {
   });
 });
 
+describe('callback page look', () => {
+  it.each(Object.entries(PAYLOADS))('%s: wears the invite card and mark', (_name, payload) => {
+    const html = connectPopupHtml(payload);
+    // An invited client can land here; it must not be bare text on a white page.
+    expect(html).toContain('<div class="logo">');
+    expect(html).toContain('meegrow<span>·social</span>');
+    expect(html).toContain('<main>');
+    expect(html).toContain('name="viewport"');
+  });
+});
+
 describe('connectOutcome', () => {
   it('reports connected for exactly one status', () => {
     expect(connectOutcome(PAYLOADS.connected).connected).toBe(true);

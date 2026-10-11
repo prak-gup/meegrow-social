@@ -7,6 +7,14 @@ import { providerIdentifier } from './providers.js';
  * platform; the client opens the public link and connects their own account into that workspace.
  */
 
+/**
+ * Optional body of POST /v1/connections/:provider/invite. `workspaceId` mints for a named client
+ * instead of the session's active one (the Clients page lists every client at once); the caller
+ * must be a member of it.
+ */
+export const createInviteInput = z.object({ workspaceId: z.string().uuid().optional() });
+export type CreateInviteInput = z.infer<typeof createInviteInput>;
+
 /** Response of POST /v1/connections/:provider/invite — the shareable link. */
 export const createdInviteView = z.object({
   url: z.string().url(),

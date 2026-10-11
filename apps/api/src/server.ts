@@ -8,6 +8,7 @@ import {
   calendarPostsQuery,
   changePasswordInput,
   createApiKeyInput,
+  createInviteInput,
   createPostInput,
   createWorkspaceInput,
   createQueueInput,
@@ -56,6 +57,7 @@ import {
   getPostMetrics,
   getQueue,
   handleCallback,
+  isWorkspaceMember,
   listApiKeys,
   listConnectionHealth,
   listConnections,
@@ -159,7 +161,9 @@ function escapeHtml(text: string): string {
  * opened it and closes; two-phase providers carry a flowId that exists nowhere else, so dumping
  * JSON into the popup left the user stranded. With no opener (the provider redirected in the
  * top-level window) nobody receives the result, so the page itself says what happened — rendered
- * server-side from `connectOutcome`, so it is right even if the script never runs.
+ * server-side from `connectOutcome`, so it is right even if the script never runs. An invited
+ * client can land here (a single-step platform, or a failed exchange), so it wears the same card and
+ * mark as the SPA's invite screens (pages/Invite.tsx) — keep the two in step.
  *
  * The payload is provider-derived (Page names come from Meta), so it is embedded as JSON with `<`
  * escaped — that closes the `</script>` breakout — and the visible text is HTML-escaped. The
@@ -176,14 +180,17 @@ export function connectPopupHtml(payload: unknown): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(outcome.title)}</title>
 <style>
-body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f7f7f7;color:#222;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{box-sizing:border-box;width:calc(100% - 32px);max-width:28rem;padding:32px;background:#fff;border:1px solid #ddd;border-radius:12px}
-h1{margin:0 0 8px;font-size:20px;line-height:1.25}
-p{margin:0;color:#555}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f7f7f7;color:#222;font:16px/1.5 "Inter Variable",Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
+main{box-sizing:border-box;width:calc(100% - 32px);max-width:28rem;padding:32px;background:#fff;border:1px solid #ddd;border-radius:20px;box-shadow:rgba(0,0,0,.02) 0 0 0 1px,rgba(0,0,0,.04) 0 2px 6px 0,rgba(0,0,0,.1) 0 4px 8px 0}
+.logo{display:flex;align-items:center;gap:10px;margin-bottom:24px;font-size:19px;font-weight:700;letter-spacing:-.02em;color:#ff385c}
+.logo span{color:#222}
+h1{margin:0;font-size:20px;font-weight:600;line-height:1.25}
+p{margin:8px 0 0;color:#6a6a6a}
 </style>
 </head>
 <body>
 <main>
+<div class="logo"><svg width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect x=".5" y=".5" width="31" height="31" rx="9" fill="#fff" stroke="#ddd"/><path d="M8 21 L14 14 L18 17 L24 9" stroke="#ff385c" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="24" cy="9" r="2.6" fill="#222"/></svg>meegrow<span>·social</span></div>
 <h1 id="t">${escapeHtml(outcome.title)}</h1>
 <p id="m">${escapeHtml(outcome.detail)}</p>
 </main>
@@ -523,19 +530,27 @@ export async function buildServer(): Promise<FastifyInstance> {
     },
   );
 
-  // Mint a per-platform connect-invite link for the active client (operator action). The client
-  // opens the returned URL to connect their own account into this workspace.
+  // Mint a per-platform connect-invite link (operator action). The client opens the returned URL to
+  // connect their own account into the workspace. Defaults to the active client; a session may name
+  // another client it belongs to (`workspaceId`), so the Clients page can mint for any row without
+  // switching the operator's active client underneath them.
   app.post<{ Params: { provider: string } }>(
     '/v1/connections/:provider/invite',
     async (req, reply) => {
       const provider = providerIdentifier.safeParse(req.params.provider);
       if (!provider.success) return reply.code(400).send({ error: 'unknown provider' });
-      const userId = req.authContext?.userId ?? null;
-      const invite = await createConnectInvite(
-        req.authContext!.workspaceId,
-        provider.data,
-        userId ?? req.authContext!.workspaceId,
-      );
+      const parsed = createInviteInput.safeParse(req.body ?? {});
+      if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+      const ctx = req.authContext!;
+      const userId = ctx.userId ?? null;
+      const workspaceId = parsed.data.workspaceId ?? ctx.workspaceId;
+      if (workspaceId !== ctx.workspaceId) {
+        // An API key is one workspace's credential; only a human member may reach across clients.
+        if (!userId || !(await isWorkspaceMember(userId, workspaceId))) {
+          return reply.code(403).send({ error: 'not a member of that workspace' });
+        }
+      }
+      const invite = await createConnectInvite(workspaceId, provider.data, userId ?? workspaceId);
       return reply.code(201).send({
         url: `${appUrl().replace(/\/$/, '')}/i/${invite.token}`,
         token: invite.token,
