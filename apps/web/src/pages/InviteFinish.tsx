@@ -3,35 +3,28 @@ import { useParams } from 'react-router-dom';
 import type { InviteConnectedView, InviteFlowView } from '@meegrow-social/contracts';
 import { api, ApiError } from '../lib/api';
 import { PRODUCT_NAME, signInName } from '../lib/platforms';
+import { missingAccountHelp } from '../lib/connectHelp';
 import { InviteCard, InviteHeading, recallInviteToken, rememberInviteToken } from './Invite';
 
-/** Why there is nothing to pick, in the client's terms — the platform returned an empty list. */
-function nothingToConnect(flow: InviteFlowView): string {
-  switch (flow.provider) {
-    case 'instagram':
-      return 'We couldn’t find an Instagram account to connect. It has to be a Business or Creator account linked to a Facebook Page you manage, and both that Page and the Instagram account have to be ticked on Facebook’s permission screens. If you approved this before, Facebook may have reused your earlier choice without showing the list again.';
-    case 'facebook':
-      return 'We couldn’t find a Facebook Page to connect. You need to manage the Page, and it has to be ticked on Facebook’s permission screens. If you approved this before, Facebook may have reused your earlier choice without showing the list again.';
-    default:
-      return `That ${flow.providerDisplayName} login didn’t offer any account that can be connected.`;
-  }
-}
-
-/** A dead step, worded by what the client should do next. The invite link itself stays usable. */
+/**
+ * A dead step, worded by what the client should do next. The invite link stays usable until an
+ * account has been connected through it — so every retry here points back at the link, except the
+ * one case where it has done its job.
+ */
 function stopped(err: unknown): { title: string; detail: string } {
   const status = err instanceof ApiError ? err.status : 0;
   if (status === 410) {
     return {
       title: 'This took too long',
       detail:
-        'The connection step expired before it was finished, so nothing was connected. Open the link your agency sent you and try again. If the link no longer works, ask them for a fresh one.',
+        'The connection step expired or the link was cancelled before it was finished, so nothing was connected. Open the link your agency sent you and try again. If the link no longer works, ask them for a fresh one.',
     };
   }
   if (status === 409) {
     return {
       title: 'This step is already finished',
       detail:
-        'An account was already connected from this page. If you wanted to connect another one, open the link your agency sent you again.',
+        'An account was already connected with this link, so the link has stopped working. To connect another account, ask your agency for a new link.',
     };
   }
   if (status === 404) {
@@ -47,18 +40,17 @@ function stopped(err: unknown): { title: string; detail: string } {
   };
 }
 
-const META = new Set(['facebook', 'instagram']);
-
 /**
- * What to do when the account they want was not offered. On Meta a returning person is asked
- * "Continue as …?" and Continue reuses the earlier choice of Pages without showing the list again,
- * so the fix is theirs to make on Facebook's screen — nothing on our side can re-open that list.
+ * What to do when the account they want was not offered (or nothing was): the real causes with the
+ * step for each, and a way to start the same invite again. The fix is made on the platform's own
+ * screens — nothing on our side can re-open its list.
  */
 function MissingAccountHelp({ flow }: { flow: InviteFlowView }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const token = recallInviteToken();
   const signIn = signInName(flow);
+  const help = missingAccountHelp(flow, 'client');
 
   const retry = async () => {
     if (!token) return;
@@ -76,18 +68,13 @@ function MissingAccountHelp({ flow }: { flow: InviteFlowView }) {
 
   return (
     <div className="mt-4 rounded-sm bg-surface-soft p-4 text-sm text-body-ink">
-      {META.has(flow.provider) ? (
-        <ol className="list-decimal space-y-1.5 pl-5">
-          <li>Start again with the button below.</li>
-          <li>
-            If Facebook asks “Continue as …?”, choose <b className="text-ink">Edit settings</b> (or
-            “Edit previous settings”) — not Continue.
-          </li>
-          <li>
-            Tick the Page you want
-            {flow.provider === 'instagram' ? ' and the Instagram account linked to it' : ''}, then
-            finish.
-          </li>
+      {help.causes.length > 0 ? (
+        <ol className="list-decimal space-y-2.5 pl-5">
+          {help.causes.map((c) => (
+            <li key={c.cause}>
+              <b className="text-ink">{c.cause}</b> {c.fix}
+            </li>
+          ))}
         </ol>
       ) : (
         <p>
@@ -173,7 +160,8 @@ export function InviteFinish() {
 
   return (
     <InviteCard>
-      {state.step === 'loading' && <p className="text-muted">Loading…</p>}
+      {/* The same words as the static shell in index.html, which shows while this bundle loads. */}
+      {state.step === 'loading' && <p className="text-muted">Finishing up…</p>}
 
       {state.step === 'stopped' && (
         <>
@@ -201,7 +189,7 @@ export function InviteFinish() {
             title="Nothing to connect yet"
             subtitle={`Nothing was connected for ${state.flow.workspaceName}`}
           />
-          <p className="text-sm text-body-ink">{nothingToConnect(state.flow)}</p>
+          <p className="text-sm text-body-ink">{missingAccountHelp(state.flow, 'client').lead}</p>
           <MissingAccountHelp flow={state.flow} />
         </>
       )}

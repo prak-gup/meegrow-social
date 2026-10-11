@@ -1,5 +1,5 @@
 import { db, schema, withWorkspace } from '@meegrow-social/db';
-import { and, desc, eq, inArray, or } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
 import type {
   CallbackResult,
   ConnectionView,
@@ -37,6 +37,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * the message must not put it back.
  */
 export class ConnectionNotFoundError extends Error {}
+
+/**
+ * Thrown when a flow's connect invite stopped being usable while the flow was in flight: an
+ * operator cancelled the link, or another flow already connected an account through it.
+ */
+export class InviteClosedError extends Error {}
 
 function callbackUri(appUrl: string): string {
   return `${appUrl.replace(/\/$/, '')}/connect/callback`;
@@ -126,11 +132,15 @@ export function describeConnectionHealth(conn: {
   };
 }
 
-/** Step 1: create a single-use flow row and return the provider auth URL to redirect the user to. */
+/**
+ * Step 1: create a single-use flow row and return the provider auth URL to redirect the user to.
+ * `inviteId` marks a flow started from a connect invite (see `handleCallback`).
+ */
 export async function startConnect(
   workspaceId: string,
   provider: ProviderIdentifier,
   appUrl: string,
+  inviteId?: string,
 ): Promise<{ url: string; flowId: string }> {
   const impl = getProvider(provider);
   const redirectUri = callbackUri(appUrl);
@@ -141,6 +151,7 @@ export async function startConnect(
       provider,
       redirectUri,
       status: 'pending',
+      inviteId: inviteId ?? null,
       expiresAt: new Date(Date.now() + FLOW_TTL_MS),
     })
     .returning();
@@ -160,8 +171,17 @@ export async function startConnect(
  * Step 2 (public callback): exchange the code. `state` is the opaque flow id — if it doesn't match a
  * live, unconsumed, unexpired flow, we reject (defeats tampering + replay). Single-step providers get
  * a connection immediately; two-step providers return an account list for the finish step.
+ *
+ * A flow started from a connect invite is only ever completed in the browser that started it:
+ * `proof` is that browser's cookie (see `signConnectFlow`). Without it the code is never exchanged
+ * and the flow is burned — otherwise someone holding an invite link could start a flow, send the
+ * platform's consent URL to a person who manages the account, and take over once they approved.
  */
-export async function handleCallback(state: string, code: string): Promise<CallbackResult> {
+export async function handleCallback(
+  state: string,
+  code: string,
+  proof?: string | null,
+): Promise<CallbackResult> {
   const [flow] = await db()
     .select()
     .from(schema.oauthFlows)
@@ -169,6 +189,20 @@ export async function handleCallback(state: string, code: string): Promise<Callb
     .limit(1);
   if (!flow) throw new Error('invalid, already-used, or unknown connect state');
   if (flow.expiresAt.getTime() < Date.now()) throw new Error('connect flow expired');
+  if (flow.inviteId) {
+    if (!verifyConnectFlowProof(flow.id, proof)) {
+      await db()
+        .update(schema.oauthFlows)
+        .set({ status: 'consumed' })
+        .where(eq(schema.oauthFlows.id, flow.id));
+      throw new Error(
+        'this approval was opened in a different browser from the one the link was opened in',
+      );
+    }
+    if ((await inviteClosed(flow.inviteId)) !== null) {
+      throw new InviteClosedError('this invite link is no longer valid');
+    }
+  }
 
   const impl = getProvider(flow.provider as ProviderIdentifier);
   const tokens = await impl.authenticate({
@@ -191,17 +225,12 @@ export async function handleCallback(state: string, code: string): Promise<Callb
     return { status: 'choose_account', flowId: flow.id, accounts };
   }
 
-  const connectionId = await createConnection(
-    flow.workspaceId,
-    flow.provider as ProviderIdentifier,
+  const connectionId = await createFlowConnection(
+    flow,
     tokens,
     tokens.externalId,
     tokens.displayName,
   );
-  await db()
-    .update(schema.oauthFlows)
-    .set({ status: 'consumed' })
-    .where(eq(schema.oauthFlows.id, flow.id));
   return { status: 'connected', connectionId };
 }
 
@@ -243,18 +272,85 @@ async function connectChosenAccount(
   // the user-level ones (Facebook: a Page's own non-expiring Page token). See SocialProvider.
   const impl = getProvider(flow.provider as ProviderIdentifier);
   const tokens = impl.finalizeAccount ? await impl.finalizeAccount(userTokens, chosen) : userTokens;
-  const connectionId = await createConnection(
-    flow.workspaceId,
-    flow.provider as ProviderIdentifier,
+  const connectionId = await createFlowConnection(
+    flow,
     tokens,
     chosen.externalId,
     chosen.displayName,
   );
+  return { connectionId, displayName: chosen.displayName };
+}
+
+/**
+ * Why a connect invite can no longer be used, or null while it still can. Read on the admin handle:
+ * connect_invites is non-tenant (see schema).
+ */
+async function inviteClosed(inviteId: string): Promise<'used' | 'revoked' | 'expired' | null> {
+  const [invite] = await db()
+    .select({
+      consumedAt: schema.connectInvites.consumedAt,
+      revokedAt: schema.connectInvites.revokedAt,
+      expiresAt: schema.connectInvites.expiresAt,
+    })
+    .from(schema.connectInvites)
+    .where(eq(schema.connectInvites.id, inviteId))
+    .limit(1);
+  if (!invite || invite.revokedAt) return 'revoked';
+  if (invite.consumedAt) return 'used';
+  return invite.expiresAt.getTime() < Date.now() ? 'expired' : null;
+}
+
+/**
+ * The one place a flow becomes a connection, and consumes the flow. For an invite-started flow it
+ * also closes the invite: a link is good for retries until its first successful connection, then
+ * stops — a forwarded link must not keep connecting accounts for the rest of its 14 days. The
+ * invite is claimed atomically BEFORE the insert, so two flows racing on one link make one
+ * connection, and handed back if the insert then fails.
+ */
+async function createFlowConnection(
+  flow: OAuthFlow,
+  tokens: AuthTokens,
+  externalId: string,
+  displayName: string,
+): Promise<string> {
+  if (flow.inviteId) {
+    const claimed = await db()
+      .update(schema.connectInvites)
+      .set({ consumedAt: new Date() })
+      .where(
+        and(
+          eq(schema.connectInvites.id, flow.inviteId),
+          isNull(schema.connectInvites.consumedAt),
+          isNull(schema.connectInvites.revokedAt),
+          gt(schema.connectInvites.expiresAt, new Date()),
+        ),
+      )
+      .returning({ id: schema.connectInvites.id });
+    if (claimed.length === 0) throw new InviteClosedError('this invite link is no longer valid');
+  }
+  let connectionId: string;
+  try {
+    connectionId = await createConnection(
+      flow.workspaceId,
+      flow.provider as ProviderIdentifier,
+      tokens,
+      externalId,
+      displayName,
+    );
+  } catch (err) {
+    if (flow.inviteId) {
+      await db()
+        .update(schema.connectInvites)
+        .set({ consumedAt: null })
+        .where(eq(schema.connectInvites.id, flow.inviteId));
+    }
+    throw err;
+  }
   await db()
     .update(schema.oauthFlows)
     .set({ status: 'consumed' })
     .where(eq(schema.oauthFlows.id, flow.id));
-  return { connectionId, displayName: chosen.displayName };
+  return connectionId;
 }
 
 /**
@@ -294,6 +390,11 @@ async function loadInviteFlow(
   if (flow.expiresAt.getTime() < Date.now()) return { status: 'expired' };
   // Still 'pending': the platform never redirected back, so there is nothing to pick from yet.
   if (flow.status !== 'awaiting_account') return { status: 'not_found' };
+  if (flow.inviteId) {
+    // The link was cancelled, or another flow already connected through it, while this one waited.
+    const closed = await inviteClosed(flow.inviteId);
+    if (closed) return { status: closed === 'used' ? 'used' : 'expired' };
+  }
 
   const [workspace] = await db()
     .select({ name: schema.workspaces.name })
@@ -356,6 +457,7 @@ export async function finishInviteConnect(
       providerDisplayName: loaded.providerDisplayName,
     };
   } catch (err) {
+    if (err instanceof InviteClosedError) return { status: 'used' };
     return { status: 'failed', error: err instanceof Error ? err.message : 'could not connect' };
   }
 }

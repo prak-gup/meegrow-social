@@ -7,9 +7,10 @@ import { clientHue, initial } from '../lib/clientHue';
 import { providerVisible } from '../lib/devProviders';
 import { platformMeta } from '../lib/platforms';
 import { AddClientModal } from '../components/AddClientModal';
+import { InviteLinkRow, useInviteLinks } from '../components/InviteLinks';
 import { Button } from '../components/ui/Button';
 import { PageHeader } from '../components/ui/PageHeader';
-import { Plus, LinkSimple, Copy, PlugsConnected } from '../lib/icons';
+import { Plus, LinkSimple, PlugsConnected } from '../lib/icons';
 
 function pip(c: ClientOverview): { text: string; cls: string } {
   if (c.health === 'bad') return { text: 'Reconnect an account', cls: 'bg-status-bad' };
@@ -24,7 +25,8 @@ function pip(c: ClientOverview): { text: string; cls: string } {
 /**
  * The two ways to get a client's accounts connected, kept visibly apart: send the client a link
  * they open themselves (one per platform, minted for THIS client without switching the operator's
- * active client), or connect it yourself — which does switch, and says so.
+ * active client), or connect it yourself — which does switch, and says so. Every link that still
+ * works is listed under its platform, so a stale one can be cancelled rather than forgotten.
  */
 function ConnectPanel({
   client,
@@ -35,17 +37,16 @@ function ConnectPanel({
   providers: ProviderView[] | null;
   onConnectYourself: () => void;
 }) {
-  const [links, setLinks] = useState<Record<string, string>>({});
+  const { invites, error: linksError, reload, cancel } = useInviteLinks(client.workspaceId);
   const [busy, setBusy] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const mint = async (provider: string) => {
     setBusy(provider);
     setErr(null);
     try {
-      const { url } = await api.createInvite(provider, client.workspaceId);
-      setLinks((l) => ({ ...l, [provider]: url }));
+      await api.createInvite(provider, client.workspaceId);
+      await reload();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Could not create the link.');
     } finally {
@@ -59,7 +60,8 @@ function ConnectPanel({
         <div className="text-caption font-semibold text-ink">Send {client.name} a link</div>
         <p className="mt-1 text-caption text-muted">
           One link per platform. They open it, sign in, and choose the account — no login here, and
-          their password never reaches you. A link works for 14 days.
+          their password never reaches you. A link works for 14 days, or until it has connected an
+          account or you cancel it.
         </p>
         {providers === null && <p className="mt-3 text-caption text-muted">Loading platforms…</p>}
         {providers?.length === 0 && (
@@ -70,53 +72,47 @@ function ConnectPanel({
         <ul className="mt-3 space-y-2">
           {(providers ?? []).map((p) => {
             const meta = platformMeta(p);
-            const url = links[p.identifier];
+            const open = (invites ?? []).filter((i) => i.provider === p.identifier);
             return (
               <li
                 key={p.identifier}
-                className="flex flex-wrap items-center gap-3 rounded-sm border border-hairline bg-canvas px-3.5 py-2.5"
+                className="rounded-sm border border-hairline bg-canvas px-3.5 py-2.5"
               >
-                <span
-                  className={`grid h-7 w-7 flex-none place-items-center rounded-xs text-white ${meta.brand}`}
-                >
-                  <meta.Icon size={16} weight="fill" />
-                </span>
-                <span className="w-32 flex-none text-sm font-medium">{meta.label}</span>
-                {url ? (
-                  <>
-                    <code className="min-w-0 flex-1 truncate font-mono text-sm text-ink">
-                      {url}
-                    </code>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        void navigator.clipboard
-                          ?.writeText(url)
-                          .then(() => setCopied(p.identifier));
-                      }}
-                    >
-                      <Copy size={16} />
-                      {copied === p.identifier ? 'Copied' : 'Copy link'}
-                    </Button>
-                  </>
-                ) : (
+                <div className="flex flex-wrap items-center gap-3">
+                  <span
+                    className={`grid h-7 w-7 flex-none place-items-center rounded-xs text-white ${meta.brand}`}
+                  >
+                    <meta.Icon size={16} weight="fill" />
+                  </span>
+                  <span className="flex-1 text-sm font-medium">{meta.label}</span>
                   <Button
                     variant="outline"
                     size="sm"
-                    className="ml-auto"
                     disabled={busy !== null}
                     onClick={() => void mint(p.identifier)}
                   >
                     <LinkSimple size={16} />
-                    {busy === p.identifier ? 'Creating…' : 'Create link'}
+                    {busy === p.identifier
+                      ? 'Creating…'
+                      : open.length > 0
+                        ? 'Create another'
+                        : 'Create link'}
                   </Button>
+                </div>
+                {open.length > 0 && (
+                  <ul className="mt-2.5 space-y-2.5 border-t border-hairline-soft pt-2.5">
+                    {open.map((invite) => (
+                      <li key={invite.id}>
+                        <InviteLinkRow invite={invite} onCancel={cancel} />
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </li>
             );
           })}
         </ul>
-        {err && <p className="mt-3 text-caption text-error">{err}</p>}
+        {(err ?? linksError) && <p className="mt-3 text-caption text-error">{err ?? linksError}</p>}
       </div>
 
       <div className="lg:w-64 lg:border-l lg:border-hairline lg:pl-4">

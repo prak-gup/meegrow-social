@@ -55,6 +55,9 @@ export const oauthFlows = pgTable('oauth_flows', {
   encryptedTokens: text('encrypted_tokens'), // set after callback for isBetweenSteps providers
   accounts: jsonb('accounts'), // candidate accounts for the pick step
   status: text('status').notNull().default('pending'), // pending | awaiting_account | consumed
+  // Set when a connect invite started this flow (no FK, like workspaceId here). It is what makes
+  // the callback demand the starting browser's proof, and what closes the invite on success.
+  inviteId: uuid('invite_id'),
   expiresAt: ts('expires_at').notNull(),
   createdAt: createdAt(),
 });
@@ -72,7 +75,8 @@ export const connectInvites = pgTable('connect_invites', {
   provider: text('provider').notNull(),
   createdBy: uuid('created_by'),
   expiresAt: ts('expires_at').notNull(),
-  consumedAt: ts('consumed_at'),
+  consumedAt: ts('consumed_at'), // set by the first successful connection made through the link
+  revokedAt: ts('revoked_at'), // set when an operator cancels the link
   createdAt: createdAt(),
 });
 

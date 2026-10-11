@@ -54,6 +54,8 @@ const POST_METRICS = [
   'post_video_views',
 ] as const;
 
+const PAGE_FIELDS = 'id,name,access_token';
+
 interface PageAccount {
   id: string;
   name: string;
@@ -194,10 +196,13 @@ export class FacebookPagesProvider implements SocialProvider {
 
   private async fetchPages(userAccessToken: string): Promise<PageAccount[]> {
     const res = await this.client.graphGet<{ data?: PageAccount[] }>('me/accounts', {
-      fields: 'id,name,access_token',
+      fields: PAGE_FIELDS,
       access_token: userAccessToken,
     });
-    return res.data ?? [];
+    if (res.data?.length) return res.data;
+    // Nothing listed: a business-owned Page is not, without `business_management`. Fall back to the
+    // Pages the person ticked (UNVERIFIED against Meta — see MetaClient.pagesFromGrantedScopes).
+    return this.client.pagesFromGrantedScopes<PageAccount>(userAccessToken, PAGE_FIELDS);
   }
 
   private async postText(tokens: AuthTokens, pageId: string, caption: string): Promise<PostResult> {

@@ -53,6 +53,8 @@ const MEDIA_METRICS = [
 const DEFAULT_STATUS_ATTEMPTS = 20;
 const DEFAULT_STATUS_DELAY_MS = 3000;
 
+const PAGE_FIELDS = 'id,name,access_token,instagram_business_account{id,username}';
+
 interface PageWithIg {
   id: string;
   name: string;
@@ -212,10 +214,13 @@ export class InstagramProvider implements SocialProvider {
 
   private async fetchPagesWithIg(userAccessToken: string): Promise<PageWithIg[]> {
     const res = await this.client.graphGet<{ data?: PageWithIg[] }>('me/accounts', {
-      fields: 'id,name,access_token,instagram_business_account{id,username}',
+      fields: PAGE_FIELDS,
       access_token: userAccessToken,
     });
-    return res.data ?? [];
+    if (res.data?.length) return res.data;
+    // Same fallback as Facebook, by Page id — the IG account still arrives through its Page
+    // (UNVERIFIED against Meta — see MetaClient.pagesFromGrantedScopes).
+    return this.client.pagesFromGrantedScopes<PageWithIg>(userAccessToken, PAGE_FIELDS);
   }
 
   private async createSingleContainer(

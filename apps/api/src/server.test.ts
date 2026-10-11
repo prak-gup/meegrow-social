@@ -25,6 +25,8 @@ vi.mock('@meegrow-social/core', async (importOriginal) => ({
   getInviteFlow: vi.fn(),
   handleCallback: vi.fn(),
   startInviteConnect: vi.fn(),
+  listConnectInvites: vi.fn(),
+  revokeConnectInvite: vi.fn(),
   getConnectionHealth: vi.fn(),
   listConnectionHealth: vi.fn(),
   previewQueueSlots: vi.fn(),
@@ -511,7 +513,8 @@ describe('invite connect path (public)', () => {
         accounts,
       });
       const res = await callback({ cookie });
-      expect(core.handleCallback).toHaveBeenCalledWith(FLOW, 'c0de');
+      // The proof travels to core, which refuses an invite-started flow without it.
+      expect(core.handleCallback).toHaveBeenCalledWith(FLOW, 'c0de', proof);
       expect(res.statusCode).toBe(302);
       expect(res.headers.location).toBe(`${ORIGIN}/i/finish/${FLOW}`);
     });
@@ -528,6 +531,19 @@ describe('invite connect path (public)', () => {
       expect(res.body).toContain('window.opener.postMessage');
       expect(res.body).toContain('Not connected yet');
       expect(res.body).not.toContain('Connected. You can close this window.');
+    });
+
+    it('hands core no proof when this browser holds none for the flow', async () => {
+      vi.mocked(core.handleCallback).mockRejectedValue(
+        new Error(
+          'this approval was opened in a different browser from the one the link was opened in',
+        ),
+      );
+      const res = await callback({ cookie: `${inviteFlowCookie(OTHER_FLOW)}=${proof}` });
+      expect(core.handleCallback).toHaveBeenCalledWith(FLOW, 'c0de', undefined);
+      expect(res.statusCode).toBe(400);
+      expect(res.body).toContain('<h1 id="t">Not connected</h1>');
+      expect(res.body).toContain('opened in a different browser');
     });
 
     it("does not redirect on another flow's proof", async () => {
@@ -776,5 +792,116 @@ describe('POST /v1/connections/:provider/invite', () => {
     expect((await mint({ workspaceId: 'nope' }, session)).statusCode).toBe(400);
     expect((await mint({ workspaceId: OTHER_WS }, {})).statusCode).toBe(401);
     expect(core.createConnectInvite).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Seeing and cancelling a client's outstanding invite links. Same reach as the mint route: the
+ * active client, or — for a session — a named client the user belongs to.
+ */
+describe('outstanding invite links', () => {
+  const OTHER_WS = '77777777-7777-4777-8777-777777777777';
+  const USER = '88888888-8888-4888-8888-888888888888';
+  const INVITE = '99999999-9999-4999-8999-999999999999';
+  const ORIGIN = 'http://localhost:8990';
+  const session = { cookie: 'mg_sid=good', origin: ORIGIN };
+  const list = (headers: Record<string, string>, query = '') =>
+    app.inject({ method: 'GET', url: `/v1/connections/invites${query}`, headers });
+  const revoke = (headers: Record<string, string>, id = INVITE, query = '') =>
+    app.inject({ method: 'DELETE', url: `/v1/connections/invites/${id}${query}`, headers });
+  let previousAppUrl: string | undefined;
+
+  beforeAll(() => {
+    previousAppUrl = process.env.APP_URL;
+    delete process.env.APP_URL;
+  });
+  afterAll(() => {
+    if (previousAppUrl !== undefined) process.env.APP_URL = previousAppUrl;
+  });
+  beforeEach(() => {
+    vi.mocked(core.authenticateSession).mockImplementation(async (token) =>
+      token === 'good'
+        ? ({ workspaceId: WS, userId: USER, sessionId: 'session-1' } as never)
+        : null,
+    );
+    vi.mocked(core.listConnectInvites).mockResolvedValue([
+      {
+        id: INVITE,
+        token: 'tok123',
+        provider: 'facebook',
+        createdAt: new Date('2026-10-01T00:00:00.000Z'),
+        expiresAt: new Date('2026-10-15T00:00:00.000Z'),
+        lastStartedAt: null,
+      },
+    ]);
+    vi.mocked(core.revokeConnectInvite).mockResolvedValue(true);
+  });
+
+  it('lists the active client’s links as openable URLs, never as bare tokens', async () => {
+    const res = await list(session);
+    expect(res.statusCode).toBe(200);
+    expect(core.listConnectInvites).toHaveBeenCalledWith(WS);
+    expect(res.json()).toEqual({
+      invites: [
+        {
+          id: INVITE,
+          url: `${ORIGIN}/i/tok123`,
+          provider: 'facebook',
+          createdAt: '2026-10-01T00:00:00.000Z',
+          expiresAt: '2026-10-15T00:00:00.000Z',
+          lastStartedAt: null,
+        },
+      ],
+    });
+  });
+
+  it('is a static route, not a connection id', async () => {
+    // `/v1/connections/:id` (DELETE) and `/v1/connections/:id/health` share the prefix.
+    expect((await list(auth)).statusCode).toBe(200);
+    expect(core.getConnectionHealth).not.toHaveBeenCalled();
+  });
+
+  it('lists and cancels for another client the user belongs to', async () => {
+    vi.mocked(core.isWorkspaceMember).mockResolvedValue(true);
+    expect((await list(session, `?workspaceId=${OTHER_WS}`)).statusCode).toBe(200);
+    expect(core.listConnectInvites).toHaveBeenCalledWith(OTHER_WS);
+    const res = await revoke(session, INVITE, `?workspaceId=${OTHER_WS}`);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ revoked: true });
+    expect(core.revokeConnectInvite).toHaveBeenCalledWith(OTHER_WS, INVITE);
+    expect(core.isWorkspaceMember).toHaveBeenCalledWith(USER, OTHER_WS);
+  });
+
+  it('refuses a client the user does not belong to, for both', async () => {
+    vi.mocked(core.isWorkspaceMember).mockResolvedValue(false);
+    expect((await list(session, `?workspaceId=${OTHER_WS}`)).statusCode).toBe(403);
+    expect((await revoke(session, INVITE, `?workspaceId=${OTHER_WS}`)).statusCode).toBe(403);
+    expect(core.listConnectInvites).not.toHaveBeenCalled();
+    expect(core.revokeConnectInvite).not.toHaveBeenCalled();
+  });
+
+  it('an API key cannot reach past its own workspace', async () => {
+    expect((await list(auth, `?workspaceId=${OTHER_WS}`)).statusCode).toBe(403);
+    expect((await revoke(auth, INVITE, `?workspaceId=${OTHER_WS}`)).statusCode).toBe(403);
+    expect(core.isWorkspaceMember).not.toHaveBeenCalled();
+    expect(core.revokeConnectInvite).not.toHaveBeenCalled();
+    expect((await revoke(auth)).statusCode).toBe(200);
+    expect(core.revokeConnectInvite).toHaveBeenCalledWith(WS, INVITE);
+  });
+
+  it('404s for a link core does not find, and for an id that is not a uuid', async () => {
+    vi.mocked(core.revokeConnectInvite).mockResolvedValue(false);
+    expect((await revoke(session)).statusCode).toBe(404);
+    vi.mocked(core.revokeConnectInvite).mockClear();
+    expect((await revoke(session, 'tok123')).statusCode).toBe(404);
+    expect(core.revokeConnectInvite).not.toHaveBeenCalled();
+  });
+
+  it('needs credentials, and a same-origin request to cancel', async () => {
+    expect((await list({})).statusCode).toBe(401);
+    expect((await revoke({})).statusCode).toBe(401);
+    const res = await revoke({ cookie: 'mg_sid=good', origin: 'https://evil.example' });
+    expect(res.statusCode).toBe(403);
+    expect(core.revokeConnectInvite).not.toHaveBeenCalled();
   });
 });

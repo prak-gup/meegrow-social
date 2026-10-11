@@ -485,6 +485,114 @@ describe('MetaClient.debugToken', () => {
   });
 });
 
+/**
+ * The fallback for a business-owned Page (`me/accounts` empty without `business_management`).
+ * DOCUMENTATION-BUILT fixtures, never recorded: the `granular_scopes` shape is from Meta's
+ * debug_token reference and the Page node's `access_token` field from the Page reference. Whether
+ * Meta really answers the by-id read for such a Page is unconfirmed (RESEARCH meta.md §2.5).
+ */
+describe('page discovery when me/accounts is empty (granular-scope fallback, unverified)', () => {
+  const USER = { accessToken: 'LONG-USER-TOKEN', externalId: 'pending', displayName: 'pending' };
+  const EMPTY_ACCOUNTS: Recorded = { match: 'me/accounts', body: { data: [] } };
+  const granted = (granular_scopes: unknown): Recorded => ({
+    match: 'debug_token',
+    body: { data: { is_valid: true, scopes: ['pages_show_list'], granular_scopes } },
+  });
+  const PAGE_NODE: Recorded = {
+    match: '/1112223334?',
+    body: { id: '1112223334', name: 'Business-Owned Page', access_token: 'PAGE-TOKEN' },
+  };
+
+  it('offers the Pages the person ticked, read one by one by id', async () => {
+    const { fb, calls } = provider([
+      EMPTY_ACCOUNTS,
+      granted([
+        { scope: 'pages_show_list', target_ids: ['1112223334'] },
+        { scope: 'pages_manage_posts', target_ids: ['1112223334'] },
+        { scope: 'instagram_basic', target_ids: ['17841400000000001'] },
+      ]),
+      PAGE_NODE,
+    ]);
+
+    expect(await fb.listAccounts(USER)).toEqual([
+      { externalId: '1112223334', displayName: 'Business-Owned Page' },
+    ]);
+    // me/accounts first, then the token inspection (app token), then each Page once — and never
+    // the Instagram id, which is not a Page.
+    expect(calls.map((c) => c.url.split('?')[0]!.split('/').pop())).toEqual([
+      'accounts',
+      'debug_token',
+      '1112223334',
+    ]);
+    expect(decodeURIComponent(calls[1]!.url)).toContain('input_token=LONG-USER-TOKEN');
+    expect(decodeURIComponent(calls[1]!.url)).toContain(
+      'access_token=2214641422606935|test-secret',
+    );
+    expect(decodeURIComponent(calls[2]!.url)).toContain('fields=id,name,access_token');
+    expect(calls[2]!.url).toContain('access_token=LONG-USER-TOKEN');
+  });
+
+  it('connects such a Page with its own Page token', async () => {
+    const { fb } = provider([
+      EMPTY_ACCOUNTS,
+      granted([{ scope: 'pages_show_list', target_ids: [1112223334] }]),
+      PAGE_NODE,
+    ]);
+    const tokens = await fb.finalizeAccount(USER, {
+      externalId: '1112223334',
+      displayName: 'Business-Owned Page',
+    });
+    expect(tokens.accessToken).toBe('PAGE-TOKEN');
+    expect(tokens.expiresAt).toBeUndefined();
+  });
+
+  it('never runs when me/accounts lists a Page', async () => {
+    const { fb, calls } = provider([ME_ACCOUNTS]);
+    await fb.listAccounts(USER);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('offers nothing when the grant was not narrowed to Pages (target_ids omitted)', async () => {
+    const { fb, calls } = provider([EMPTY_ACCOUNTS, granted([{ scope: 'pages_show_list' }])]);
+    expect(await fb.listAccounts(USER)).toEqual([]);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('leaves out a Page Meta refuses, and keeps the ones it returns', async () => {
+    const { fb } = provider([
+      EMPTY_ACCOUNTS,
+      granted([{ scope: 'pages_show_list', target_ids: ['999', '1112223334'] }]),
+      {
+        match: '/999?',
+        status: 400,
+        body: { error: { message: 'Unsupported get request', code: 100, error_subcode: 33 } },
+      },
+      PAGE_NODE,
+    ]);
+    expect(await fb.listAccounts(USER)).toEqual([
+      { externalId: '1112223334', displayName: 'Business-Owned Page' },
+    ]);
+  });
+
+  it('degrades to "no pages" when the token inspection itself fails', async () => {
+    const { fb } = provider([
+      EMPTY_ACCOUNTS,
+      { match: 'debug_token', status: 400, body: { error: { message: 'nope', code: 190 } } },
+    ]);
+    expect(await fb.listAccounts(USER)).toEqual([]);
+  });
+
+  it('drops a target id that is not a whole decimal id', async () => {
+    const { fetchImpl } = recorder([
+      granted([{ scope: 'pages_show_list', target_ids: ['12', 34, 1.5, 'abc', 2 ** 60, null] }]),
+    ]);
+    const client = new MetaClient({ appId: 'a', appSecret: 'b', fetchImpl });
+    expect((await client.debugToken('T')).granularScopes).toEqual([
+      { scope: 'pages_show_list', targetIds: ['12', '34'] },
+    ]);
+  });
+});
+
 describe('network failures', () => {
   it('treats a socket-level failure as transient so BullMQ retries', async () => {
     const fb = new FacebookPagesProvider(

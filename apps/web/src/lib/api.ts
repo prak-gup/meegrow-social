@@ -17,6 +17,7 @@ import type {
   InviteView,
   InviteFlowView,
   InviteConnectedView,
+  OutstandingInviteView,
   CreatedApiKeyView,
   PostMetricsView,
   FollowerSeriesView,
@@ -98,6 +99,18 @@ export const api = {
       'POST',
       `/v1/connections/${encodeURIComponent(provider)}/invite`,
       workspaceId ? { workspaceId } : undefined,
+    ),
+  /** The links that still work for the active client, or for `workspaceId`. */
+  listInvites: (workspaceId?: string) =>
+    request<{ invites: OutstandingInviteView[] }>('GET', '/v1/connections/invites', undefined, {
+      workspaceId,
+    }),
+  revokeInvite: (id: string, workspaceId?: string) =>
+    request<{ revoked: true }>(
+      'DELETE',
+      `/v1/connections/invites/${encodeURIComponent(id)}`,
+      undefined,
+      { workspaceId },
     ),
   getInvite: (token: string) =>
     request<InviteView>('GET', `/v1/invite/${encodeURIComponent(token)}`),
