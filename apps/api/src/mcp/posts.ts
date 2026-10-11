@@ -175,7 +175,9 @@ export function registerPostTools(server: McpServer, ctx: AuthContext): void {
       description:
         'List posts in this workspace, soonest `publishAt` first (drafts last). Filter by ' +
         '`status` (draft | scheduled | publishing | published | failed | cancelled), `provider`, ' +
-        '`connectionId`, and a `from`/`to` window on `publishAt`. Paginate with `limit` (max ' +
+        '`connectionId`, `source` (app = created here; imported = found on the platform by ' +
+        'import_past_posts — always published, never editable or publishable) and a `from`/`to` ' +
+        'window on `publishAt`. Paginate with `limit` (max ' +
         '100, default 50) and `offset`. Each item is one per-platform post; a failed post ' +
         'carries the reason in `error` and a published one its `releaseUrl`; `media` lists the ' +
         "post's own media. Read-only.",

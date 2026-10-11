@@ -18,6 +18,7 @@ import {
   createQueueInput,
   finishConnectInput,
   finishInviteFlowInput,
+  importPostsInput,
   listPostsQuery,
   loginInput,
   logsAggregateInput,
@@ -67,6 +68,7 @@ import {
   getPostMetrics,
   getQueue,
   handleCallback,
+  ImportNotSupportedError,
   isWorkspaceMember,
   listApiKeys,
   listConnectionHealth,
@@ -85,6 +87,7 @@ import {
   QueueNotFoundError,
   recordApiRequestLog,
   registerMediaFromUrl,
+  requestPostImport,
   retryPost,
   revokeSession,
   rotateSession,
@@ -882,6 +885,29 @@ export async function buildServer(): Promise<FastifyInstance> {
     const ok = await deleteConnection(req.authContext!.workspaceId, req.params.id);
     if (!ok) return reply.code(404).send({ error: 'not found' });
     return { deleted: true };
+  });
+
+  // "Import past posts": queue a read of the account's existing posts for the chosen window. The
+  // worker does the reading; this only records the request, so it answers at once (202) with the
+  // state to poll on `GET /v1/connections`. Asking while a run is queued or in progress changes
+  // nothing and reports that run.
+  app.post<{ Params: { id: string } }>('/v1/connections/:id/import', async (req, reply) => {
+    const parsed = importPostsInput.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    try {
+      const state = await requestPostImport(
+        req.authContext!.workspaceId,
+        req.params.id,
+        parsed.data,
+      );
+      if (!state) return reply.code(404).send({ error: 'not found' });
+      return reply.code(202).send({ import: state });
+    } catch (err) {
+      // A platform whose provider cannot list its posts.
+      if (err instanceof ImportNotSupportedError)
+        return reply.code(400).send({ error: err.message });
+      throw err;
+    }
   });
 
   // Follower trend for one connection (#9), newest first.

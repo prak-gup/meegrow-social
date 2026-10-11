@@ -604,6 +604,8 @@ const HOUR_MS = 3_600_000;
 export function cadenceWord(ms: number): string {
   if (ms === HOUR_MS) return 'hourly';
   if (ms === DAY_MS) return 'daily';
+  if (ms === 7 * DAY_MS) return 'weekly';
+  if (ms > DAY_MS && ms % DAY_MS === 0) return `every ${ms / DAY_MS} days`;
   const hours = ms / HOUR_MS;
   return Number.isInteger(hours)
     ? `every ${hours} hours`
@@ -616,9 +618,13 @@ export function cadenceWord(ms: number): string {
  */
 export function cadenceText(cadence: AnalyticsStatusView['cadence']): string {
   const fresh = Math.round(cadence.freshPostWindowMs / HOUR_MS);
+  // Old posts are asked about less often; say so, or "then daily" overstates it.
+  const older = (cadence.olderPosts ?? [])
+    .map((o) => `, ${cadenceWord(o.intervalMs)} after ${Math.round(o.afterMs / DAY_MS)} days`)
+    .join('');
   return (
     `posts refresh ${cadenceWord(cadence.freshPostIntervalMs)} for ${fresh} h, ` +
-    `then ${cadenceWord(cadence.postIntervalMs)} · followers ${cadenceWord(cadence.accountIntervalMs)}`
+    `then ${cadenceWord(cadence.postIntervalMs)}${older} · followers ${cadenceWord(cadence.accountIntervalMs)}`
   );
 }
 

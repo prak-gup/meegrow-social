@@ -27,6 +27,7 @@ import {
   connectFailureMessage,
   type ConnectFailureCode,
 } from '../errors.js';
+import { connectionImportView, initialImportState } from './post-import.js';
 
 /** How long a started flow waits for the platform's redirect back (login + consent screens). */
 const FLOW_TTL_MS = 10 * 60 * 1000;
@@ -617,6 +618,7 @@ export async function listConnections(workspaceId: string): Promise<ConnectionVi
       expiresInDays: expiresInDaysFrom(r.expiresAt),
       health: computeHealth(r.tokenModel as TokenModel, r.needsReconnect, r.expiresAt),
       createdAt: r.createdAt,
+      import: connectionImportView(r),
     }));
   });
 }
@@ -768,6 +770,9 @@ async function createConnection(
         refreshToken: tokens.refreshToken ? encryptToken(tokens.refreshToken) : null,
         tokenModel: impl.tokenModel,
         expiresAt: tokens.expiresAt ?? null,
+        // Queued here, run by the worker: the connect request never waits on the platform's
+        // history. Null for a provider that cannot list its posts.
+        importState: initialImportState(provider, new Date()),
       })
       .returning({ id: schema.connections.id });
     if (!conn) throw new Error('failed to create connection');

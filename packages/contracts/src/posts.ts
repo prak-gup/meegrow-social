@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { providerIdentifier, type ProviderIdentifier } from './providers.js';
+import { postSource } from './imports.js';
 
 /**
  * Post lifecycle. Kept flexible enough for the template engine (drafts) and the scheduler
@@ -287,6 +288,14 @@ export const postView = z.object({
   queueId: z.string().uuid().nullable(),
   createdAt: z.coerce.date(),
   /**
+   * `imported`: found on the platform, not published by this app. Always `published`; it can be
+   * read, measured and duplicated as a draft, never edited, cancelled, retried or published.
+   * Optional, like `media`, so an older payload still parses: absent means `app`.
+   */
+  source: postSource.optional(),
+  /** Set once the platform no longer has the post (deleted there). Its status stays `published`. */
+  platformRemovedAt: z.coerce.date().nullable().optional(),
+  /**
    * This post's own media, in carousel order. Optional only so a consumer holding an older payload
    * still parses: every read and write in core fills it (an empty array for a text-only post).
    */
@@ -320,6 +329,8 @@ export const listPostsQuery = z.object({
   status: postStatus.optional(),
   provider: providerIdentifier.optional(),
   connectionId: z.string().uuid().optional(),
+  /** `app`: published here. `imported`: found on the platform. Omitted = both. */
+  source: postSource.optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),

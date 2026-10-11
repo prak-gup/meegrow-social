@@ -5,6 +5,11 @@ import type {
   MediaRef,
   PostOptions,
 } from '@meegrow-social/contracts';
+import type {
+  PublishedPostPage,
+  PublishedPostPresence,
+  PublishedPostQuery,
+} from './published-posts.js';
 
 export interface AuthTokens {
   accessToken: string;
@@ -142,4 +147,14 @@ export interface SocialProvider {
    * retired `page_fans` for a `followers_count` node field), so never hardcode a canonical set.
    */
   accountAnalytics(tokens: AuthTokens): Promise<MetricPoint[]>;
+  /**
+   * One page of the posts already on the account, newest first — including ones this app never
+   * published. Optional: a provider without it is simply never imported from.
+   */
+  listPublishedPosts?(tokens: AuthTokens, query: PublishedPostQuery): Promise<PublishedPostPage>;
+  /** Whether the platform still has this post. Optional; without it nothing is marked removed. */
+  publishedPostPresence?(
+    tokens: AuthTokens,
+    externalPostId: string,
+  ): Promise<PublishedPostPresence>;
 }

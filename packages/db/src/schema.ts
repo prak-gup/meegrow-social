@@ -1,5 +1,7 @@
 import {
   boolean,
+  check,
+  index,
   integer,
   jsonb,
   numeric,
@@ -142,6 +144,13 @@ export const connections = pgTable('connections', {
     .default(sql`'{}'::jsonb`),
   /** Last time the analytics sweeper polled this account's followers (#9). Null = never swept. */
   lastAnalyticsAt: ts('last_analytics_at'),
+  /**
+   * Past-post import: the run in progress or the last one (status, window, counts, capped flag) —
+   * shape and rules in core `services/post-import.ts`. Null = no import was ever asked for.
+   */
+  importState: jsonb('import_state'),
+  /** Last time an import read the platform's post list to its end. Null = never. */
+  lastImportAt: ts('last_import_at'),
   createdAt: createdAt(),
 });
 
@@ -187,41 +196,68 @@ export const postGroups = pgTable(
   ],
 );
 
-export const posts = pgTable('posts', {
-  id: id(),
-  workspaceId: workspaceId(),
-  groupId: uuid('group_id')
-    .notNull()
-    .references(() => postGroups.id, { onDelete: 'cascade' }),
-  connectionId: uuid('connection_id').notNull(),
-  provider: text('provider').notNull(),
-  status: text('status').notNull().default('draft'),
-  caption: text('caption').notNull().default(''),
-  media: jsonb('media')
-    .notNull()
-    .default(sql`'[]'::jsonb`),
-  /**
-   * Per-platform post options (#44) — a YouTube title, a GBP topic type + CTA, a reel flag. Null
-   * for posts created before the field existed and for providers that take no options. Validated
-   * as `postOptions` in contracts and by the provider's `assertPublishable` at create time.
-   */
-  options: jsonb('options'),
-  publishAt: ts('publish_at'),
-  releaseUrl: text('release_url'),
-  /**
-   * The platform's own id for the published post (e.g. FB `{page-id}_{post-id}`, IG media id).
-   * Required to poll per-post analytics (#9) — `releaseUrl` is for humans and its shape is
-   * provider-specific, so it must never be parsed to recover this. Null until published.
-   */
-  externalPostId: text('external_post_id'),
-  /** Last time the analytics sweeper polled this post (#9). Null = never swept. */
-  lastAnalyticsAt: ts('last_analytics_at'),
-  error: text('error'),
-  // Nullable, no FK (see `connectionId` above for the same pattern): set when a post was created
-  // via queue slotting (PRD F3.4). Used to compute slot occupancy for the next add-to-queue call.
-  queueId: uuid('queue_id'),
-  createdAt: createdAt(),
-});
+export const posts = pgTable(
+  'posts',
+  {
+    id: id(),
+    workspaceId: workspaceId(),
+    groupId: uuid('group_id')
+      .notNull()
+      .references(() => postGroups.id, { onDelete: 'cascade' }),
+    connectionId: uuid('connection_id').notNull(),
+    provider: text('provider').notNull(),
+    status: text('status').notNull().default('draft'),
+    caption: text('caption').notNull().default(''),
+    media: jsonb('media')
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    /**
+     * Per-platform post options (#44) — a YouTube title, a GBP topic type + CTA, a reel flag. Null
+     * for posts created before the field existed and for providers that take no options. Validated
+     * as `postOptions` in contracts and by the provider's `assertPublishable` at create time.
+     */
+    options: jsonb('options'),
+    publishAt: ts('publish_at'),
+    releaseUrl: text('release_url'),
+    /**
+     * The platform's own id for the published post (e.g. FB `{page-id}_{post-id}`, IG media id).
+     * Required to poll per-post analytics (#9) — `releaseUrl` is for humans and its shape is
+     * provider-specific, so it must never be parsed to recover this. Null until published.
+     */
+    externalPostId: text('external_post_id'),
+    /** Last time the analytics sweeper polled this post (#9). Null = never swept. */
+    lastAnalyticsAt: ts('last_analytics_at'),
+    error: text('error'),
+    // Nullable, no FK (see `connectionId` above for the same pattern): set when a post was created
+    // via queue slotting (PRD F3.4). Used to compute slot occupancy for the next add-to-queue call.
+    queueId: uuid('queue_id'),
+    /**
+     * `app`: created here. `imported`: found on the platform by a past-post import — already live
+     * there, so it is `published` from its first row and nothing may ever publish it (the check
+     * below is the database's half of that; `publishPost` and the lifecycle calls refuse it too).
+     */
+    source: text('source').notNull().default('app'),
+    /**
+     * Set when the platform no longer has the post (deleted there). The status stays `published`:
+     * it did go out, and its collected numbers stay readable.
+     */
+    platformRemovedAt: ts('platform_removed_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // Re-importing can never duplicate: one imported row per platform post per account. Partial on
+    // purpose — the test-only fake providers hand several of this app's posts the same id.
+    uniqueIndex('posts_imported_external_uniq')
+      .on(t.connectionId, t.externalPostId)
+      .where(sql`${t.source} = 'imported'`),
+    // Recognising a listed platform post among the posts already stored, whoever published them.
+    index('posts_connection_external_idx').on(t.connectionId, t.externalPostId),
+    check(
+      'posts_imported_is_published',
+      sql`${t.source} <> 'imported' or ${t.status} = 'published'`,
+    ),
+  ],
+);
 
 export const queues = pgTable('queues', {
   id: id(),
@@ -263,16 +299,22 @@ export const webhookDeliveries = pgTable('webhook_deliveries', {
   createdAt: createdAt(),
 });
 
-export const metrics = pgTable('metrics', {
-  id: id(),
-  workspaceId: workspaceId(),
-  postId: uuid('post_id'),
-  connectionId: uuid('connection_id'),
-  metric: text('metric').notNull(), // flexible key — survives impressions→views renames
-  value: numeric('value').notNull(),
-  capturedAt: ts('captured_at').notNull(),
-  createdAt: createdAt(),
-});
+export const metrics = pgTable(
+  'metrics',
+  {
+    id: id(),
+    workspaceId: workspaceId(),
+    postId: uuid('post_id'),
+    connectionId: uuid('connection_id'),
+    metric: text('metric').notNull(), // flexible key — survives impressions→views renames
+    value: numeric('value').notNull(),
+    capturedAt: ts('captured_at').notNull(),
+    createdAt: createdAt(),
+  },
+  // The bulk "newest value per metric per post" read (`getLatestPostMetrics`) and the per-post
+  // series both filter on post_id; without this they scan the whole append-only table.
+  (t) => [index('metrics_post_metric_captured_idx').on(t.postId, t.metric, t.capturedAt)],
+);
 
 export const eventLogs = pgTable('event_logs', {
   id: id(),

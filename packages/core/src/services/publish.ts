@@ -30,6 +30,8 @@ export const PUBLISHABLE_STATUS = 'scheduled';
 export const EARLY_PUBLISH_TOLERANCE_MS = 60_000;
 
 export type PublishRefusal =
+  /** The post was imported from the platform: it is already there, and never ours to send. */
+  | 'imported'
   /** The post is not `scheduled` (cancelled, draft, failed, ...). */
   | 'not_scheduled'
   /** The post was rescheduled to a later time after this job was queued. */
@@ -42,9 +44,11 @@ export type PublishRefusal =
  * A `published` post is not handled here — `publishPost` reports it as the success it already is.
  */
 export function publishRefusal(
-  post: { status: string; publishAt: Date | null },
+  post: { status: string; publishAt: Date | null; source?: string },
   now: Date,
 ): PublishRefusal | null {
+  // First, and whatever its status says: nothing may send a post that is already on the platform.
+  if (post.source === 'imported') return 'imported';
   if (post.status !== PUBLISHABLE_STATUS) return 'not_scheduled';
   // publishAt is null for a publish-now post, which is due the moment it exists.
   if (post.publishAt && post.publishAt.getTime() - now.getTime() > EARLY_PUBLISH_TOLERANCE_MS) {
@@ -57,6 +61,9 @@ function refusalMessage(
   refusal: PublishRefusal,
   post: { status: string; publishAt: Date | null },
 ): string {
+  if (refusal === 'imported') {
+    return 'Publish job ignored: the post was imported from the platform and is never published by this app';
+  }
   return refusal === 'not_due'
     ? `Publish job ignored: the post is now scheduled for ${post.publishAt!.toISOString()}`
     : `Publish job ignored: the post is '${post.status}', not '${PUBLISHABLE_STATUS}'`;
@@ -91,7 +98,9 @@ export async function publishPost(
       .limit(1)
       .for('update');
     if (!post) throw new Error(`post ${postId} not found`);
-    if (post.status === 'published') {
+    // An imported post is `published` too, but it is refused below rather than reported as a
+    // publish that succeeded: no job should ever exist for it, and one that does is worth a log line.
+    if (post.status === 'published' && post.source !== 'imported') {
       return { postId, status: 'published', releaseUrl: post.releaseUrl ?? undefined };
     }
     const refusal = publishRefusal(post, now);

@@ -54,6 +54,7 @@ export {
   PlugsConnected as PlugConnected,
   ShareNetwork,
   ArrowSquareOut,
+  DownloadSimple,
   CheckCircle as CheckIcon,
   Rows,
   PencilSimple,

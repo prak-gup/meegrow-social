@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
-import { desc, eq, inArray } from 'drizzle-orm';
+import { desc, eq, inArray, sql } from 'drizzle-orm';
 import { schema, withWorkspace, type Tx } from '@meegrow-social/db';
 import {
   listMediaQuery,
@@ -166,6 +166,9 @@ export async function listMedia(
     const rows = await tx
       .select()
       .from(schema.media)
+      // The stills copied for imported posts are not uploads: reduced copies of what is already
+      // on the platform, kept only to draw a card. They stay readable by id.
+      .where(sql`${schema.media.meta}->>'imported' is distinct from 'true'`)
       .orderBy(desc(schema.media.createdAt), desc(schema.media.id))
       .limit(query.limit)
       .offset(query.offset);

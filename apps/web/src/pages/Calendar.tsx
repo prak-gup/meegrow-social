@@ -14,16 +14,27 @@ import {
 } from '../lib/calendarGrid';
 import { cn } from '../lib/cn';
 import { formatPublishTime } from '../lib/postDate';
-import { dayEntries, groupThumb, mergePosts, type CalendarEntry } from '../lib/postGroups';
+import {
+  SOURCES,
+  dayEntries,
+  filterBySource,
+  groupChip,
+  groupThumb,
+  isImportedGroup,
+  mergePosts,
+  type CalendarEntry,
+  type SourceKey,
+} from '../lib/postGroups';
+import { importingNote } from '../lib/postImport';
 import { captionSnippet, writeViewMode, type ViewMode } from '../lib/postList';
 import { CHIP } from '../lib/statusChip';
-import { PlatformIcons, STATUS_EDGE, StatusGlyph } from '../components/PostMarks';
+import { ImportedMark, PlatformIcons, STATUS_EDGE, StatusGlyph } from '../components/PostMarks';
 import { usePostGroupActions, type PostChange } from '../components/PostGroupActions';
 import { PostThumb } from '../components/PostThumb';
 import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorState } from '../components/ui/ErrorState';
-import { ViewToggle } from '../components/ui/FilterBar';
+import { FilterSelect, ViewToggle } from '../components/ui/FilterBar';
 import { PageHeader } from '../components/ui/PageHeader';
 import { RowMenu, type RowMenuItem } from '../components/ui/RowMenu';
 import { StatusChip } from '../components/ui/StatusChip';
@@ -54,7 +65,9 @@ const entryTime = (entry: CalendarEntry) => formatPublishTime(new Date(entry.at)
 
 /** What a screen reader hears for an entry: time, status, where it goes, and the caption. */
 const entryLabel = (entry: CalendarEntry) =>
-  `Actions for post at ${entryTime(entry)}, ${CHIP[entry.status].label}: ${captionSnippet(entry.caption)}`;
+  `Actions for post at ${entryTime(entry)}, ${CHIP[groupChip(entry)].label}${
+    isImportedGroup(entry) ? ', imported' : ''
+  }: ${captionSnippet(entry.caption)}`;
 
 /**
  * A post on the month grid: one line — status mark, time, thumbnail, platforms, the caption's
@@ -78,6 +91,7 @@ function CompactEntry({ entry, accounts, items }: EntryProps) {
       <span className="tnum flex-none text-micro font-semibold text-ink">{entryTime(entry)}</span>
       <PostThumb thumb={groupThumb(entry)} size="xs" />
       <PlatformIcons posts={entry.posts} accounts={accounts} size="sm" />
+      {isImportedGroup(entry) && <ImportedMark compact />}
       <span
         className={cn(
           'min-w-0 flex-1 truncate text-micro',
@@ -115,7 +129,8 @@ function RoomyEntry({ entry, accounts, items }: EntryProps) {
             {entryTime(entry)}
           </span>
           <PlatformIcons posts={entry.posts} accounts={accounts} />
-          <StatusChip status={entry.status} className="ml-auto" />
+          {isImportedGroup(entry) && <ImportedMark />}
+          <StatusChip status={groupChip(entry)} className="ml-auto" />
         </span>
         <span
           className={cn(
@@ -428,6 +443,9 @@ export function Calendar() {
   // Bumping `attempt` re-runs the load (retry, or a post moved to another day).
   const [attempt, setAttempt] = useState(0);
   const [accounts, setAccounts] = useState<ReadonlyMap<string, string>>(new Map());
+  // Whole months arrive at once, so the source filter is applied here rather than asked of the API.
+  const [source, setSource] = useState<SourceKey>('');
+  const [importing, setImporting] = useState<string | null>(null);
   const { year, month } = cursor;
   // A reload after a change keeps the grid on screen; only a first load or a new month blanks it.
   const shownKey = useRef('');
@@ -468,13 +486,19 @@ export function Calendar() {
   useEffect(() => {
     void api
       .listConnections()
-      .then((res) => setAccounts(new Map(res.connections.map((c) => [c.id, c.displayName]))))
+      .then((res) => {
+        setAccounts(new Map(res.connections.map((c) => [c.id, c.displayName])));
+        setImporting(importingNote(res.connections.filter((c) => providerVisible(c.provider))));
+      })
       .catch(() => setAccounts(new Map()));
   }, []);
 
   const entryDays = useMemo(
-    () => days.map((d) => ({ date: d.date, entries: dayEntries(d.posts) })),
-    [days],
+    () =>
+      days
+        .map((d) => ({ date: d.date, entries: dayEntries(filterBySource(d.posts, source)) }))
+        .filter((d) => d.entries.length > 0),
+    [days, source],
   );
   const entriesByDate = useMemo(
     () => new Map(entryDays.map((d) => [d.date, d.entries])),
@@ -548,6 +572,12 @@ export function Calendar() {
             >
               Today
             </Button>
+            <FilterSelect
+              label="Source"
+              value={source}
+              onChange={(v) => setSource(v as SourceKey)}
+              options={SOURCES.map((s) => ({ value: s.value, label: s.label }))}
+            />
             <ViewToggle
               label="View"
               value="calendar"
@@ -593,10 +623,21 @@ export function Calendar() {
           message={error}
           onRetry={() => setAttempt((a) => a + 1)}
         />
+      ) : days.length > 0 && entryDays.length === 0 ? (
+        <EmptyState
+          title={`No ${source === 'imported' ? 'imported posts' : 'posts published here'} in ${monthName}`}
+          description="This month has posts from the other source."
+          icon={CalendarBlank}
+          action={
+            <Button variant="outline" onClick={() => setSource('')}>
+              Show all sources
+            </Button>
+          }
+        />
       ) : days.length === 0 ? (
         <EmptyState
-          title={`Nothing scheduled in ${monthName}`}
-          description="Posts you schedule or publish this month will show up here."
+          title={importing ? 'Importing past posts…' : `Nothing scheduled in ${monthName}`}
+          description={importing ?? 'Posts you schedule or publish this month will show up here.'}
           icon={CalendarBlank}
           action={
             <Button asChild>

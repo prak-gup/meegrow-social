@@ -12,6 +12,8 @@ import { platformMeta } from '../lib/platforms';
 import { missingAccountHelp } from '../lib/connectHelp';
 import { InviteLinkRow, useInviteLinks } from '../components/InviteLinks';
 import { ConnectSiteDialog } from '../components/ConnectSiteDialog';
+import { ImportPostsModal } from '../components/ImportPostsModal';
+import { IMPORT_POLL_MS, canImport, importMoving, importRowNote } from '../lib/postImport';
 import { connectionChip, type ChipStatus } from '../lib/statusChip';
 import { canReconnect, expiryLabel, filterConnections, shortDate } from '../lib/connectionRows';
 import { clientHue } from '../lib/clientHue';
@@ -25,7 +27,7 @@ import { RowMenu } from '../components/ui/RowMenu';
 import { Skeleton } from '../components/ui/Skeleton';
 import { StatusChip } from '../components/ui/StatusChip';
 import { Table } from '../components/ui/Table';
-import { Plugs, ArrowClockwise, LinkSimple, Copy, Plus, Trash } from '../lib/icons';
+import { Plugs, ArrowClockwise, DownloadSimple, LinkSimple, Copy, Plus, Trash } from '../lib/icons';
 
 type ConnectMessage = CallbackResult | { status: 'error'; error: string };
 interface PendingPick {
@@ -87,6 +89,8 @@ export function Connections() {
   const [copied, setCopied] = useState(false);
   /** The provider whose connect starts with a question (a site address), and any known answer. */
   const [asking, setAsking] = useState<{ provider: ProviderView; address?: string } | null>(null);
+  // The connection whose "Import past posts" dialog is open.
+  const [importing, setImporting] = useState<string | null>(null);
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState<ChipStatus | ''>('');
   const [platformFilter, setPlatformFilter] = useState('');
@@ -111,6 +115,20 @@ export function Connections() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // While an import is queued or reading, re-read the accounts quietly (no skeleton) so the row
+  // shows it start and finish. Stops by itself once nothing is moving.
+  const importsMoving = conns.some((c) => importMoving(c.import));
+  useEffect(() => {
+    if (!importsMoving) return;
+    const t = window.setInterval(() => {
+      void api
+        .listConnections()
+        .then((c) => setConns(c.connections))
+        .catch(() => undefined);
+    }, IMPORT_POLL_MS);
+    return () => window.clearInterval(t);
+  }, [importsMoving]);
 
   useEffect(() => {
     const onMessage = (e: MessageEvent): void => {
@@ -320,6 +338,14 @@ export function Connections() {
                           <div className="truncate text-caption leading-4 text-muted">
                             {m.label} · {c.externalId}
                           </div>
+                          {importRowNote(c.import) && (
+                            <div
+                              role="status"
+                              className="truncate text-caption leading-4 text-body-ink"
+                            >
+                              {importRowNote(c.import)}
+                            </div>
+                          )}
                           {/* the Status column is hidden on a phone, so the chip rides here */}
                           <StatusChip
                             status={connectionChip(c.health, c.expiresInDays)}
@@ -393,6 +419,15 @@ export function Connections() {
                               label: 'Reconnect',
                               icon: <ArrowClockwise size={14} />,
                               onSelect: () => void connect(provider, c.externalId),
+                            },
+                          ]
+                        : []),
+                      ...(canImport(c)
+                        ? [
+                            {
+                              label: 'Import past posts',
+                              icon: <DownloadSimple size={14} />,
+                              onSelect: () => setImporting(c.id),
                             },
                           ]
                         : []),
@@ -521,6 +556,26 @@ export function Connections() {
         />
       )}
 
+      {/* import past posts — looked up by id so the dialog follows the polled state */}
+      {importing &&
+        (() => {
+          const target = conns.find((c) => c.id === importing);
+          return target ? (
+            <ImportPostsModal
+              connection={target}
+              onStarted={() => {
+                setMsg(
+                  `Importing past posts from ${target.displayName}. This runs in the background — you can leave this page.`,
+                );
+                void api
+                  .listConnections()
+                  .then((c) => setConns(c.connections))
+                  .catch(() => undefined);
+              }}
+              onClose={() => setImporting(null)}
+            />
+          ) : null;
+        })()}
       {/* two-phase account picker */}
       {pick && (
         <Modal title="Choose an account to connect" onClose={() => setPick(null)}>

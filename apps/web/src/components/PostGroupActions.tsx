@@ -232,19 +232,25 @@ export function usePostGroupActions(opts: {
     setDialog({ kind, posts });
   };
 
-  const duplicate = async (group: PostGroup) => {
+  const duplicate = async (group: PostGroup, captionOnly: boolean) => {
     clearMessages();
     try {
       const res = await api.duplicatePostGroup(group.id);
       onDuplicated(res.group);
-      setNotice('Duplicated as a draft. Nothing is scheduled.');
+      setNotice(
+        captionOnly
+          ? 'Duplicated the caption as a draft. Attach the media again before scheduling — an imported post’s files are not kept here.'
+          : 'Duplicated as a draft. Nothing is scheduled.',
+      );
     } catch (e) {
       setError(`Couldn’t duplicate the post: ${e instanceof Error ? e.message : 'try again.'}`);
     }
   };
 
   const items = (group: PostGroup): RowMenuItem[] => {
-    const { editable, cancelable, failed, links } = groupActions(group.posts);
+    // An imported post offers only what is safe for something already live elsewhere: a copy of
+    // its caption as a new draft, and a way to look at it. `groupActions` leaves the rest empty.
+    const { imported, editable, cancelable, failed, links } = groupActions(group.posts);
     const out: RowMenuItem[] = [];
     if (editable.length > 0) {
       out.push({
@@ -266,9 +272,9 @@ export function usePostGroupActions(opts: {
       });
     }
     out.push({
-      label: 'Duplicate as draft',
+      label: imported ? 'Duplicate caption as draft' : 'Duplicate as draft',
       icon: <Copy size={ICON} />,
-      onSelect: () => void duplicate(group),
+      onSelect: () => void duplicate(group, imported),
     });
     // Two accounts on one platform need the account name to be told apart.
     const perPlatform = new Map<string, number>();

@@ -72,6 +72,7 @@ import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Chart, chartColor } from '../components/ui/Chart';
+import { importingAnalyticsNote } from '../lib/postImport';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorState } from '../components/ui/ErrorState';
 import { FilterBar, FilterSelect } from '../components/ui/FilterBar';
@@ -428,6 +429,8 @@ export function Analytics() {
   const names = tiles.some((t) => t.name === FOLLOWERS) ? [...postNames, FOLLOWERS] : postNames;
   const metric = names.includes(wantedMetric) ? wantedMetric : names[0];
   const bestMetric = metric && metric !== FOLLOWERS ? metric : postNames[0];
+  // Of the accounts in view; an import under way explains an empty screen better than "nothing".
+  const importing = useMemo(() => importingAnalyticsNote(all), [all]);
   const nothingYet =
     period !== null &&
     period.current.length === 0 &&
@@ -561,11 +564,13 @@ export function Analytics() {
 
       {nothingYet ? (
         <EmptyState
-          title="Nothing collected yet"
+          // A newly connected account is not empty, it is still arriving.
+          title={importing ? 'Importing past posts…' : 'Nothing collected yet'}
           description={
-            data.undatedPosts?.count
+            importing ??
+            (data.undatedPosts?.count
               ? emptyPeriodNote(data.undatedPosts)
-              : 'Metrics appear within an hour of the first published post. A longer date range may have data.'
+              : 'Metrics appear within an hour of the first published post. A longer date range may have data.')
           }
           icon={ChartLineUp}
         />
@@ -659,6 +664,7 @@ export function Analytics() {
                 key={`${filters.platform}|${filters.connection}|${filters.days}`}
                 period={period}
                 undated={data.undatedPosts}
+                importing={importing}
                 metrics={metrics}
                 connections={all}
               />
@@ -1229,12 +1235,15 @@ function PostHistory({ postId }: { postId: string }) {
 function PostsTable({
   period,
   undated,
+  importing,
   metrics,
   connections,
 }: {
   period: PeriodPosts;
   /** Published posts with no publish time, counted only when the period is empty; null = unknown. */
   undated: { count: number; atLeast: boolean } | null;
+  /** Set while an account's past posts are still being imported: why the period is empty. */
+  importing: string | null;
   metrics: MetricsByPost;
   connections: ConnectionView[];
 }) {
@@ -1352,8 +1361,8 @@ function PostsTable({
           open.has(row.post.id) ? <PostHistory postId={row.post.id} /> : null
         }
         empty={{
-          title: 'No published posts in this period',
-          description: emptyPeriodNote(undated),
+          title: importing ? 'Importing past posts…' : 'No published posts in this period',
+          description: importing ?? emptyPeriodNote(undated),
           icon: Article,
         }}
       />

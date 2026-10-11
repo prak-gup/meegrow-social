@@ -11,9 +11,16 @@ import type {
 import {
   ProviderAuthError,
   ProviderBadRequestError,
+  ProviderRateLimitError,
   ProviderTransientError,
 } from '../../errors.js';
-import { MetaClient, type MetaClientConfig } from './client.js';
+import type {
+  PublishedPostItem,
+  PublishedPostPage,
+  PublishedPostPresence,
+  PublishedPostQuery,
+} from '../published-posts.js';
+import { cursorParams, MetaClient, nextPageCursor, type MetaClientConfig } from './client.js';
 
 /**
  * Instagram Business provider via Facebook Login (issue #13). Shares MetaClient with the Facebook
@@ -54,6 +61,50 @@ const DEFAULT_STATUS_ATTEMPTS = 20;
 const DEFAULT_STATUS_DELAY_MS = 3000;
 
 const PAGE_FIELDS = 'id,name,access_token,instagram_business_account{id,username}';
+
+/** What an import reads of each IG media (RESEARCH meta.md §7.2). */
+const MEDIA_FIELDS =
+  'id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,' +
+  'children{media_type,media_url,thumbnail_url}';
+const MAX_MEDIA_PAGE = 100;
+
+interface GraphIgMedia {
+  id?: string;
+  caption?: string;
+  media_type?: string;
+  media_product_type?: string;
+  media_url?: string;
+  thumbnail_url?: string;
+  permalink?: string;
+  timestamp?: string;
+  children?: { data?: GraphIgMedia[] };
+}
+
+/** One IG media → the shape the importer stores. Null for an item that cannot be one. */
+export function normalizeIgMedia(media: GraphIgMedia): PublishedPostItem | null {
+  const publishedAt = media.timestamp ? new Date(media.timestamp) : null;
+  if (!media.id || !publishedAt || Number.isNaN(publishedAt.getTime())) return null;
+  // Stories are not on this edge (Meta documents `/stories` for them) and their insights last 24h;
+  // an ad is not an organic post. Skipped if one ever turns up.
+  if (media.media_product_type === 'STORY' || media.media_product_type === 'AD') return null;
+  const children = media.children?.data ?? [];
+  // An album's own `media_url` is not documented; its first child's is.
+  const lead = media.media_type === 'CAROUSEL_ALBUM' ? (children[0] ?? media) : media;
+  const video = lead.media_type === 'VIDEO';
+  return {
+    externalPostId: media.id,
+    alternateIds: [],
+    knownUrls: [],
+    caption: media.caption ?? '',
+    publishedAt,
+    permalink: media.permalink ?? null,
+    mediaKind: video ? 'video' : 'image',
+    mediaCount: Math.max(children.length, 1),
+    // `media_url` of a video is the video file, and Meta omits it for copyrighted audio; the still
+    // is `thumbnail_url`. Null when Meta gives neither — the post is imported without a picture.
+    thumbnailUrl: (video ? lead.thumbnail_url : lead.media_url) ?? null,
+  };
+}
 
 interface PageWithIg {
   id: string;
@@ -192,8 +243,9 @@ export class InstagramProvider implements SocialProvider {
         }
       } catch (err) {
         // A retired metric must not sink the whole collection; auth errors still surface so the
-        // analytics sweeper (#9) flags the connection.
-        if (err instanceof ProviderAuthError) throw err;
+        // analytics sweeper (#9) flags the connection, and so does a throttled call —
+        // swallowed, it would record "swept, nothing to report" for a media that was never read.
+        if (err instanceof ProviderAuthError || err instanceof ProviderRateLimitError) throw err;
       }
     }
     return points;
@@ -208,6 +260,44 @@ export class InstagramProvider implements SocialProvider {
     return typeof user.followers_count === 'number'
       ? [{ metric: 'followers', value: user.followers_count, capturedAt: new Date() }]
       : [];
+  }
+
+  /**
+   * The account's own media, newest first, read from the IG user node with the stored Page token
+   * (RESEARCH meta.md §7.2). Stories are not on this edge.
+   */
+  async listPublishedPosts(
+    tokens: AuthTokens,
+    query: PublishedPostQuery,
+  ): Promise<PublishedPostPage> {
+    const params: Record<string, string> = query.cursor
+      ? cursorParams(query.cursor)
+      : {
+          fields: MEDIA_FIELDS,
+          limit: String(Math.min(query.limit, MAX_MEDIA_PAGE)),
+          since: String(Math.floor(query.since.getTime() / 1000)),
+          ...(query.until ? { until: String(Math.ceil(query.until.getTime() / 1000)) } : {}),
+        };
+    const { data, usage } = await this.client.graphGetWithUsage<{
+      data?: GraphIgMedia[];
+      paging?: { next?: string };
+    }>(`${tokens.externalId}/media`, { ...params, access_token: tokens.accessToken });
+    return {
+      items: (data.data ?? []).flatMap((m) => normalizeIgMedia(m) ?? []),
+      nextCursor: nextPageCursor(data.paging?.next),
+      usage,
+    };
+  }
+
+  /** Same rule as Facebook: `gone` only when the media is missing and the account still reads. */
+  async publishedPostPresence(
+    tokens: AuthTokens,
+    externalPostId: string,
+  ): Promise<PublishedPostPresence> {
+    const media = await this.client.nodePresence(externalPostId, tokens.accessToken);
+    if (media !== 'missing') return media;
+    const account = await this.client.nodePresence(tokens.externalId, tokens.accessToken);
+    return account === 'present' ? 'gone' : 'unknown';
   }
 
   // --- internals -------------------------------------------------------------------------------

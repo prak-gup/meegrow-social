@@ -9,22 +9,27 @@ import {
   BULK_METRICS_MAX,
   GROUP_PAGE_SIZE,
   NO_GROUP_FILTERS,
+  SOURCES,
   appendGroups,
   applyPosts,
   compactNumber,
   dayEntries,
   distinctCaptions,
+  filterBySource,
   groupActions,
   groupCaption,
+  groupChip,
   groupError,
   groupMatchesStatus,
   groupMetric,
   groupQuery,
+  groupRemoval,
   groupThumb,
   groupTime,
   groupWhen,
   hasGroupFilters,
   idChunks,
+  isImportedGroup,
   mediaThumb,
   metricsToLoad,
   rangeBounds,
@@ -33,6 +38,8 @@ import {
   visibleGroup,
   type PostGroup,
 } from './postGroups';
+
+const MEDIA_A = '11111111-1111-4111-8111-111111111111';
 
 let n = 0;
 const post = (over: Partial<PostView> = {}): PostView => ({
@@ -400,5 +407,129 @@ describe('metrics on cards', () => {
     expect(compactNumber(4231)).toMatch(/^4[.,]2\s?K$/i);
     expect(idChunks(['a', 'b', 'c'], 2)).toEqual([['a', 'b'], ['c']]);
     expect(idChunks([], 2)).toEqual([]);
+  });
+});
+
+describe('imported posts', () => {
+  const imported = (over: Partial<PostView> = {}) =>
+    post({
+      status: 'published',
+      source: 'imported',
+      releaseUrl: 'https://www.facebook.com/1_2',
+      ...over,
+    });
+  const ours = (over: Partial<PostView> = {}) =>
+    post({ status: 'published', source: 'app', ...over });
+
+  it('sends the source filter to the API, and counts it as a filter', () => {
+    expect(groupQuery({ ...NO_GROUP_FILTERS, source: 'imported' }, 0, 0).source).toBe('imported');
+    expect(groupQuery(NO_GROUP_FILTERS, 0, 0).source).toBeUndefined();
+    expect(hasGroupFilters({ ...NO_GROUP_FILTERS, source: 'app' })).toBe(true);
+    expect(SOURCES.map((s) => s.label)).toEqual(['All sources', 'Published here', 'Imported']);
+  });
+
+  it('filters a calendar day by source; a post with no source is one of ours', () => {
+    const a = imported();
+    const b = ours();
+    const legacy = post({ status: 'published' });
+    expect(filterBySource([a, b, legacy], '')).toEqual([a, b, legacy]);
+    expect(filterBySource([a, b, legacy], 'imported')).toEqual([a]);
+    expect(filterBySource([a, b, legacy], 'app')).toEqual([b, legacy]);
+  });
+
+  it('knows an imported group: every variant imported, and never an empty one', () => {
+    expect(isImportedGroup({ posts: [imported()] })).toBe(true);
+    expect(isImportedGroup({ posts: [imported(), ours()] })).toBe(false);
+    expect(isImportedGroup({ posts: [ours()] })).toBe(false);
+    expect(isImportedGroup({ posts: [] })).toBe(false);
+  });
+
+  it('offers an imported post only a look and a caption copy — never edit, schedule, cancel or retry', () => {
+    const actions = groupActions([imported()]);
+    expect(actions).toMatchObject({ imported: true, editable: [], cancelable: [], failed: [] });
+    expect(actions.links.map((l) => l.url)).toEqual(['https://www.facebook.com/1_2']);
+  });
+
+  it('offers nothing that would change an imported post even if its status read otherwise', () => {
+    // The API can never return these, and refuses the calls anyway; the menu must not offer them.
+    for (const status of ['draft', 'scheduled', 'failed'] as const) {
+      const actions = groupActions([imported({ status })]);
+      expect(actions.editable).toEqual([]);
+      expect(actions.cancelable).toEqual([]);
+      expect(actions.failed).toEqual([]);
+    }
+  });
+
+  it('keeps every action for a post published here', () => {
+    const failed = post({ status: 'failed', source: 'app' });
+    const actions = groupActions([failed, post({ status: 'scheduled' })]);
+    expect(actions.imported).toBe(false);
+    expect(actions.failed).toEqual([failed]);
+    expect(actions.editable).toHaveLength(1);
+  });
+
+  it('drops the link of a post that was removed on its platform: it opens nothing', () => {
+    const gone = imported({ platformRemovedAt: new Date('2026-10-11T09:00:00Z') });
+    expect(groupActions([gone]).links).toEqual([]);
+  });
+
+  it('reads a group as removed only when all of its published variants are gone', () => {
+    const gone = { platformRemovedAt: new Date('2026-10-11T09:00:00Z') };
+    expect(groupRemoval([ours(gone)])).toEqual({ count: 1, all: true });
+    expect(groupRemoval([ours(gone), ours()])).toEqual({ count: 1, all: false });
+    expect(groupRemoval([ours(), imported()])).toEqual({ count: 0, all: false });
+    // A variant that never went out is not what "removed" is about.
+    expect(groupRemoval([ours(gone), post({ status: 'failed' })])).toEqual({ count: 1, all: true });
+  });
+
+  it('shows "Removed on platform" instead of "Published", and leaves other statuses alone', () => {
+    const gone = { platformRemovedAt: new Date('2026-10-11T09:00:00Z') };
+    expect(groupChip({ status: 'published', posts: [imported(gone)] })).toBe('removed');
+    expect(groupChip({ status: 'published', posts: [ours(gone), ours()] })).toBe('published');
+    expect(groupChip({ status: 'published', posts: [imported()] })).toBe('published');
+    expect(
+      groupChip({ status: 'partly_failed', posts: [ours(gone), post({ status: 'failed' })] }),
+    ).toBe('partly_failed');
+  });
+
+  it('shows an imported post by its platform timestamp, and its stored still as the thumbnail', () => {
+    const at = new Date('2026-09-02T07:30:00Z');
+    const image = imported({
+      publishAt: at,
+      media: [
+        { id: MEDIA_A, kind: 'image', url: 'https://media.test/ws/still.jpg', thumbnailUrl: null },
+      ],
+    });
+    const reel = imported({
+      media: [
+        { id: MEDIA_A, kind: 'video', url: null, thumbnailUrl: 'https://media.test/ws/cover.jpg' },
+      ],
+    });
+    const group = (p: PostView): PostGroup => ({
+      id: 'g',
+      caption: p.caption,
+      media: [],
+      status: 'published',
+      posts: [p],
+    });
+    expect(groupWhen(group(image)).date).toEqual(at);
+    expect(groupThumb(group(image))).toEqual({
+      kind: 'image',
+      src: 'https://media.test/ws/still.jpg',
+      count: 1,
+    });
+    expect(groupThumb(group(reel))).toEqual({
+      kind: 'video',
+      src: 'https://media.test/ws/cover.jpg',
+      count: 1,
+    });
+  });
+
+  it('loads metrics for imported posts like any other published post', () => {
+    const p = imported();
+    const groups: PostGroup[] = [
+      { id: 'g', caption: '', media: [], status: 'published', posts: [p] },
+    ];
+    expect(metricsToLoad(groups, new Set())).toEqual([p.id]);
   });
 });

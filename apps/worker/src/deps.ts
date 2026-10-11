@@ -7,6 +7,8 @@ export {
   refreshExpiringTokens,
   sweepAnalytics,
   ANALYTICS_SWEEP_INTERVAL_MS,
+  runDueImports,
+  IMPORT_TICK_INTERVAL_MS,
   sweepStrandedPublishes,
   PUBLISH_SWEEP_INTERVAL_MS,
   PUBLISH_QUEUE,

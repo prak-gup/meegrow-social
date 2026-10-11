@@ -303,6 +303,185 @@ Sources (read 2026-10-11):
 
 ---
 
+## 7. Reading an account's existing posts (import past posts — researched 2026-10-11, documentation only)
+
+**No Graph API call was made for this section.** Everything below is Meta's public developer
+documentation as read on 2026-10-11 (the reference pages now render Graph API **v26.0**; `client.ts`
+still pins `v21.0`). Each claim is marked **[documented]** (the page says it) or **[assumed]** (it does
+not, and the code relies on it anyway). The provider fixtures built from this section are marked
+documentation-built in the tests. §7.6 is the list the first live import must settle.
+
+### 7.1 Facebook: listing a Page's posts
+
+- **Edge: `GET /{page-id}/published_posts`**, with the stored Page token on the Page's own node —
+  `me/accounts` is not involved (§2.4). **[documented]** that the edge exists, returns `PagePost`
+  nodes with `paging`, and is "supported for New Page Experience".
+  https://developers.facebook.com/docs/graph-api/reference/page/published_posts/
+- **Why not `/feed`.** `/feed` is documented as requiring **both** `pages_read_engagement` **and**
+  `pages_read_user_content`; our login configuration does not ask for the second. It also returns
+  visitors' posts and unpublished posts ("Published and unpublished posts will be returned when
+  querying the `/{page-id}/feed` endpoint"). **[documented]**
+  https://developers.facebook.com/docs/graph-api/reference/page/feed/
+- **Permission for `published_posts`.** The reference has no Requirements table; its error list says
+  code 283 "requires the extended permission `pages_read_engagement` and/or `pages_read_user_content`
+  and/or `pages_manage_ads` and/or `pages_manage_metadata`", and "Page Public Content Access … may be
+  required" (that feature is for Pages the app user does not manage). We hold
+  `pages_read_engagement`. **[assumed]** that it alone is enough for a Page the token's owner manages
+  — the "and/or" wording allows it but does not promise it.
+- **Fields** (documented on the feed/`PagePost` reference, same node type): `id`, `message`,
+  `created_time` ("The time the post was initially published"), `permalink_url`, `full_picture` ("URL
+  to a full-sized version of the Photo published in the Post or scraped from a link in the Post. If
+  the photo's largest dimension exceeds 720 pixels, it is resized, with the largest dimension set to
+  720"), `status_type` (`added_photos`, `added_video`, `mobile_status_update`, `shared_story`, …),
+  `is_published`, `attachments` (story attachments: `media_type`, `type`, `target`, `media`, `url`,
+  and a `subattachments` edge). **[documented]**
+  https://developers.facebook.com/docs/graph-api/reference/story-attachment/
+- **Limits.** "The API will return approximately 600 ranked, published posts per year." "You can only
+  read a maximum of 100 feed posts with the `limit` field." **[documented]** Consequence: the list
+  can leave a live post out, so absence from it is never proof of deletion (§7.5).
+- **Paging.** Cursor paging (`paging.cursors.after`, `paging.next`) is shown in the feed sample.
+  Time paging (`since` / `until`, Unix timestamps) is documented in general and its example is a feed:
+  "For consistent results, specify both since and until parameters. Also, it is recommended that the
+  time difference is a maximum of 6 months." Meta also says: "Don't store cursors. Cursors can quickly
+  become invalid if items are added or deleted", and to stop "when the next link no longer appears" —
+  a page can come back short or empty and still have a next page. **[documented]**
+  https://developers.facebook.com/docs/graph-api/results/
+  **[assumed]** that `published_posts` itself honours `since`/`until`: its own reference says "This
+  endpoint doesn't have any parameters". The importer therefore also filters by `created_time` itself
+  and stops at a page wholly older than the window, so it is correct either way; if the parameters
+  are ignored the only cost is reading more pages. The 365-day window is wider than the recommended
+  6 months — unverified.
+- **Newest first** — **[assumed]**. "Ranked" is Meta's word. The importer does not depend on strict
+  order (it filters every item), only on old posts not being served before new ones in bulk.
+- **Reels.** "To get a list of Reels published to your Page, use the Page VideoReels edge."
+  **[documented]** Whether a Page reel also appears in `published_posts` is not stated; this pass does
+  not read `video_reels`, so Page reels may be missing from an import. Known gap.
+- **Ids.** A Page post id is `{page-id}_{post-id}`. Our own publishes store what the publish call
+  returned: `/feed` → that id; `/photos` → `post_id` (falling back to the photo id); `/videos` → the
+  **video** id (`/videos` returns no `post_id`). So a post we published is recognised by the listed id
+  **or** by `attachments.target.id` (the photo/video behind the story), **or** by the link we stored.
+  **[assumed]** that `attachments{target{id}}` returns the same video id `/videos` returned.
+
+### 7.2 Instagram: listing an account's media
+
+- **Edge: `GET /{ig-user-id}/media`.** "Returns a maximum of 10K of the most recently created media."
+  "Story IG Media not supported, use the `GET /<IG_ID>/stories` endpoint instead." "This endpoint
+  supports time-based pagination. Include `since` and `until` query-string parameters with Unix
+  timestamp or `strtotime` data values to define a time range." **[documented]**
+  https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media
+- **Permissions:** `instagram_basic` and `pages_read_engagement` or `pages_show_list` — all held.
+  "If the app user was granted a role on the Page via the Business Manager, you will also need one
+  of: `ads_management`, `business_management`". **[documented]** This matters for the hospital: its
+  Page is business-owned (§2.5), and `business_management` is in the login configuration only because
+  of that. If it is ever removed from the configuration, this read is the first thing to re-test.
+- **Token.** The reference lists a _User_ access token. We hold the Page token. **[assumed]** that
+  the Page token reads this edge — the same token already publishes to and reads insights from the
+  same IG user node in production, which is why it is expected to.
+- **Fields** (IG Media reference): `id`, `caption`, `media_type` (`CAROUSEL_ALBUM`, `IMAGE`,
+  `VIDEO`), `media_product_type` (`AD`, `FEED`, `STORY`, `REELS`), `media_url`, `thumbnail_url`
+  ("Only available on `VIDEO` media"), `permalink`, `timestamp` (ISO 8601, UTC), and the `children`
+  edge for albums. "The `media_url` field is omitted from responses if the media contains copyrighted
+  material or has been flagged for a copyright violation. Examples of copyrighted material can
+  include audio on Reels." "Some fields, such as `permalink`, cannot be used on photos within albums
+  (children)." **[documented]**
+  https://developers.facebook.com/docs/instagram-platform/reference/instagram-media
+- **Media-URL expiry.** What Meta says: "Instagram Platform leverages Content Delivery Network (CDN)
+  URLs … The CDN URL is privacy-aware and will not return the media when the content has been deleted
+  or has expired." **[documented]**
+  https://developers.facebook.com/docs/instagram-platform/overview/
+  What it does **not** say is how long a `media_url` / `thumbnail_url` (or a Facebook `full_picture`)
+  stays valid. That these are signed URLs carrying an expiry (`oe=…`) and stop working within days is
+  widely observed and **[assumed]** here. **Decision: never store the platform's URL.** The importer
+  fetches one still per post at import time (IG: `media_url` for an image, `thumbnail_url` for a
+  video, the first child for an album; FB: `full_picture`), writes it to our own storage, and stores
+  our URL. No refresh job, no broken thumbnails later; cost is one small image per imported post.
+  A still that cannot be fetched leaves the post imported without a picture.
+- **Ids.** The id `media_publish` returns is the media id this edge lists. **[assumed]**
+
+### 7.3 Rate limits relevant to a backfill
+
+- **Which limit applies.** "Pages API requests made with … system user or page access tokens are
+  subject to Business Use Case Rate Limits"; Instagram Platform requests are BUC-limited too. Every
+  call we make uses a Page token, so everything here is BUC. **[documented]**
+  https://developers.facebook.com/docs/graph-api/overview/rate-limiting/
+- **Pages:** "Calls within 24 hours = 4800 \* Number of Engaged Users" (users who engaged with the
+  Page per 24 hours). **Instagram:** "Calls within 24 hours = 4800 \* Number of Impressions", counted
+  per app-and-app-user pair. **[documented]** Both scale with the account's own activity, so a quiet
+  account has a small allowance; the minimum is not stated for these two (Threads documents a floor
+  of 10 impressions; **[assumed]** nothing about ours).
+- **Headers.** `X-Business-Use-Case-Usage`: a JSON object keyed by business-object id, each an array
+  of `{ type, call_count, total_cputime, total_time, estimated_time_to_regain_access }` —
+  `call_count`, `total_cputime`, `total_time` are percentages ("When total_cputime reaches 100, calls
+  may be throttled"); `estimated_time_to_regain_access` is "Time, in minutes, until calls will not
+  longer be throttled"; `type` is e.g. `pages` or `instagram`. `X-App-Usage`: `{ call_count,
+total_cputime, total_time }`, also percentages. Usage headers appear "once enough calls have been
+  made to an endpoint", so their absence means "not reported", not "zero". **[documented]**
+- **Error codes when throttled:** `80001` "Page calls made with a Page or System User access token",
+  `80002` Instagram, `32` Page calls with a User token, `4` app, `17` user, `613` custom.
+  **[documented]** Before this change `mapMetaError` did not know 80001/80002 and treated them as a
+  permanent bad request — a throttled publish failed for good instead of retrying.
+- **Best practice Meta states:** "When the limit has been reached, stop making API calls. Continuing
+  to make calls will continue to increase your call count." **[documented]**
+- **What the importer does with this:** pages of 25 with a second between them; after every page it
+  reads the headers and **stops at 50%** of any figure (or whenever Meta names a regain time), pauses
+  at least 30 minutes, and continues from the oldest post it read. Being throttled (80001/80002) is
+  the same pause, never a failed import. 50% is our choice, not Meta's: publishing shares the
+  allowance and must always find room.
+
+### 7.4 How insights age
+
+- Instagram media insights: "Data used to calculate metrics can be delayed up to 48 hours." "Metrics
+  data is stored for up to 2 years." "Insights data is not available for any media within an
+  [album]." "Story media metrics are only available for 24 hours." `impressions` is deprecated for
+  media created after 2 July 2024. **[documented]**
+  https://developers.facebook.com/docs/instagram-platform/reference/instagram-media/insights
+- Consequences: an imported IG post older than two years has no insights (a 365-day import is well
+  inside that); an album is polled as a whole, never per child; stories are not imported at all
+  (they are not on `/media`, and their insights are gone after a day).
+- Facebook post insights for old posts: no ageing rule found in the reference. **[assumed]** that
+  `lifetime` metrics remain readable for a post of any age.
+- **Polling cadence that follows:** a lifetime total barely moves once a post is months old, so
+  `POST_POLL_TIERS` polls hourly for 48 h, daily to 30 days, weekly to 90 days, every 4 weeks after —
+  and at most 25 posts per account per hourly sweep, newest first. 500 imported posts therefore take
+  about 20 sweeps to get their first numbers, at ≤150 calls per account per hour, instead of
+  ~3,000 calls in one.
+
+### 7.5 A post deleted on the platform
+
+- Reading a deleted object's node: Meta's error reference lists code 100 as "Invalid parameter" and
+  does not document a specific answer for a missing object. The answer widely seen is
+  `code 100, error_subcode 33`: "Unsupported get request. Object with ID '…' does not exist, cannot
+  be loaded due to missing permissions, or does not support this operation." **[assumed]** — and the
+  message itself says a missing _permission_ produces the same answer.
+  https://developers.facebook.com/docs/graph-api/guides/error-handling/
+- So a post is marked removed only when **both** hold: a complete read of a window did not list it,
+  **and** its node answers 100/33 (or HTTP 404) while the account's own node still reads with the
+  same token. Either signal alone is not trusted. Anything else is "unknown" and nothing is marked.
+- If Meta answers a deleted post differently from 100/33, deletions are simply never detected (the
+  safe failure). That is the thing to check live: delete a test post and see what its node returns.
+
+### 7.6 What the first live import must confirm
+
+Against the hospital's Page and Instagram account, watching `event_logs` (`kind = 'connection'`,
+`status` starting `import_`) and the connection's `import` state:
+
+1. `published_posts` answers with `pages_read_engagement` alone — not error 283 / 200.
+2. `since` / `until` are honoured on `published_posts` (the run ends after the window, not after
+   reading a year of posts).
+3. `{ig-user-id}/media` answers with the Page token (not a "requires a user token" error), and, with
+   `business_management` in the configuration, does not ask for more.
+4. A post published from this app is **matched, not duplicated**: text, photo, multi-photo and above
+   all **video** (the video-id-vs-story-id case) on Facebook; image and reel on Instagram. Check
+   `matched` in the result and that no post appears twice in Content.
+5. Thumbnails load from our own storage a week later (the platform's URLs would have expired).
+6. The owner's deleted Facebook test post reads "Removed on platform" after a run — or, if it does
+   not, what `GET /{post-id}?fields=id` returned for it.
+7. Which usage headers actually arrive, and their values after a 90-day backfill.
+8. Whether Page reels are in the list at all.
+9. Re-record the fixtures in `providers/meta/published-posts.test.ts` from the real responses.
+
+---
+
 ## Key source URLs
 - IG Platform overview: https://developers.facebook.com/docs/instagram-platform/overview/
 - IG content publishing: https://developers.facebook.com/docs/instagram-platform/content-publishing/
@@ -318,3 +497,10 @@ Sources (read 2026-10-11):
 - Video API: https://developers.facebook.com/docs/video-api/
 - Page insights: https://developers.facebook.com/docs/graph-api/reference/insights/
 - Page Insights deprecations (Aug 2025): https://developers.facebook.com/blog/post/2025/08/15/page-insights-api-updates/
+- Page published posts: https://developers.facebook.com/docs/graph-api/reference/page/published_posts/
+- Page feed (fields, limits): https://developers.facebook.com/docs/graph-api/reference/page/feed/
+- IG user media: https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media
+- IG media node: https://developers.facebook.com/docs/instagram-platform/reference/instagram-media
+- IG media insights: https://developers.facebook.com/docs/instagram-platform/reference/instagram-media/insights
+- Rate limits and usage headers: https://developers.facebook.com/docs/graph-api/overview/rate-limiting/
+- Paginated results: https://developers.facebook.com/docs/graph-api/results/

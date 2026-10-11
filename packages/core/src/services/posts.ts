@@ -21,7 +21,7 @@ import {
   type UpdatePostInput,
 } from '@meegrow-social/contracts';
 import { withWorkspace, schema, type Tx } from '@meegrow-social/db';
-import { and, asc, desc, eq, gte, ilike, inArray, isNotNull, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, ilike, inArray, isNotNull, lte, ne, sql } from 'drizzle-orm';
 import { DateTime } from 'luxon';
 import { getScheduler } from './scheduler.js';
 import { nextFreeSlotForQueue } from './queues.js';
@@ -31,6 +31,22 @@ import { ProviderBadRequestError } from '../errors.js';
 
 /** Thrown when a lifecycle op targets a post in a state that doesn't allow it (→ 409 in the API). */
 export class PostStateError extends Error {}
+
+/** `posts.source` of a post found on the platform by a past-post import (`post-import.ts`). */
+export const IMPORTED_SOURCE = 'imported';
+
+/**
+ * An imported post is already live on the platform and was never ours to send: it cannot be
+ * edited, rescheduled, cancelled or retried here. Checked before the status in every lifecycle
+ * call, so the reason given is this one and not a status that merely happens to refuse it.
+ */
+function assertNotImported(row: { source: string }, verb: string): void {
+  if (row.source === IMPORTED_SOURCE) {
+    throw new PostStateError(
+      `an imported post cannot be ${verb}: it was published on the platform, not by this app`,
+    );
+  }
+}
 
 const CANCELABLE_STATUSES = new Set(['draft', 'scheduled']);
 const EDITABLE_STATUSES = new Set(['draft', 'scheduled']);
@@ -345,6 +361,7 @@ export async function listPosts(
           query.status ? eq(schema.posts.status, query.status) : undefined,
           query.provider ? eq(schema.posts.provider, query.provider) : undefined,
           query.connectionId ? eq(schema.posts.connectionId, query.connectionId) : undefined,
+          query.source ? eq(schema.posts.source, query.source) : undefined,
           query.from ? gte(schema.posts.publishAt, query.from) : undefined,
           query.to ? lte(schema.posts.publishAt, query.to) : undefined,
         ),
@@ -372,12 +389,13 @@ export async function cancelPost(workspaceId: string, postId: string): Promise<b
     // Row lock: a publish job that already holds this post finishes first, and we then read what it
     // committed — so a post that just went out is refused below, never overwritten as `cancelled`.
     const [row] = await tx
-      .select({ status: schema.posts.status })
+      .select({ status: schema.posts.status, source: schema.posts.source })
       .from(schema.posts)
       .where(eq(schema.posts.id, postId))
       .limit(1)
       .for('update');
     if (!row) return 'missing' as const;
+    assertNotImported(row, 'cancelled');
     if (!CANCELABLE_STATUSES.has(row.status)) return row.status;
     await tx.update(schema.posts).set({ status: 'cancelled' }).where(eq(schema.posts.id, postId));
     return 'cancelled' as const;
@@ -412,6 +430,7 @@ export async function updatePost(
       .limit(1)
       .for('update');
     if (!row) return null;
+    assertNotImported(row, 'edited or rescheduled');
     if (!EDITABLE_STATUSES.has(row.status)) {
       throw new PostStateError(`a '${row.status}' post cannot be edited`);
     }
@@ -486,6 +505,7 @@ export async function retryPost(workspaceId: string, postId: string): Promise<Po
     const [row] = await tx
       .select({
         status: schema.posts.status,
+        source: schema.posts.source,
         error: schema.posts.error,
         publishAt: schema.posts.publishAt,
       })
@@ -494,11 +514,13 @@ export async function retryPost(workspaceId: string, postId: string): Promise<Po
       .limit(1)
       .for('update');
     if (!row) return 'missing' as const;
+    assertNotImported(row, 'retried');
     if (row.status !== 'failed') return row.status;
     const [updated] = await tx
       .update(schema.posts)
       .set({ status: 'scheduled', error: null })
-      .where(eq(schema.posts.id, postId))
+      // Belt and braces with the check above: an imported row is never moved to `scheduled`.
+      .where(and(eq(schema.posts.id, postId), ne(schema.posts.source, IMPORTED_SOURCE)))
       .returning();
     return { updated: (await toViews(tx, [updated!]))[0]!, previousError: row.error };
   });
@@ -537,6 +559,9 @@ export async function retryPost(workspaceId: string, postId: string): Promise<Po
  * Always a draft, whatever the source's status or schedule: duplicating a published or scheduled
  * post must never publish by itself. Any status may be duplicated (reposting a published post is
  * the main use). Goes through `createPost`, so the provider's rules and idempotency apply as usual.
+ *
+ * An imported post may be duplicated too — it is how an operator reuses one — and the copy is an
+ * ordinary draft of this app (`source: 'app'`) carrying the CAPTION ONLY: see `copyableMedia`.
  */
 export async function duplicatePost(
   workspaceId: string,
@@ -553,7 +578,7 @@ export async function duplicatePost(
     workspaceId,
     {
       caption: source.caption,
-      media: (source.media as MediaRef[] | null) ?? [],
+      media: copyableMedia(source),
       variants: [
         {
           connectionId: source.connectionId,
@@ -712,6 +737,7 @@ export async function listPostGroups(
           query.status ? eq(schema.posts.status, query.status) : undefined,
           query.provider ? eq(schema.posts.provider, query.provider) : undefined,
           query.connectionId ? eq(schema.posts.connectionId, query.connectionId) : undefined,
+          query.source ? eq(schema.posts.source, query.source) : undefined,
           query.from ? gte(schema.posts.publishAt, query.from) : undefined,
           query.to ? lte(schema.posts.publishAt, query.to) : undefined,
           query.q ? ilike(schema.posts.caption, `%${likeLiteral(query.q)}%`) : undefined,
@@ -760,12 +786,15 @@ export async function duplicatePostGroup(
     workspaceId,
     {
       caption: source.group.caption,
-      media: mediaRefsOf(source.group.media),
+      // A group holding an imported post has only that post (imports never pair platforms).
+      media: source.posts.some((p) => p.source === IMPORTED_SOURCE)
+        ? []
+        : mediaRefsOf(source.group.media),
       variants: source.posts.map((p) => ({
         connectionId: p.connectionId,
         provider: p.provider as PostView['provider'],
         caption: p.caption,
-        media: mediaRefsOf(p.media),
+        media: copyableMedia(p),
         options: parseStoredOptions(p.options) ?? undefined,
       })),
       schedule: { type: 'draft' },
@@ -788,9 +817,28 @@ type PostRow = typeof schema.posts.$inferSelect;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Media refs as stored in a jsonb column. Anything that is not a list of refs reads as none. */
-function mediaRefsOf(value: unknown): MediaRef[] {
-  return Array.isArray(value) ? (value as MediaRef[]) : [];
+/**
+ * Media refs as stored in a jsonb column. Anything that is not a list of refs reads as none. An
+ * imported post's ref may also carry `thumbnailUrl` — the stored still of a video we do not hold.
+ */
+type StoredMediaRef = MediaRef & { thumbnailUrl?: string };
+
+function mediaRefsOf(value: unknown): StoredMediaRef[] {
+  return Array.isArray(value) ? (value as StoredMediaRef[]) : [];
+}
+
+/**
+ * The media a copy of this post may carry. None for an imported post: what is stored for it is a
+ * reduced still for the card (at most 720px, and for a video not the video at all), and a draft
+ * that silently carried that would publish a thumbnail. The operator attaches the original.
+ */
+function copyableMedia(row: Pick<PostRow, 'source' | 'media'>): MediaRef[] {
+  if (row.source === IMPORTED_SOURCE) return [];
+  return mediaRefsOf(row.media).map(({ mediaId, kind, url }) => ({
+    mediaId,
+    kind,
+    ...(url ? { url } : {}),
+  }));
 }
 
 /**
@@ -807,7 +855,9 @@ async function storedMediaUrls(
     ...new Set(
       refLists
         .flat()
-        .filter((r) => !r.url && UUID.test(r.mediaId))
+        // A ref with a still of its own (an imported video) names the still's media row: its url
+        // is a picture, never this video's.
+        .filter((r) => !r.url && !(r as StoredMediaRef).thumbnailUrl && UUID.test(r.mediaId))
         .map((r) => r.mediaId),
     ),
   ];
@@ -825,7 +875,7 @@ async function storedMediaUrls(
  * post and belongs to its first video; nothing else has a thumbnail today.
  */
 export function toMediaViews(
-  refs: readonly MediaRef[],
+  refs: readonly StoredMediaRef[],
   urls: ReadonlyMap<string, string | null>,
   coverUrl?: string,
 ): PostMediaView[] {
@@ -836,8 +886,10 @@ export function toMediaViews(
     return {
       id: ref.mediaId,
       kind: ref.kind,
-      url: ref.url ?? urls.get(ref.mediaId) ?? null,
-      thumbnailUrl: cover,
+      // A ref with its own still (an imported video) has no file of ours behind it: its media id
+      // names the still, which must not be offered as the video's url.
+      url: ref.url ?? (ref.thumbnailUrl ? null : urls.get(ref.mediaId)) ?? null,
+      thumbnailUrl: ref.thumbnailUrl ?? cover,
     };
   });
 }
@@ -870,6 +922,8 @@ function toView(row: PostRow, urls: ReadonlyMap<string, string | null>): PostVie
     error: row.error,
     queueId: row.queueId,
     createdAt: row.createdAt,
+    source: row.source === IMPORTED_SOURCE ? 'imported' : 'app',
+    platformRemovedAt: row.platformRemovedAt,
     media: toMediaViews(mediaRefsOf(row.media), urls, coverUrlOf(options)),
   };
 }

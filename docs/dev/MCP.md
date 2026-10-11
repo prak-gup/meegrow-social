@@ -89,7 +89,7 @@ returns a normal result with `valid: false` and the problems listed in `issues`.
 
 ## 4. Tools
 
-26 tools. **Read** changes nothing. **Write** changes data in the workspace. **Publish** can put content on a
+27 tools. **Read** changes nothing. **Write** changes data in the workspace. **Publish** can put content on a
 real social account.
 
 | Tool                      | What it does                                                                                          | Effect  |
@@ -99,6 +99,7 @@ real social account.
 | `list_connections`        | Connected social accounts with `health` and `expiresInDays`                                           | Read    |
 | `get_connection`          | One connected account by id, same fields                                                              | Read    |
 | `connection_health`       | Status, reason and recommended action per account (or for one), from stored state only                | Read    |
+| `import_past_posts`       | Queue an import of the posts an account already has on the platform (30/90/180/365 days); reads only  | Write   |
 | `list_posts`              | Posts, filtered by status / provider / connectionId / from / to, with limit + offset                  | Read    |
 | `get_post`                | One per-platform post: status, schedule, `releaseUrl` or `error`                                      | Read    |
 | `get_post_group`          | Everything one `create_post` call made, with shared caption and media                                 | Read    |
@@ -204,14 +205,15 @@ Notes that are easy to get wrong:
 
 Each of these calls the same `core` function as the tool beside it.
 
-| REST                               | MCP tool                 | Notes                                                                                 |
-| ---------------------------------- | ------------------------ | ------------------------------------------------------------------------------------- |
-| `POST /v1/posts/:id/retry`         | `retry_post`             | No body. `200 {"post":…}`; `404` unknown post; `409` when the post is not `failed`    |
-| `POST /v1/posts/validate`          | `validate_post`          | Body of `POST /v1/posts`. Always `200 {"valid":…,"issues":[…]}`, even for a bad body  |
-| `GET /v1/connections/health`       | `connection_health`      | `200 {"connections":[…]}`                                                             |
-| `GET /v1/connections/:id/health`   | `connection_health` + id | `200 {"health":…}`; `404` unknown connection                                          |
-| `GET /v1/queues/:id/slots?count=N` | `preview_queue_slots`    | `count` 1–50, default 5. `404` unknown queue; `400` inactive queue or bad `count`     |
-| `POST /v1/posts`                   | `create_post`            | Now `404 {"error":"connection <id> not found"}` for a connection not in the workspace |
+| REST                               | MCP tool                 | Notes                                                                                   |
+| ---------------------------------- | ------------------------ | --------------------------------------------------------------------------------------- |
+| `POST /v1/posts/:id/retry`         | `retry_post`             | No body. `200 {"post":…}`; `404` unknown post; `409` when the post is not `failed`      |
+| `POST /v1/posts/validate`          | `validate_post`          | Body of `POST /v1/posts`. Always `200 {"valid":…,"issues":[…]}`, even for a bad body    |
+| `GET /v1/connections/health`       | `connection_health`      | `200 {"connections":[…]}`                                                               |
+| `GET /v1/connections/:id/health`   | `connection_health` + id | `200 {"health":…}`; `404` unknown connection                                            |
+| `POST /v1/connections/:id/import`  | `import_past_posts`      | Body `{"windowDays":90}`. `202 {"import":…}`; `404` unknown; `400` unsupported platform |
+| `GET /v1/queues/:id/slots?count=N` | `preview_queue_slots`    | `count` 1–50, default 5. `404` unknown queue; `400` inactive queue or bad `count`       |
+| `POST /v1/posts`                   | `create_post`            | Now `404 {"error":"connection <id> not found"}` for a connection not in the workspace   |
 
 ## 6. REST modules with no MCP tool
 

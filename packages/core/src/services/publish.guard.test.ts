@@ -28,6 +28,7 @@ const basePost = {
   media: [],
   options: null,
   releaseUrl: null as string | null,
+  source: 'app',
 };
 
 const state = {
@@ -126,6 +127,48 @@ describe('publishRefusal', () => {
       publishRefusal({ status: 'scheduled', publishAt: at(EARLY_PUBLISH_TOLERANCE_MS + 1) }, NOW),
     ).toBe('not_due');
   });
+});
+
+describe('an imported post can never be published', () => {
+  const STATUSES = ['published', 'scheduled', 'draft', 'failed', 'publishing', 'cancelled'];
+
+  it.each(STATUSES)('publishRefusal refuses an imported post that reads %s', (status) => {
+    // `scheduled` and due is the case that matters: a row that looks exactly like one to send.
+    expect(publishRefusal({ status, publishAt: null, source: 'imported' }, NOW)).toBe('imported');
+    expect(publishRefusal({ status, publishAt: minutes(-5), source: 'imported' }, NOW)).toBe(
+      'imported',
+    );
+  });
+
+  it('does not refuse a post of this app for its source', () => {
+    expect(publishRefusal({ status: 'scheduled', publishAt: null, source: 'app' }, NOW)).toBeNull();
+  });
+
+  it.each(STATUSES)(
+    'publishPost never calls the provider for an imported post that reads %s',
+    async (status) => {
+      state.post = {
+        ...basePost,
+        status,
+        source: 'imported',
+        releaseUrl: 'https://www.facebook.com/1112223334_9',
+      };
+      expect(await publishPost('ws-1', 'post-1', NOW)).toEqual({
+        postId: 'post-1',
+        status: 'skipped',
+        skipped: 'imported',
+      });
+      expect(post).not.toHaveBeenCalled();
+      // The post row is not written at all — not published "again", not failed.
+      expect(committedTo(schema.posts)).toEqual([]);
+      expect(committedTo(schema.eventLogs)[0]!.values).toMatchObject({
+        kind: 'publish',
+        status: 'skipped',
+        message:
+          'Publish job ignored: the post was imported from the platform and is never published by this app',
+      });
+    },
+  );
 });
 
 describe('publishPost status guard', () => {

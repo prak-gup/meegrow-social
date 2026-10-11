@@ -1,6 +1,7 @@
 import {
   ProviderAuthError,
   ProviderBadRequestError,
+  ProviderRateLimitError,
   ProviderTransientError,
 } from '../../errors.js';
 
@@ -24,6 +25,8 @@ export type FetchLike = (
   ok: boolean;
   status: number;
   json: () => Promise<unknown>;
+  /** Only the rate-limit usage headers are read, and only by the calls that page a listing. */
+  headers?: { get(name: string): string | null };
 }>;
 
 export interface MetaClientConfig {
@@ -51,8 +54,12 @@ interface MetaErrorBody {
  */
 const AUTH_CODES = new Set([102, 190, 200, 10, 2500]);
 const AUTH_SUBCODES = new Set([458, 459, 460, 463, 464, 467, 492]);
-/** Throttling + transient upstream. 4 = app rate limit, 17 = user rate limit, 32/613 = page/API limit. */
-const RATE_LIMIT_CODES = new Set([4, 17, 32, 341, 613]);
+/**
+ * Throttling + transient upstream. 4 = app rate limit, 17 = user rate limit, 32/613 = page/API limit.
+ * 80001 / 80002 are the Business Use Case limits — Pages calls made with a Page token, and the
+ * Instagram Platform (RESEARCH meta.md §7.3) — which is what every call of ours runs under.
+ */
+const RATE_LIMIT_CODES = new Set([4, 17, 32, 341, 613, 80001, 80002]);
 /** 1 = unknown, 2 = service temporarily unavailable — Meta's own "try again" codes. */
 const TRANSIENT_CODES = new Set([1, 2]);
 
@@ -71,10 +78,10 @@ export function mapMetaError(status: number, body: unknown): Error {
 
   if (subcode !== undefined && AUTH_SUBCODES.has(subcode)) return new ProviderAuthError(detail);
   if (code !== undefined && AUTH_CODES.has(code)) return new ProviderAuthError(detail);
-  if (code !== undefined && RATE_LIMIT_CODES.has(code)) return new ProviderTransientError(detail);
+  if (code !== undefined && RATE_LIMIT_CODES.has(code)) return new ProviderRateLimitError(detail);
   if (code !== undefined && TRANSIENT_CODES.has(code)) return new ProviderTransientError(detail);
   if (status >= 500) return new ProviderTransientError(detail);
-  if (status === 429) return new ProviderTransientError(detail);
+  if (status === 429) return new ProviderRateLimitError(detail);
   return new ProviderBadRequestError(detail);
 }
 
@@ -120,7 +127,53 @@ export class MetaClient {
     return this.request<T>(url, 'POST', new URLSearchParams(params).toString());
   }
 
+  /**
+   * A GET that also reports the rate-limit usage Meta put on the response. For the calls that page
+   * through a listing, where the caller has to stop before the limit rather than at it.
+   */
+  async graphGetWithUsage<T>(
+    path: string,
+    params: Record<string, string>,
+  ): Promise<{ data: T; usage: MetaUsage | null }> {
+    const qs = new URLSearchParams(params).toString();
+    const { res, parsed } = await this.send(`${GRAPH_HOST}/${this.version}/${path}?${qs}`, 'GET');
+    if (!res.ok) throw mapMetaError(res.status, parsed);
+    return { data: parsed as T, usage: readMetaUsage(res.headers) };
+  }
+
+  /**
+   * Does the Graph still have this object? `missing` only for Meta's "does not exist" answer
+   * (code 100, subcode 33, or a 404); every other failure is `unknown`. Meta gives that same answer
+   * for an object the token may not read, so a caller must first know the token works.
+   */
+  async nodePresence(id: string, accessToken: string): Promise<'present' | 'missing' | 'unknown'> {
+    const qs = new URLSearchParams({ fields: 'id', access_token: accessToken }).toString();
+    let sent: Awaited<ReturnType<MetaClient['send']>>;
+    try {
+      sent = await this.send(`${GRAPH_HOST}/${this.version}/${id}?${qs}`, 'GET');
+    } catch {
+      return 'unknown';
+    }
+    if (sent.res.ok)
+      return (sent.parsed as { id?: string } | undefined)?.id ? 'present' : 'unknown';
+    const err = (sent.parsed as MetaErrorBody | undefined)?.error;
+    if (sent.res.status === 404) return 'missing';
+    return err?.code === 100 && err.error_subcode === NO_SUCH_OBJECT_SUBCODE
+      ? 'missing'
+      : 'unknown';
+  }
+
   private async request<T>(url: string, method: string, body?: string): Promise<T> {
+    const { res, parsed } = await this.send(url, method, body);
+    if (!res.ok) throw mapMetaError(res.status, parsed);
+    return parsed as T;
+  }
+
+  private async send(
+    url: string,
+    method: string,
+    body?: string,
+  ): Promise<{ res: Awaited<ReturnType<FetchLike>>; parsed: unknown }> {
     let res: Awaited<ReturnType<FetchLike>>;
     try {
       res = await this.fetchImpl(url, { method, ...(body !== undefined ? { body } : {}) });
@@ -131,8 +184,7 @@ export class MetaClient {
       );
     }
     const parsed: unknown = await res.json().catch(() => undefined);
-    if (!res.ok) throw mapMetaError(res.status, parsed);
-    return parsed as T;
+    return { res, parsed };
   }
 
   /**
@@ -252,4 +304,88 @@ function targetId(raw: unknown): string[] {
   if (typeof raw === 'string' && /^\d+$/.test(raw)) return [raw];
   if (typeof raw === 'number' && Number.isSafeInteger(raw) && raw > 0) return [String(raw)];
   return [];
+}
+
+/** "Unsupported get request. Object with ID '…' does not exist, cannot be loaded due to missing permissions, …" */
+const NO_SUCH_OBJECT_SUBCODE = 33;
+
+/** Rate-limit usage as Meta reports it: the worst figure across everything on the response. */
+export interface MetaUsage {
+  /** Highest of `call_count`, `total_cputime`, `total_time` — each a percentage of the allowance. */
+  percent: number;
+  /** `estimated_time_to_regain_access`, minutes; null when Meta is not throttling. */
+  regainAccessMinutes: number | null;
+}
+
+const USAGE_FIELDS = ['call_count', 'total_cputime', 'total_time'] as const;
+
+/**
+ * Read `X-Business-Use-Case-Usage` (calls made with a Page token, and the Instagram Platform) and
+ * `X-App-Usage` (the app-wide limit) off a response — RESEARCH meta.md §7.3. Meta sends them only
+ * once an endpoint has had enough calls, so null means "not reported", not "no usage". Malformed
+ * headers are ignored: a parsing problem must never fail the call that carried them.
+ */
+export function readMetaUsage(
+  headers: { get(name: string): string | null } | undefined,
+): MetaUsage | null {
+  if (!headers) return null;
+  const entries: Array<Record<string, unknown>> = [];
+  const parse = (name: string): unknown => {
+    const raw = headers.get(name);
+    if (!raw) return undefined;
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      return undefined;
+    }
+  };
+  const app = parse('x-app-usage');
+  if (app && typeof app === 'object') entries.push(app as Record<string, unknown>);
+  // Keyed by business object id, each holding one entry per rate-limit type.
+  const buc = parse('x-business-use-case-usage');
+  if (buc && typeof buc === 'object') {
+    for (const list of Object.values(buc as Record<string, unknown>)) {
+      if (!Array.isArray(list)) continue;
+      for (const entry of list) {
+        if (entry && typeof entry === 'object') entries.push(entry as Record<string, unknown>);
+      }
+    }
+  }
+  let percent: number | null = null;
+  let regain: number | null = null;
+  for (const entry of entries) {
+    for (const field of USAGE_FIELDS) {
+      const value = entry[field];
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        percent = Math.max(percent ?? 0, value);
+      }
+    }
+    const wait = entry.estimated_time_to_regain_access;
+    if (typeof wait === 'number' && wait > 0) regain = Math.max(regain ?? 0, wait);
+  }
+  if (percent === null && regain === null) return null;
+  return { percent: percent ?? 0, regainAccessMinutes: regain };
+}
+
+/**
+ * The query of a Graph `paging.next` link as a cursor: everything Meta says is needed for the next
+ * page (cursor or time bounds, whichever the edge pages by) minus the access token, which must not
+ * travel in a value that gets logged or stored. Null when there is no next page.
+ */
+export function nextPageCursor(next: unknown): string | null {
+  if (typeof next !== 'string' || !next) return null;
+  let url: URL;
+  try {
+    url = new URL(next);
+  } catch {
+    return null;
+  }
+  url.searchParams.delete('access_token');
+  const cursor = url.searchParams.toString();
+  return cursor || null;
+}
+
+/** The inverse of `nextPageCursor`: the params to send, the token added back by the caller. */
+export function cursorParams(cursor: string): Record<string, string> {
+  return Object.fromEntries(new URLSearchParams(cursor));
 }

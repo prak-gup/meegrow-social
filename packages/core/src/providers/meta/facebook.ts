@@ -8,8 +8,18 @@ import type {
   ProviderAccount,
   SocialProvider,
 } from '../types.js';
-import { ProviderAuthError, ProviderBadRequestError } from '../../errors.js';
-import { MetaClient, type MetaClientConfig } from './client.js';
+import type {
+  PublishedPostItem,
+  PublishedPostPage,
+  PublishedPostPresence,
+  PublishedPostQuery,
+} from '../published-posts.js';
+import {
+  ProviderAuthError,
+  ProviderBadRequestError,
+  ProviderRateLimitError,
+} from '../../errors.js';
+import { cursorParams, MetaClient, nextPageCursor, type MetaClientConfig } from './client.js';
 
 /**
  * Facebook Pages provider (issue #14). Publishes to a Page's feed/photos/videos and reads back
@@ -55,6 +65,69 @@ const POST_METRICS = [
 ] as const;
 
 const PAGE_FIELDS = 'id,name,access_token';
+
+/**
+ * What an import reads of each Page post (RESEARCH meta.md §7.1). `attachments.target.id` is the
+ * photo or video behind the story: `post()` returns that id, not the story's, for a video upload.
+ */
+const PUBLISHED_POST_FIELDS =
+  'id,message,created_time,permalink_url,full_picture,status_type,is_published,' +
+  'attachments{media_type,type,target{id},subattachments.limit(10){media_type,type,target{id}}}';
+/** Meta refuses a `limit` above 100 on a Page's post edges. */
+const MAX_PUBLISHED_POSTS_PAGE = 100;
+
+interface GraphAttachment {
+  media_type?: string;
+  type?: string;
+  target?: { id?: string };
+  subattachments?: { data?: GraphAttachment[] };
+}
+
+interface GraphPagePost {
+  id?: string;
+  message?: string;
+  created_time?: string;
+  permalink_url?: string;
+  full_picture?: string;
+  status_type?: string;
+  is_published?: boolean;
+  attachments?: { data?: GraphAttachment[] };
+}
+
+const releaseUrlFor = (externalPostId: string): string =>
+  `https://www.facebook.com/${externalPostId}`;
+
+const isVideo = (a: GraphAttachment | undefined): boolean =>
+  /video/.test(`${a?.media_type ?? ''} ${a?.type ?? ''}`);
+
+/** One Graph Page post → the shape the importer stores. Null for an item that cannot be one. */
+export function normalizePagePost(post: GraphPagePost): PublishedPostItem | null {
+  const publishedAt = post.created_time ? new Date(post.created_time) : null;
+  if (!post.id || !publishedAt || Number.isNaN(publishedAt.getTime())) return null;
+  // A scheduled or ad-only post is not out yet; importing it would mark it published.
+  if (post.is_published === false) return null;
+  const first = post.attachments?.data?.[0];
+  const children = first?.subattachments?.data ?? [];
+  const lead = children[0] ?? first;
+  const video = isVideo(lead) || (!lead && post.status_type === 'added_video');
+  // `full_picture` is also the scraped image of a link post: still the right thumbnail.
+  const hasMedia = video || Boolean(post.full_picture);
+  const alternateIds = [first, ...children]
+    .map((a) => a?.target?.id)
+    .filter((id): id is string => typeof id === 'string' && id !== post.id);
+  return {
+    externalPostId: post.id,
+    alternateIds: [...new Set(alternateIds)],
+    // What `toResult` builds for a post this provider published.
+    knownUrls: [post.id, ...alternateIds].map(releaseUrlFor),
+    caption: post.message ?? '',
+    publishedAt,
+    permalink: post.permalink_url ?? null,
+    mediaKind: hasMedia ? (video ? 'video' : 'image') : null,
+    mediaCount: hasMedia ? Math.max(children.length, 1) : 0,
+    thumbnailUrl: post.full_picture ?? null,
+  };
+}
 
 interface PageAccount {
   id: string;
@@ -171,8 +244,9 @@ export class FacebookPagesProvider implements SocialProvider {
         }
       } catch (err) {
         // A retired metric shouldn't fail the whole collection; auth errors must still surface so
-        // the sweeper flags the connection needs_reconnect.
-        if (err instanceof ProviderAuthError) throw err;
+        // the sweeper flags the connection needs_reconnect. A throttled call surfaces
+        // too: swallowing it would record "swept, nothing to report" for a post that was never read.
+        if (err instanceof ProviderAuthError || err instanceof ProviderRateLimitError) throw err;
       }
     }
 
@@ -192,6 +266,51 @@ export class FacebookPagesProvider implements SocialProvider {
     return typeof page.followers_count === 'number'
       ? [{ metric: 'followers', value: page.followers_count, capturedAt: new Date() }]
       : [];
+  }
+
+  /**
+   * The Page's own published posts, newest first (RESEARCH meta.md §7.1). `published_posts`, not
+   * `feed`: the feed also returns visitors' posts and unpublished ones, and Meta documents it as
+   * needing `pages_read_user_content`, which our login configuration does not ask for.
+   *
+   * Works with the stored Page token on the Page node — `me/accounts` is not needed (§2.4).
+   */
+  async listPublishedPosts(
+    tokens: AuthTokens,
+    query: PublishedPostQuery,
+  ): Promise<PublishedPostPage> {
+    const params: Record<string, string> = query.cursor
+      ? cursorParams(query.cursor)
+      : {
+          fields: PUBLISHED_POST_FIELDS,
+          limit: String(Math.min(query.limit, MAX_PUBLISHED_POSTS_PAGE)),
+          since: String(Math.floor(query.since.getTime() / 1000)),
+          ...(query.until ? { until: String(Math.ceil(query.until.getTime() / 1000)) } : {}),
+        };
+    const { data, usage } = await this.client.graphGetWithUsage<{
+      data?: GraphPagePost[];
+      paging?: { next?: string };
+    }>(`${tokens.externalId}/published_posts`, { ...params, access_token: tokens.accessToken });
+    return {
+      items: (data.data ?? []).flatMap((p) => normalizePagePost(p) ?? []),
+      nextCursor: nextPageCursor(data.paging?.next),
+      usage,
+    };
+  }
+
+  /**
+   * `gone` only when Meta says the post does not exist AND the same token can still read the Page:
+   * Meta gives the "does not exist" answer for a lost permission too, and a dead token must not
+   * read as every post having been deleted.
+   */
+  async publishedPostPresence(
+    tokens: AuthTokens,
+    externalPostId: string,
+  ): Promise<PublishedPostPresence> {
+    const post = await this.client.nodePresence(externalPostId, tokens.accessToken);
+    if (post !== 'missing') return post;
+    const page = await this.client.nodePresence(tokens.externalId, tokens.accessToken);
+    return page === 'present' ? 'gone' : 'unknown';
   }
 
   private async fetchPages(userAccessToken: string): Promise<PageAccount[]> {
@@ -274,10 +393,7 @@ export class FacebookPagesProvider implements SocialProvider {
   }
 
   private toResult(externalPostId: string): PostResult {
-    return {
-      externalPostId,
-      releaseUrl: `https://www.facebook.com/${externalPostId}`,
-    };
+    return { externalPostId, releaseUrl: releaseUrlFor(externalPostId) };
   }
 }
 
