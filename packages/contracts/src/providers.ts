@@ -13,6 +13,9 @@ export const providerIdentifier = z.enum([
   'linkedin-page',
   'x',
   'youtube',
+  // A self-hosted WordPress site (blog articles, not social posts). Registered only when
+  // WORDPRESS_ENABLED=true; see docs/dev/research/wordpress.md.
+  'wordpress',
   'fake',
   'fake_2step',
   // Test-only (issue #12): exercise the token-health matrix + sweeper failure path.
@@ -31,3 +34,10 @@ export type TokenModel = z.infer<typeof tokenModel>;
 
 export const connectionHealth = z.enum(['healthy', 'expiring', 'needs_reconnect']);
 export type ConnectionHealth = z.infer<typeof connectionHealth>;
+
+/**
+ * What a provider needs from the person BEFORE it can send them anywhere. OAuth platforms need
+ * nothing (absent); WordPress has no central login, so the site's address has to come first.
+ */
+export const connectInputKind = z.enum(['site_url']);
+export type ConnectInputKind = z.infer<typeof connectInputKind>;

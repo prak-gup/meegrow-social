@@ -16,6 +16,9 @@ export default defineConfig({
     alias: {
       // The subpath first: an alias also matches everything under it.
       '@meegrow-social/contracts/group-status': src('./packages/contracts/src/group-status.ts'),
+      '@meegrow-social/contracts/article-markdown': src(
+        './packages/contracts/src/article-markdown.ts',
+      ),
       '@meegrow-social/contracts': src('./packages/contracts/src/index.ts'),
       '@meegrow-social/core': src('./packages/core/src/index.ts'),
       '@meegrow-social/db': src('./packages/db/src/index.ts'),

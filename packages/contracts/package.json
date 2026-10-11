@@ -11,6 +11,10 @@
     "./group-status": {
       "types": "./dist/group-status.d.ts",
       "default": "./dist/group-status.js"
+    },
+    "./article-markdown": {
+      "types": "./dist/article-markdown.d.ts",
+      "default": "./dist/article-markdown.js"
     }
   },
   "main": "./dist/index.js",
