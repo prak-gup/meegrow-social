@@ -8,6 +8,7 @@ import { Connections } from './pages/Connections';
 import { Composer } from './pages/Composer';
 import { Calendar } from './pages/Calendar';
 import { Posts } from './pages/Posts';
+import { ApiKeys } from './pages/ApiKeys';
 import { Invite } from './pages/Invite';
 
 /** Gates the authenticated area: waits for the session probe, redirects to /login if absent. */
@@ -35,6 +36,7 @@ export function App() {
         <Route path="/clients" element={<Clients />} />
         <Route path="/connections" element={<Connections />} />
         <Route path="/composer" element={<Composer />} />
+        <Route path="/settings/api-keys" element={<ApiKeys />} />
         {/* legacy alias */}
         <Route path="/posts" element={<Navigate to="/content" replace />} />
       </Route>

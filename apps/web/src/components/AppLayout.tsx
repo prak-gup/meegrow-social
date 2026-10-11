@@ -12,6 +12,7 @@ import {
   SquaresFour,
   UsersThree,
   Plugs,
+  Key,
   Plus,
   List,
   CloseIcon,
@@ -24,6 +25,7 @@ const TABS = [
   { to: '/content', label: 'Content', Icon: SquaresFour },
   { to: '/clients', label: 'Clients', Icon: UsersThree },
   { to: '/connections', label: 'Connections', Icon: Plugs },
+  { to: '/settings/api-keys', label: 'API keys', Icon: Key },
 ];
 
 /** Everything the sidebar holds. Rendered once as the desktop rail and once inside the mobile drawer. */
