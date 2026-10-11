@@ -1,4 +1,5 @@
 import { hash as argonHash, verify as argonVerify } from '@node-rs/argon2';
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@meegrow-social/contracts';
 
 /**
  * Password hashing for human auth (issue #10). Uses argon2id — `@node-rs/argon2`'s default variant
@@ -25,4 +26,15 @@ export async function verifyPassword(hashed: string, password: string): Promise<
   } catch {
     return false;
   }
+}
+
+/**
+ * Policy for a password a user sets: length only (contracts' PASSWORD_MIN_LENGTH..MAX_LENGTH).
+ * Returns which bound is broken, or null. The ceiling is what bounds argon2id's input — the library
+ * itself accepts inputs of any practical size, so without it one request could buy a large hash.
+ */
+export function newPasswordProblem(password: string): 'too_short' | 'too_long' | null {
+  if (password.length < PASSWORD_MIN_LENGTH) return 'too_short';
+  if (password.length > PASSWORD_MAX_LENGTH) return 'too_long';
+  return null;
 }

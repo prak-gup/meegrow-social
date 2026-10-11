@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
-import { db, schema } from '@meegrow-social/db';
+import { and, eq, ne } from 'drizzle-orm';
+import { db, schema, type Tx } from '@meegrow-social/db';
 
 /** Cookie name carrying the opaque session token. */
 export const SESSION_COOKIE = 'mg_sid';
@@ -109,6 +109,31 @@ export async function rotateSession(
     .update(schema.sessions)
     .set({ tokenHash: tokenHash(token) })
     .where(eq(schema.sessions.id, sessionId))
+    .returning();
+  if (!row) return null;
+  return { token, expiresAt: row.expiresAt };
+}
+
+/**
+ * Session cleanup for a credential change, run inside the caller's transaction so it commits or
+ * rolls back with the new credential: every OTHER session of the user is deleted (signed out
+ * everywhere else) and this one's token is rotated, the same way `rotateSession` does — so a copy
+ * of the pre-change cookie held by anyone else dies too. Expiry is unchanged. Returns null when
+ * the session is no longer this user's (logged out meanwhile); the caller must then roll back.
+ */
+export async function keepOnlySession(
+  tx: Tx,
+  userId: string,
+  sessionId: string,
+): Promise<{ token: string; expiresAt: Date } | null> {
+  await tx
+    .delete(schema.sessions)
+    .where(and(eq(schema.sessions.userId, userId), ne(schema.sessions.id, sessionId)));
+  const token = newSessionToken();
+  const [row] = await tx
+    .update(schema.sessions)
+    .set({ tokenHash: tokenHash(token) })
+    .where(and(eq(schema.sessions.id, sessionId), eq(schema.sessions.userId, userId)))
     .returning();
   if (!row) return null;
   return { token, expiresAt: row.expiresAt };
