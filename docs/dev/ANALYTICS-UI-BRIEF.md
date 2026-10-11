@@ -37,13 +37,20 @@ the whole analytics layer is built so a rename is not a code change (invariant 7
   `apps/web/src/lib/icons.ts`. The nav is the `TABS` array at `AppLayout.tsx:9-14` today; the
   left-sidebar layout is being built in parallel and will own that array — add your entry wherever
   the nav list lives at the time you merge.
-- **Route gate.** The route is always registered (so Prakhar can validate on production by typing
-  the URL), but the nav entry is only rendered when `import.meta.env.VITE_ANALYTICS_UI === 'true'`,
-  and the page shows a neutral `Badge` reading "Preview — numbers not yet validated" until that flag
-  is on. There is no feature-flag pattern in `apps/web/src` today (no `import.meta.env` reads
-  anywhere), so this is the first one; keep it to those two call sites. Production does not set the
-  flag, so green `main` auto-deploys with Analytics hidden. Removing the gate is PR 4 (§8) and needs
-  the §7 checklist signed off.
+- **Visibility (changed 2026-10-11, owner decision).** The route is always registered and the
+  "Analytics" nav entry is now shown to everyone, unconditionally, after Content. The numbers have
+  still **not** been validated against the platforms' native insights (§7), so the page keeps a
+  neutral `Badge` reading "Preview — numbers not yet validated" ("Beta" for a client role).
+  `VITE_ANALYTICS_UI` no longer hides anything: it is a build-time record of the §7 sign-off, and
+  its only read is in `apps/web/src/pages/Analytics.tsx` — set it to `'true'` once the checklist is
+  signed off and the badge goes away. Production does not set it, so `main` deploys with Analytics
+  visible and labelled preview. (Originally the same flag also gated the nav entry.)
+- **Posts without a publish time.** Legacy "publish now" posts have no stored `publishAt` and are
+  not being backfilled, so the date-bounded list never returns them and they appear in no period.
+  When a period comes back empty the page reads the published list once more without `from`/`to`
+  and, if such posts exist, says "N published posts have no recorded publish time and cannot be
+  placed in a period" instead of suggesting a longer range. Their metrics are not shown anywhere on
+  this page.
 
 ---
 
@@ -76,11 +83,11 @@ table, `packages/db/src/schema.ts:262-271`, RLS-forced like every tenant table (
 **Metric names you will actually see today** (Meta only; GBP/LinkedIn/YouTube providers do not
 exist yet, spec line 21):
 
-| Provider  | Per-post names (requested one at a time; missing ones are simply absent)                                                                                                                                             | Account names                                                           |
-| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| facebook  | `post_video_views`, `post_clicks` — `packages/core/src/providers/meta/facebook.ts:37`. `post_impressions_unique` is requested but **Meta rejects it** (#54, `docs/dev/research/meta.md:94-97`), so it never appears. | `followers` — `facebook.ts:173`                                         |
-| instagram | `views`, `reach`, `total_interactions`, `likes`, `comments`, `saved` — `instagram.ts:43-50`                                                                                                                          | `followers` — `instagram.ts:207`                                        |
-| gmb       | Planned: `LOCAL_POST_VIEWS_SEARCH`, `LOCAL_POST_ACTIONS_CALL_TO_ACTION` (spec lines 251–253)                                                                                                                         | Planned: `BUSINESS_IMPRESSIONS_*` etc.; **no followers** (spec 261–262) |
+| Provider  | Per-post names (requested one at a time; missing ones are simply absent)                                                                                                                                                                                                                                                                                | Account names                                                           |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| facebook  | `post_media_view`, `post_total_media_view_unique`, `post_reactions_like_total`, `post_clicks`, `post_video_views` — `POST_METRICS` in `packages/core/src/providers/meta/facebook.ts`. The first three are from Meta's documentation and unconfirmed against live traffic (#54, `docs/dev/research/meta.md` §5.2.1); any Meta rejects are simply absent. | `followers` — `facebook.ts:173`                                         |
+| instagram | `views`, `reach`, `total_interactions`, `likes`, `comments`, `saved` — `instagram.ts:43-50`                                                                                                                                                                                                                                                             | `followers` — `instagram.ts:207`                                        |
+| gmb       | Planned: `LOCAL_POST_VIEWS_SEARCH`, `LOCAL_POST_ACTIONS_CALL_TO_ACTION` (spec lines 251–253)                                                                                                                                                                                                                                                            | Planned: `BUSINESS_IMPRESSIONS_*` etc.; **no followers** (spec 261–262) |
 
 Treat this table as "examples of what the union might contain", never as a list to code against.
 
@@ -234,8 +241,10 @@ Prakhar signs off by approving PR 4.
    store `capturedAt` in UTC and render in the browser's local zone — note any day-boundary drift);
    the `capturedAt` of the point we displayed.
 5. **Known discrepancies, listed, not hidden:**
-   - #54: Facebook `post_impressions_unique` is rejected by Meta, so FB posts have no impressions
-     or reach column until that issue ships. Expected; note it.
+   - #54: Facebook now requests `post_media_view` / `post_total_media_view_unique` /
+     `post_reactions_like_total` in place of the rejected `post_impressions_unique`. These names
+     come from Meta's documentation and were not verified live; a Facebook post with no such
+     columns after a sweep means Meta rejected them (`docs/dev/research/meta.md` §5.2.1).
    - `latest` is cumulative as of the last sweep; the native UI may show a later number if the sweep
      is behind. A gap that closes on the next hourly tick is fine; one that persists is a bug.
    - Followers are a daily snapshot; an intraday change in the native UI is not a discrepancy.
