@@ -13,6 +13,11 @@ export class ProviderBadRequestError extends Error {
 export class ProviderTransientError extends Error {
   readonly kind = 'transient' as const;
 }
+/**
+ * The platform is throttling this app. Still transient — a publish retries it like any other — but
+ * a sweep that reads many things must stop asking rather than try the next one.
+ */
+export class ProviderRateLimitError extends ProviderTransientError {}
 
 export type ProviderError = ProviderAuthError | ProviderBadRequestError | ProviderTransientError;
 
