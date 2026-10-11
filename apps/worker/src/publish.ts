@@ -1,13 +1,12 @@
 import { Worker, type Job } from 'bullmq';
-import { publishPost, recordPublishExhaustion } from './deps.js';
+import {
+  PUBLISH_QUEUE,
+  publishPost,
+  recordPublishExhaustion,
+  type PublishJobData,
+} from './deps.js';
 
-// Must match apps/api/src/scheduler.ts PUBLISH_QUEUE.
-export const PUBLISH_QUEUE = 'publish';
-
-export interface PublishJobData {
-  workspaceId: string;
-  postId: string;
-}
+export { PUBLISH_QUEUE, type PublishJobData };
 
 /** The slice of a BullMQ job the failure handler reads. */
 export type FailedPublishJob = Pick<Job<PublishJobData>, 'data' | 'attemptsMade' | 'finishedOn'> & {
@@ -45,8 +44,8 @@ export async function onPublishJobFailed(
       attempts: job.attemptsMade,
     });
   } catch (recordErr) {
-    // Nothing more can be done from here. The post may still read `scheduled` with no job behind
-    // it, so say which one, loudly, for whoever reads the worker log.
+    // Nothing more can be done from here. The post may still read `scheduled` with a dead job
+    // behind it until the publish sweep fails it, so say which one, loudly, in the worker log.
     console.error(
       `publish job for post ${job.data.postId} (workspace ${job.data.workspaceId}) exhausted its attempts but could not be fully recorded`,
       recordErr,
@@ -59,7 +58,9 @@ export function buildPublishWorker(redisUrl: string): Worker<PublishJobData> {
     PUBLISH_QUEUE,
     async (job) => {
       const { workspaceId, postId } = job.data;
-      return publishPost(workspaceId, postId); // throws on transient → BullMQ retries
+      // Throws on a transient error → BullMQ retries. A refused job (post cancelled, moved to
+      // draft, rescheduled) returns `skipped` and so completes: no retry, nothing marked failed.
+      return publishPost(workspaceId, postId);
     },
     { connection: { url: redisUrl }, concurrency: 5 },
   );

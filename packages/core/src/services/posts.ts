@@ -14,7 +14,7 @@ import {
   type UpdatePostInput,
 } from '@meegrow-social/contracts';
 import { withWorkspace, schema } from '@meegrow-social/db';
-import { and, asc, eq, gte, isNotNull, lte, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 import { DateTime } from 'luxon';
 import { getScheduler } from './scheduler.js';
 import { nextFreeSlotForQueue } from './queues.js';
@@ -234,12 +234,75 @@ export async function createPost(
 
   if (scheduleWhen !== undefined) {
     const when = scheduleWhen;
-    await Promise.all(
-      created.map((p) => getScheduler().schedulePublish({ workspaceId, postId: p.id, when })),
+    // The rows are committed; only now can the jobs be enqueued. allSettled, so every enqueue is
+    // attempted and none is left running when the failure is handled (async, so a scheduler that
+    // throws synchronously — not configured — is handled the same way).
+    const enqueued = await Promise.allSettled(
+      created.map(async (p) => getScheduler().schedulePublish({ workspaceId, postId: p.id, when })),
     );
+    const failure = enqueued.find((r) => r.status === 'rejected');
+    if (failure) {
+      await abandonUnqueuedPosts(
+        workspaceId,
+        created.map((p) => p.id),
+        failure.reason,
+      );
+      throw failure.reason;
+    }
   }
 
   return created.map(toView);
+}
+
+/** The error a user sees on a post that was stored but could not be handed to the job queue. */
+export function unqueuedPublishMessage(cause: unknown): string {
+  const detail = cause instanceof Error ? cause.message : String(cause);
+  return `Could not be queued for publishing: ${detail || 'unknown error'}. Nothing was sent — retry to queue it again.`;
+}
+
+/**
+ * Called when enqueueing a publish job threw AFTER the posts were committed. Without this the
+ * posts read `scheduled` with no job behind them: the dashboard promises a publish that will never
+ * happen. Every post of the call that is still `scheduled` is marked `failed` with the reason, so
+ * the caller's error means "nothing from this call will go out" and each post can be retried.
+ *
+ * All of them, not only the ones whose enqueue threw: the caller sees one error for the call, and
+ * a caller that repeats the call must not get a second copy of a sibling that did enqueue. The
+ * status is what stops a sibling's job (`publishPost` refuses a `failed` post); removing the jobs
+ * is tidying. A sibling a worker has already picked up holds its row lock, is not `scheduled` by
+ * the time the update reaches it, and is left to finish.
+ *
+ * Never throws — the caller rethrows the enqueue error. If the write itself fails the posts stay
+ * `scheduled` with no job, which is what `sweepStrandedPublishes` exists to resolve.
+ */
+export async function abandonUnqueuedPosts(
+  workspaceId: string,
+  postIds: string[],
+  cause: unknown,
+): Promise<void> {
+  const message = unqueuedPublishMessage(cause);
+  try {
+    await withWorkspace(workspaceId, async (tx) => {
+      const failed = await tx
+        .update(schema.posts)
+        .set({ status: 'failed', error: message })
+        .where(and(inArray(schema.posts.id, postIds), eq(schema.posts.status, 'scheduled')))
+        .returning({ provider: schema.posts.provider });
+      if (failed.length === 0) return;
+      await tx.insert(schema.eventLogs).values(
+        failed.map((p) => ({
+          workspaceId,
+          kind: 'publish',
+          status: 'failed',
+          platform: p.provider,
+          message,
+        })),
+      );
+    });
+  } catch {
+    // Left for the sweep; see above.
+  }
+  await Promise.allSettled(postIds.map(async (postId) => getScheduler().cancelPublish({ postId })));
 }
 
 export async function getPost(workspaceId: string, postId: string): Promise<PostView | null> {
@@ -286,14 +349,20 @@ export async function listPosts(
 /**
  * Cancel a draft/scheduled post (PRD F3.5): marks it cancelled AND interrupts its pending BullMQ job
  * via the scheduler port (no-op if the job already fired). Rejects posts past the point of no return.
+ *
+ * The status write is what stops the post going out: `publishPost` refuses anything not `scheduled`,
+ * so a job that could not be removed (already running, or Redis unreachable) does nothing.
  */
 export async function cancelPost(workspaceId: string, postId: string): Promise<boolean> {
   const outcome = await withWorkspace(workspaceId, async (tx) => {
+    // Row lock: a publish job that already holds this post finishes first, and we then read what it
+    // committed — so a post that just went out is refused below, never overwritten as `cancelled`.
     const [row] = await tx
       .select({ status: schema.posts.status })
       .from(schema.posts)
       .where(eq(schema.posts.id, postId))
-      .limit(1);
+      .limit(1)
+      .for('update');
     if (!row) return 'missing' as const;
     if (!CANCELABLE_STATUSES.has(row.status)) return row.status;
     await tx.update(schema.posts).set({ status: 'cancelled' }).where(eq(schema.posts.id, postId));
@@ -310,7 +379,8 @@ export async function cancelPost(workspaceId: string, postId: string): Promise<b
 /**
  * Edit a draft/scheduled post (PRD F3.5). caption/media update in place; publishAt is tri-state —
  * a date (re)schedules the job, null demotes to draft + cancels the job, omitted leaves it. The job
- * side-effects run AFTER the tx commits so a failed reschedule never half-edits the row.
+ * side-effects run AFTER the tx commits so a failed reschedule never half-edits the row; if the
+ * job cannot be (re)scheduled the edit stands but the post is marked `failed` and the error rethrown.
  */
 export async function updatePost(
   workspaceId: string,
@@ -319,7 +389,14 @@ export async function updatePost(
 ): Promise<PostView | null> {
   type Action = 'none' | 'schedule' | 'cancel' | 'reschedule';
   const result = await withWorkspace(workspaceId, async (tx) => {
-    const [row] = await tx.select().from(schema.posts).where(eq(schema.posts.id, postId)).limit(1);
+    // Row lock, for the same reason as `cancelPost`: an edit must not land on top of a publish that
+    // is in flight and turn a published post back into a draft or a scheduled one.
+    const [row] = await tx
+      .select()
+      .from(schema.posts)
+      .where(eq(schema.posts.id, postId))
+      .limit(1)
+      .for('update');
     if (!row) return null;
     if (!EDITABLE_STATUSES.has(row.status)) {
       throw new PostStateError(`a '${row.status}' post cannot be edited`);
@@ -356,17 +433,29 @@ export async function updatePost(
   });
   if (!result) return null;
 
-  if (result.action === 'cancel' || result.action === 'reschedule') {
+  if (result.action === 'cancel') {
+    // Demoted to draft. If this throws the job survives, but `publishPost` refuses a draft.
     await getScheduler().cancelPublish({ postId });
   }
   if (result.action === 'schedule' || result.action === 'reschedule') {
-    await getScheduler().schedulePublish({ workspaceId, postId, when: result.when! });
+    try {
+      if (result.action === 'reschedule') await getScheduler().cancelPublish({ postId });
+      await getScheduler().schedulePublish({ workspaceId, postId, when: result.when! });
+    } catch (err) {
+      // The new time is committed but no job stands behind it (or the old job still holds the old
+      // time). Fail it where it can be seen and retried rather than leave it to go out at the
+      // wrong time or not at all.
+      await abandonUnqueuedPosts(workspaceId, [postId], err);
+      throw err;
+    }
   }
   return toView(result.updated);
 }
 
 /**
- * Retry a `failed` post: put it back to `scheduled` and hand it to the scheduler to publish now.
+ * Retry a `failed` post: put it back to `scheduled` and hand it to the scheduler — to publish now,
+ * or at its `publishAt` when that is still ahead (a post that failed to be queued for tomorrow must
+ * not go out today because someone pressed retry; `publishPost` would refuse it as not due anyway).
  * It goes through the same job → `publishPost` path as a first attempt, never inline. Any other
  * status is a `PostStateError`; `failed` is the only failure status — there is no partial one,
  * because every variant is its own post and is retried on its own.
@@ -381,7 +470,11 @@ export async function retryPost(workspaceId: string, postId: string): Promise<Po
   const outcome = await withWorkspace(workspaceId, async (tx) => {
     // Row lock: a concurrent retry waits here, then reads `scheduled` and is refused below.
     const [row] = await tx
-      .select({ status: schema.posts.status, error: schema.posts.error })
+      .select({
+        status: schema.posts.status,
+        error: schema.posts.error,
+        publishAt: schema.posts.publishAt,
+      })
       .from(schema.posts)
       .where(eq(schema.posts.id, postId))
       .limit(1)
@@ -403,8 +496,12 @@ export async function retryPost(workspaceId: string, postId: string): Promise<Po
   try {
     // The job engine keys a post's publish job on the post id and drops a second add while one
     // still exists in any state — so clear a leftover job first, or the retry could silently vanish.
+    // The job that just failed this post may still be running for another instant and cannot be
+    // removed; `schedulePublish` waits that out (see createQueueScheduler).
     await getScheduler().cancelPublish({ postId });
-    await getScheduler().schedulePublish({ workspaceId, postId, when: 'now' });
+    const { publishAt } = outcome.updated;
+    const when = publishAt && publishAt.getTime() > Date.now() ? publishAt : 'now';
+    await getScheduler().schedulePublish({ workspaceId, postId, when });
   } catch (err) {
     // Nothing was enqueued: put the post back so it reads `failed` (and can be retried again)
     // instead of sitting `scheduled` with no job behind it.

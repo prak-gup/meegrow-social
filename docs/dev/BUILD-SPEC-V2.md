@@ -103,6 +103,19 @@ webhook delivery) · E. Antidote cutover · F. Dashboard completion + approval g
    (`impressions`→views, `page_fans`→`followers_count`).
 8. **Media for GBP/IG is URL-only.** Public S3 URL, never a binary upload. Already true of our storage.
 9. **Every consolidation ships a kill.** Nothing in §7 is "done" until the thing it replaces is off.
+10. **A post goes out once, at its time — or fails where a person sees it.** Never silently late,
+    never twice, never stuck in `scheduled`.
+    - `publishPost` sends only a post that is `scheduled` and due, read under a row lock. A job that
+      fires for anything else (cancelled, draft, failed, rescheduled later) completes as `skipped`.
+    - **Publish retries are few and fast: 3 attempts, exponential backoff from 2 minutes (≈2 min,
+      then ≈4 min), transient errors only** — `PUBLISH_ATTEMPTS` / `PUBLISH_BACKOFF_MS` in
+      `core/services/publish-queue.ts`. A social post is tied to its time; one that cannot go out
+      within minutes is marked `failed` (+ a `jobs_dlq` row) for a person to retry. This is _not_
+      the webhook schedule in D3 — a webhook delivery is worth retrying for 12 hours, a 9am post
+      is not.
+    - A `scheduled` post with nothing that will publish it is resolved by the worker's sweep
+      (`core/services/publish-sweep.ts`, every 5 min): queued again if it was never attempted and is
+      at most 30 minutes late, otherwise marked `failed`. It never re-runs a job that died.
 
 ---
 
@@ -441,7 +454,8 @@ Outbox rows are already written by `services/webhooks.ts`. Build the drainer:
 - BullMQ repeatable job (every 30s) → claim `pending` deliveries with `next_attempt_at <= now`
   (`FOR UPDATE SKIP LOCKED`) → POST with header
   `X-MGS-Signature: t=<unix>,v1=<hmac_sha256(secret, "t.body")>`.
-- Retries 5×: 1m, 5m, 30m, 2h, 12h → then `status='failed'` + a `jobs_dlq` row.
+- Retries 5×: 1m, 5m, 30m, 2h, 12h → then `status='failed'` + a `jobs_dlq` row. (Webhook
+  deliveries only. Publish jobs retry 3× over minutes — invariant 10.)
 - Events: `post.published`, `post.failed`, `post.scheduled`, `connection.needs_reconnect` (defined),
   `analytics.updated` (defined), `review.received` (new, from B2).
 - `POST/GET/DELETE /v1/webhooks` endpoint CRUD + `POST /v1/webhooks/:id/test`.
@@ -550,7 +564,12 @@ Overview. Renders whatever metric names came back — **no hardcoded metric list
 - **#20 roles matrix** — `owner | admin | member | viewer` × actions, enforced in `core` (not routes),
   one table-driven test. Viewers cannot publish; members cannot approve unless `can_approve`.
 - **#36** atomic OAuth-flow consume (close the concurrent-callback race).
-- **DLQ replay** — `GET /v1/dlq`, `POST /v1/dlq/:id/replay` + a page. (#29)
+- **Publish safety** — built on `fix/publish-safety` (invariant 10): status guard + row lock in
+  `publishPost`, enqueue failures marked `failed` at the source, stranded-post sweep,
+  retry-vs-finishing-job race.
+- **DLQ replay** — `GET /v1/dlq`, `POST /v1/dlq/:id/replay` + a page. (#29) Replay must go through
+  `retryPost`, not re-add the stored payload: the post behind a publish DLQ row is `failed`, and
+  `publishPost` refuses to send a `failed` post.
 - **Backups** — nightly `pg_dump` → S3 with a **restore drill** recorded in `DEPLOY.md`. A backup
   nobody has restored is not a backup.
 - **Rate limiting** — per API key, per route class; 429 with `Retry-After`.

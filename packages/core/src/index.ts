@@ -24,6 +24,8 @@ export * from './services/posts.js';
 export * from './services/validate-post.js';
 export * from './services/media.js';
 export * from './services/publish.js';
+export * from './services/publish-queue.js';
+export * from './services/publish-sweep.js';
 export * from './services/queues.js';
 export * from './services/logs.js';
 export * from './services/webhooks.js';

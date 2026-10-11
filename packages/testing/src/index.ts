@@ -9,6 +9,7 @@ import {
   resetAttemptStore,
   setScheduler,
   setStorageDriver,
+  type PublishJobState,
   type Scheduler,
 } from '@meegrow-social/core';
 import type { WeeklySlot } from '@meegrow-social/contracts';
@@ -143,21 +144,32 @@ export async function createQueue(
   });
 }
 
-/** A scheduler that records calls instead of enqueuing. */
+/**
+ * A scheduler that records calls instead of enqueuing. `jobs` is what it would hold in the queue —
+ * a schedule adds a `live` job unless one already exists (the real queue drops a duplicate id), a
+ * cancel removes it — and tests may edit it to stage a lost (`delete`) or dead (`'dead'`) job.
+ */
 export function useRecordingScheduler(): {
   calls: Array<{ postId: string; when: Date | 'now' }>;
   cancels: string[];
+  jobs: Map<string, PublishJobState>;
 } {
   const calls: Array<{ postId: string; when: Date | 'now' }> = [];
   const cancels: string[] = [];
+  const jobs = new Map<string, PublishJobState>();
   const scheduler: Scheduler = {
     async schedulePublish({ postId, when }) {
       calls.push({ postId, when });
+      if (!jobs.has(postId)) jobs.set(postId, 'live');
     },
     async cancelPublish({ postId }) {
       cancels.push(postId);
+      jobs.delete(postId);
+    },
+    async publishJobState({ postId }) {
+      return jobs.get(postId) ?? 'none';
     },
   };
   setScheduler(scheduler);
-  return { calls, cancels };
+  return { calls, cancels, jobs };
 }
