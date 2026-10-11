@@ -9,6 +9,8 @@ import {
   changePasswordInput,
   createApiKeyInput,
   createInviteInput,
+  inviteIdParam,
+  inviteScopeQuery,
   createPostInput,
   createWorkspaceInput,
   createQueueInput,
@@ -80,6 +82,8 @@ import {
   SESSION_TTL_MS,
   startConnect,
   startInviteConnect,
+  listConnectInvites,
+  revokeConnectInvite,
   switchActiveWorkspace,
   updatePost,
   updateQueue,
@@ -250,6 +254,21 @@ function inviteFlowRefusal(
         .code(404)
         .send({ error: 'this connection step is not available in this browser' });
   }
+}
+
+/**
+ * The client a connect-invite call is about: the caller's active one, or a named one. An API key is
+ * one workspace's credential; only a human member may reach across clients. Null means refuse —
+ * the same answer for a client the caller is not in and one that does not exist.
+ */
+async function inviteWorkspace(ctx: AuthContext, requested?: string): Promise<string | null> {
+  if (!requested || requested === ctx.workspaceId) return ctx.workspaceId;
+  if (!ctx.userId || !(await isWorkspaceMember(ctx.userId, requested))) return null;
+  return requested;
+}
+
+function inviteUrl(token: string): string {
+  return `${appUrl().replace(/\/$/, '')}/i/${token}`;
 }
 
 const SESSION_MAX_AGE_S = Math.floor(SESSION_TTL_MS / 1000);
@@ -542,21 +561,51 @@ export async function buildServer(): Promise<FastifyInstance> {
       const parsed = createInviteInput.safeParse(req.body ?? {});
       if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
       const ctx = req.authContext!;
-      const userId = ctx.userId ?? null;
-      const workspaceId = parsed.data.workspaceId ?? ctx.workspaceId;
-      if (workspaceId !== ctx.workspaceId) {
-        // An API key is one workspace's credential; only a human member may reach across clients.
-        if (!userId || !(await isWorkspaceMember(userId, workspaceId))) {
-          return reply.code(403).send({ error: 'not a member of that workspace' });
-        }
-      }
-      const invite = await createConnectInvite(workspaceId, provider.data, userId ?? workspaceId);
+      const workspaceId = await inviteWorkspace(ctx, parsed.data.workspaceId);
+      if (!workspaceId) return reply.code(403).send({ error: 'not a member of that workspace' });
+      const invite = await createConnectInvite(
+        workspaceId,
+        provider.data,
+        ctx.userId ?? workspaceId,
+      );
       return reply.code(201).send({
-        url: `${appUrl().replace(/\/$/, '')}/i/${invite.token}`,
+        url: inviteUrl(invite.token),
         token: invite.token,
         provider: invite.provider,
         expiresAt: invite.expiresAt,
       });
+    },
+  );
+
+  // The links of a client that still work (operator view), and cancelling one. Same reach as the
+  // mint route: the active client, or — for a session — any client the user belongs to.
+  app.get<{ Querystring: { workspaceId?: string } }>(
+    '/v1/connections/invites',
+    async (req, reply) => {
+      const parsed = inviteScopeQuery.safeParse(req.query);
+      if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+      const workspaceId = await inviteWorkspace(req.authContext!, parsed.data.workspaceId);
+      if (!workspaceId) return reply.code(403).send({ error: 'not a member of that workspace' });
+      const invites = await listConnectInvites(workspaceId);
+      return {
+        invites: invites.map(({ token, ...invite }) => ({ ...invite, url: inviteUrl(token) })),
+      };
+    },
+  );
+
+  app.delete<{ Params: { id: string }; Querystring: { workspaceId?: string } }>(
+    '/v1/connections/invites/:id',
+    async (req, reply) => {
+      const parsed = inviteScopeQuery.safeParse(req.query);
+      if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+      const workspaceId = await inviteWorkspace(req.authContext!, parsed.data.workspaceId);
+      if (!workspaceId) return reply.code(403).send({ error: 'not a member of that workspace' });
+      // Not a uuid → not an invite; answered here so it never reaches the database as a bad cast.
+      const id = inviteIdParam.safeParse(req.params.id);
+      if (!id.success || !(await revokeConnectInvite(workspaceId, id.data))) {
+        return reply.code(404).send({ error: 'not found' });
+      }
+      return { revoked: true };
     },
   );
 
@@ -622,6 +671,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   // and closes itself (#45) — a two-phase provider's flowId only exists here, and JSON in a popup
   // is unusable. From an invite there is no opener and no session: when this browser holds the
   // flow's proof and an account still has to be picked, it is sent on to the public picker instead.
+  // An invite-started flow is refused outright in any other browser (core `handleCallback`).
   // handleCallback still returns the CallbackResult contract; only the transport differs.
   app.get<{ Querystring: { state?: string; code?: string; error?: string } }>(
     '/connect/callback',
@@ -639,7 +689,7 @@ export async function buildServer(): Promise<FastifyInstance> {
         return send({ status: 'error', error: reason }, 400);
       }
       try {
-        const result = await handleCallback(state, code);
+        const result = await handleCallback(state, code, req.cookies[inviteFlowCookie(state)]);
         if (
           result.status === 'choose_account' &&
           verifyConnectFlowProof(result.flowId, req.cookies[inviteFlowCookie(result.flowId)])

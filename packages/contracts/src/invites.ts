@@ -51,3 +51,27 @@ export const inviteConnectedView = z.object({
   providerDisplayName: z.string(),
 });
 export type InviteConnectedView = z.infer<typeof inviteConnectedView>;
+
+/**
+ * Query of GET /v1/connections/invites and DELETE /v1/connections/invites/:id. `workspaceId` names
+ * a client other than the session's active one, under the same membership rule as the mint route.
+ */
+export const inviteScopeQuery = z.object({ workspaceId: z.string().uuid().optional() });
+export type InviteScopeQuery = z.infer<typeof inviteScopeQuery>;
+
+/** The `:id` of DELETE /v1/connections/invites/:id. */
+export const inviteIdParam = z.string().uuid();
+
+/**
+ * One link that still works: not yet used for a connection, not cancelled, not expired.
+ * `lastStartedAt` is when someone last opened it and went on to the platform without finishing.
+ */
+export const outstandingInviteView = z.object({
+  id: z.string().uuid(),
+  url: z.string().url(),
+  provider: providerIdentifier,
+  createdAt: z.coerce.date(),
+  expiresAt: z.coerce.date(),
+  lastStartedAt: z.coerce.date().nullable(),
+});
+export type OutstandingInviteView = z.infer<typeof outstandingInviteView>;
