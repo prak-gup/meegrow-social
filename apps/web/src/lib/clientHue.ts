@@ -36,20 +36,3 @@ function hueVar(nameOrId: string): string {
 export function clientHue(nameOrId: string): string {
   return `hsl(${hueVar(nameOrId)})`;
 }
-
-/** The "all clients" conic swatch: every hue token in order. */
-export const ALL_CLIENTS_SWATCH = `conic-gradient(${Array.from(
-  { length: HUES + 1 },
-  (_, i) => `hsl(var(--hue-${(i % HUES) + 1}))`,
-).join(',')})`;
-
-/** A soft two-stop gradient for a client "cover", derived from its hue. */
-export function clientCover(nameOrId: string): string {
-  const v = hueVar(nameOrId);
-  return `linear-gradient(135deg, hsl(${v}), hsl(${v} / 0.8))`;
-}
-
-/** First grapheme, uppercased — for the cover monogram. */
-export function initial(name: string): string {
-  return (name.trim()[0] ?? '?').toUpperCase();
-}
