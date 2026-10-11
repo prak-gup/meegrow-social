@@ -5,9 +5,12 @@ import {
   DEFAULT_DAYS,
   EMPTY_PERIOD_HINT,
   FOLLOWERS,
-  POST_CAP,
+  bestPost,
   buildTiles,
-  capPosts,
+  bulkEntries,
+  bulkFailure,
+  cadenceText,
+  cadenceWord,
   chunk,
   connectionsFor,
   countUndated,
@@ -22,19 +25,21 @@ import {
   humanizeMetric,
   isClientRole,
   lastCaptureByConnection,
-  latestCapture,
   loadProgress,
   metricCell,
   metricHistories,
   metricNames,
   needsReconnect,
+  nextRefresh,
   parseFilters,
   parsePoints,
   percentChange,
   platformsOf,
+  postCount,
   postTiles,
   resolveFilters,
   selectedConnections,
+  splitPeriods,
   tableMetricColumns,
   uniqueLabels,
   windowDays,
@@ -80,10 +85,10 @@ const point = (value: number, at: number, metric = FOLLOWERS): MetricPoint => ({
   value,
   at,
 });
-const ok = (latest: Record<string, number>, series: MetricPoint[] = []): PostMetrics => ({
+const ok = (latest: Record<string, number>, capturedAt: number | null = null): PostMetrics => ({
   status: 'ok',
   latest,
-  series,
+  capturedAt,
 });
 const failed: PostMetrics = { status: 'error', message: 'boom' };
 const byPost = (entries: Array<[PostView, PostMetrics]>): MetricsByPost =>
@@ -210,45 +215,54 @@ describe('windowPosts', () => {
   });
 });
 
-describe('capPosts', () => {
-  const windowed = (current: number, prior: number) =>
-    windowPosts(
+describe('splitPeriods', () => {
+  it('splits by period and keeps every post: nothing caps the view', () => {
+    const windowed = windowPosts(
       [
-        ...Array.from({ length: current }, (_, i) => post({ publishAt: new Date(NOW - i * 1000) })),
-        ...Array.from({ length: prior }, (_, i) =>
-          post({ publishAt: new Date(W30.start - i * 1000) }),
-        ),
+        ...Array.from({ length: 450 }, (_, i) => post({ publishAt: new Date(NOW - i * 1000) })),
+        ...Array.from({ length: 3 }, (_, i) => post({ publishAt: new Date(W30.start - i * 1000) })),
       ],
       W30,
     );
+    const period = splitPeriods(windowed);
+    expect(period.current).toHaveLength(450);
+    expect(period.prior).toHaveLength(3);
+    // Newest first, as windowPosts ordered them.
+    expect(period.current[0]!.at).toBeGreaterThan(period.current[449]!.at);
+  });
+});
 
-  it('keeps everything under the cap', () => {
-    const capped = capPosts(windowed(3, 2));
-    expect(capped.current).toHaveLength(3);
-    expect(capped.prior).toHaveLength(2);
-    expect(capped.currentTotal).toBe(3);
-    expect(capped.priorComplete).toBe(true);
+describe('bulk metrics', () => {
+  it('settles every id of a request, parsing the capture time', () => {
+    expect(
+      bulkEntries(['a', 'b'], {
+        a: { latest: { views: 3 }, capturedAt: '2026-10-01T00:00:00.000Z' },
+        b: { latest: {}, capturedAt: null },
+      }),
+    ).toEqual([
+      ['a', { status: 'ok', latest: { views: 3 }, capturedAt: Date.UTC(2026, 9, 1) }],
+      ['b', { status: 'ok', latest: {}, capturedAt: null }],
+    ]);
   });
 
-  it('spends the cap on the period first, newest first, and flags a cut prior period', () => {
-    const all = windowed(4, 4);
-    const capped = capPosts(all, 5);
-    expect(capped.current.map((p) => p.post.id)).toEqual(all.slice(0, 4).map((p) => p.post.id));
-    expect(capped.prior).toHaveLength(1);
-    expect(capped.priorComplete).toBe(false);
+  it('reads an id the API left out as a post with nothing collected, not as an error', () => {
+    expect(bulkEntries(['gone'], {})).toEqual([
+      ['gone', { status: 'ok', latest: {}, capturedAt: null }],
+    ]);
   });
 
-  it('reports the uncapped count when the period itself overflows', () => {
-    const capped = capPosts(windowed(7, 2), 5);
-    expect(capped.current).toHaveLength(5);
-    expect(capped.currentTotal).toBe(7);
-    expect(capped.prior).toHaveLength(0);
-    expect(capped.priorComplete).toBe(false);
+  it('passes metric names through exactly as the API sent them', () => {
+    const [[, entry]] = bulkEntries(['a'], {
+      a: { latest: { LOCAL_POST_VIEWS_SEARCH: 1, post_media_view: 2 }, capturedAt: null },
+    });
+    expect(entry).toMatchObject({ latest: { LOCAL_POST_VIEWS_SEARCH: 1, post_media_view: 2 } });
   });
 
-  it('defaults to 300', () => {
-    expect(POST_CAP).toBe(300);
-    expect(capPosts(windowed(301, 0)).current).toHaveLength(300);
+  it('marks every id of a failed request', () => {
+    expect(bulkFailure(['a', 'b'], 'boom')).toEqual([
+      ['a', failed],
+      ['b', failed],
+    ]);
   });
 });
 
@@ -361,7 +375,7 @@ describe('postTiles', () => {
   const cur1 = post({ publishAt: daysAgo(1) });
   const cur2 = post({ publishAt: daysAgo(5), provider: 'instagram', connectionId: IG.id });
   const old1 = post({ publishAt: daysAgo(35) });
-  const capped = capPosts(windowPosts([cur1, cur2, old1], W30));
+  const capped = splitPeriods(windowPosts([cur1, cur2, old1], W30));
 
   it('sums latest values for posts published in the period, against the prior period', () => {
     const tiles = postTiles(
@@ -419,20 +433,86 @@ describe('postTiles', () => {
     expect(tiles).toEqual([{ name: 'views', value: 10, delta: null }]);
   });
 
-  it('withholds the comparison when the cap cut the prior period', () => {
-    const cut = capPosts(windowPosts([cur1, cur2, old1], W30), 2);
+  it('withholds the comparison when the post list was cut short', () => {
     const tiles = postTiles(
-      cut,
+      capped,
       byPost([
         [cur1, ok({ views: 10 })],
         [cur2, ok({ views: 10 })],
+        [old1, ok({ views: 10 })],
       ]),
+      false,
     );
     expect(tiles).toEqual([{ name: 'views', value: 20, delta: null }]);
   });
 
   it('has no tiles when nothing was reported', () => {
-    expect(postTiles(capPosts([]), new Map())).toEqual([]);
+    expect(postTiles(splitPeriods([]), new Map())).toEqual([]);
+  });
+});
+
+describe('postCount', () => {
+  const posts = [
+    post({ publishAt: daysAgo(1) }),
+    post({ publishAt: daysAgo(2) }),
+    post({ publishAt: daysAgo(3) }),
+    post({ publishAt: daysAgo(40) }),
+    post({ publishAt: daysAgo(41) }),
+  ];
+
+  it('counts the period against the one before', () => {
+    expect(postCount(splitPeriods(windowPosts(posts, W30)))).toEqual({ value: 3, delta: 50 });
+  });
+
+  it('has no comparison when nothing was published before, or the list was cut short', () => {
+    const onlyNow = splitPeriods(windowPosts(posts.slice(0, 3), W30));
+    expect(postCount(onlyNow)).toEqual({ value: 3, delta: null });
+    expect(postCount(splitPeriods(windowPosts(posts, W30)), false)).toEqual({
+      value: 3,
+      delta: null,
+    });
+  });
+
+  it('is zero, not missing, for an empty period', () => {
+    expect(postCount(splitPeriods([])).value).toBe(0);
+  });
+});
+
+describe('bestPost', () => {
+  const a = post({ publishAt: daysAgo(3) });
+  const b = post({ publishAt: daysAgo(2) });
+  const c = post({ publishAt: daysAgo(1) });
+  const rows = windowPosts([a, b, c], W30);
+
+  it('is the post with the highest value of the chosen metric', () => {
+    const metrics = byPost([
+      [a, ok({ views: 10, saved: 9 })],
+      [b, ok({ views: 30 })],
+      [c, ok({ views: 20 })],
+    ]);
+    expect(bestPost(rows, metrics, 'views')).toEqual({ post: b, value: 30 });
+    expect(bestPost(rows, metrics, 'saved')).toEqual({ post: a, value: 9 });
+  });
+
+  it('takes the newest of a tie', () => {
+    const metrics = byPost([
+      [a, ok({ views: 5 })],
+      [c, ok({ views: 5 })],
+    ]);
+    expect(bestPost(rows, metrics, 'views')?.post).toBe(c);
+  });
+
+  it('skips posts that failed, are loading, or do not report the metric', () => {
+    const metrics = byPost([
+      [a, failed],
+      [b, ok({ reach: 99 })],
+    ]);
+    expect(bestPost(rows, metrics, 'views')).toBeNull();
+    expect(bestPost(rows, new Map(), 'views')).toBeNull();
+  });
+
+  it('counts a real zero as a value', () => {
+    expect(bestPost(rows, byPost([[a, ok({ views: 0 })]]), 'views')).toEqual({ post: a, value: 0 });
   });
 });
 
@@ -500,7 +580,7 @@ describe('followers', () => {
 
 describe('buildTiles', () => {
   const p = post({ publishAt: daysAgo(1) });
-  const capped = capPosts(windowPosts([p], W30));
+  const capped = splitPeriods(windowPosts([p], W30));
 
   it('puts followers first, then the per-post names', () => {
     const tiles = buildTiles(
@@ -743,13 +823,13 @@ describe('loadProgress', () => {
 });
 
 describe('sync line', () => {
-  it('finds the newest capture per connection across followers and post series', () => {
+  it('finds the newest capture per connection across followers and post metrics', () => {
     const p = post({ connectionId: FB.id });
     const q = post({ connectionId: IG.id });
     const last = lastCaptureByConnection(
       windowPosts([p, q], W30),
       byPost([
-        [p, ok({ views: 1 }, [point(1, 500, 'views'), point(2, 900, 'views')])],
+        [p, ok({ views: 1 }, 900)],
         [q, failed],
       ]),
       new Map([
@@ -758,11 +838,45 @@ describe('sync line', () => {
       ]),
     );
     expect([...last]).toEqual([[FB.id, 900]]);
-    expect(latestCapture(last)).toBe(900);
   });
 
-  it('is null when nothing has been collected', () => {
-    expect(latestCapture(new Map())).toBeNull();
+  it('ignores a post with nothing collected', () => {
+    const p = post({ connectionId: FB.id });
+    const last = lastCaptureByConnection(windowPosts([p], W30), byPost([[p, ok({})]]), new Map());
+    expect([...last]).toEqual([]);
+  });
+
+  it('words the cadence from what the API reports, not from fixed text', () => {
+    const HOUR = 3_600_000;
+    expect(cadenceWord(HOUR)).toBe('hourly');
+    expect(cadenceWord(24 * HOUR)).toBe('daily');
+    expect(cadenceWord(6 * HOUR)).toBe('every 6 hours');
+    expect(cadenceWord(HOUR / 2)).toBe('every 30 minutes');
+    const cadence = {
+      sweepIntervalMs: HOUR,
+      freshPostWindowMs: 48 * HOUR,
+      freshPostIntervalMs: HOUR,
+      postIntervalMs: 24 * HOUR,
+      accountIntervalMs: 24 * HOUR,
+    };
+    expect(cadenceText(cadence)).toBe(
+      'posts refresh hourly for 48 h, then daily · followers daily',
+    );
+    expect(
+      cadenceText({ ...cadence, freshPostWindowMs: 72 * HOUR, postIntervalMs: 12 * HOUR }),
+    ).toBe('posts refresh hourly for 72 h, then every 12 hours · followers daily');
+  });
+
+  it('says when the next collection falls due: never, already, or at a time', () => {
+    const at = (d: Date | null) => nextRefresh({ nextDueAt: d }, NOW);
+    expect(at(null)).toEqual({ kind: 'none' });
+    expect(at(new Date(NOW - 1))).toEqual({ kind: 'due' });
+    expect(at(new Date(NOW))).toEqual({ kind: 'due' });
+    expect(at(new Date(NOW + 60_000))).toEqual({ kind: 'at', at: NOW + 60_000 });
+    // The API client hands dates over as ISO strings.
+    expect(
+      nextRefresh({ nextDueAt: new Date(NOW + 5).toISOString() as unknown as Date }, NOW),
+    ).toEqual({ kind: 'at', at: NOW + 5 });
   });
 
   it('flags a connection that needs reconnecting by either field', () => {

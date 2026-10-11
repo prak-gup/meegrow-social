@@ -1,26 +1,35 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import type { ConnectionView, PostView } from '@meegrow-social/contracts';
+import type { AnalyticsStatusView, ConnectionView, PostView } from '@meegrow-social/contracts';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { cn } from '../lib/cn';
 import { providerVisible } from '../lib/devProviders';
 import { platformMeta } from '../lib/platforms';
-import { postTimeLabel } from '../lib/postDate';
+import {
+  BULK_METRICS_MAX,
+  compactNumber,
+  idChunks,
+  mediaThumb,
+  shortDateTime,
+} from '../lib/postGroups';
 import { appendPage, captionSnippet, safeExternalUrl } from '../lib/postList';
 import {
   FOLLOWERS,
+  FOLLOWERS_CHUNK,
   LIST_MAX_PAGES,
   LIST_PAGE,
-  METRICS_CHUNK,
-  POST_CAP,
   RANGE_DAYS,
   TABLE_PAGE,
+  bestPost,
   buildTiles,
-  capPosts,
-  countUndated,
-  emptyPeriodNote,
+  bulkEntries,
+  bulkFailure,
+  cadenceText,
   chunk,
   connectionsFor,
+  countUndated,
+  emptyPeriodNote,
   filtersToParams,
   followerSnapshot,
   followerTimeline,
@@ -30,46 +39,56 @@ import {
   humanizeMetric,
   isClientRole,
   lastCaptureByConnection,
-  latestCapture,
   loadProgress,
   metricCell,
   metricHistories,
   needsReconnect,
+  nextRefresh,
   parseFilters,
   parsePoints,
   platformsOf,
+  postCount,
   resolveFilters,
   selectedConnections,
+  splitPeriods,
   tableMetricColumns,
   uniqueLabels,
   windowPosts,
   windowsFor,
   type AnalyticsFilters,
-  type CappedPosts,
   type FollowersByConnection,
   type MetricCell,
   type MetricPoint,
   type MetricsByPost,
+  type PeriodPosts,
   type PostMetrics,
   type RangeDays,
   type Tile,
   type WindowedPost,
   type Windows,
 } from '../lib/analytics';
+import { PostThumb } from '../components/PostThumb';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
-import { Chart } from '../components/ui/Chart';
+import { Chart, chartColor } from '../components/ui/Chart';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorState } from '../components/ui/ErrorState';
-import { Label } from '../components/ui/Label';
+import { FilterBar, FilterSelect } from '../components/ui/FilterBar';
 import { PageHeader } from '../components/ui/PageHeader';
-import { Select } from '../components/ui/Select';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Sparkline } from '../components/ui/Sparkline';
 import { StatTile } from '../components/ui/StatTile';
 import { Table, type TableColumn } from '../components/ui/Table';
-import { ArrowSquareOut, Article, CaretDown, CaretRight, ChartLineUp, Plugs } from '../lib/icons';
+import {
+  ArrowSquareOut,
+  Article,
+  CaretDown,
+  CaretRight,
+  ChartLineUp,
+  Plugs,
+  Trophy,
+} from '../lib/icons';
 
 // The page is in the sidebar for everyone, but its numbers have not been checked against the
 // platforms yet (docs/dev/ANALYTICS-UI-BRIEF.md §7), so it says so. Setting VITE_ANALYTICS_UI=true at
@@ -131,9 +150,9 @@ async function listPublished(query: {
 
 /**
  * Loads everything the screen shows for one filter set: connections, the published posts of the
- * period and the one before it, each post's metrics (one request per post, in chunks, capped) and
- * each selected connection's follower series. Per-post and per-connection results are kept across
- * filter changes, so narrowing a view costs no new requests.
+ * period and the one before it, their latest metrics (one bulk read per 200 posts), each selected
+ * connection's follower series, and when the data was last collected. Per-post and per-connection
+ * results are kept across filter changes, so narrowing a view costs no new requests.
  */
 function useAnalyticsData(raw: AnalyticsFilters) {
   const [run, setRun] = useState(() => ({ attempt: 0, now: Date.now() }));
@@ -141,6 +160,7 @@ function useAnalyticsData(raw: AnalyticsFilters) {
   const liveAttempt = useRef(0);
 
   const [connections, setConnections] = useState<Load<ConnectionView[]>>(LOADING);
+  const [status, setStatus] = useState<Load<AnalyticsStatusView>>(LOADING);
   const [postList, setPostList] = useState<{ key: string; load: Load<PostList> }>({
     key: '',
     load: LOADING,
@@ -150,6 +170,7 @@ function useAnalyticsData(raw: AnalyticsFilters) {
     result: { count: number; atLeast: boolean } | null;
   }>({ key: '', result: null });
   const metricsCache = useRef(new Map<string, PostMetrics>());
+  const metricsAsked = useRef(new Set<string>());
   const [metrics, setMetrics] = useState<MetricsByPost>(metricsCache.current);
   const followersCache = useRef(new Map<string, FollowerLoad>());
   const [followerLoads, setFollowerLoads] = useState<ReadonlyMap<string, FollowerLoad>>(
@@ -159,6 +180,7 @@ function useAnalyticsData(raw: AnalyticsFilters) {
   const retry = () => {
     liveAttempt.current += 1;
     metricsCache.current = new Map();
+    metricsAsked.current = new Set();
     followersCache.current = new Map();
     setMetrics(metricsCache.current);
     setFollowerLoads(followersCache.current);
@@ -177,6 +199,24 @@ function useAnalyticsData(raw: AnalyticsFilters) {
       })
       .catch((e: unknown) => {
         if (!stale) setConnections({ status: 'error', message: errorText(e) });
+      });
+    return () => {
+      stale = true;
+    };
+  }, [run.attempt]);
+
+  // When the numbers were last collected and when the next collection falls due. A failure here
+  // costs the sync line its facts, never the page.
+  useEffect(() => {
+    let stale = false;
+    setStatus(LOADING);
+    api
+      .analyticsStatus()
+      .then((data) => {
+        if (!stale) setStatus({ status: 'ok', data });
+      })
+      .catch((e: unknown) => {
+        if (!stale) setStatus({ status: 'error', message: errorText(e) });
       });
     return () => {
       stale = true;
@@ -220,15 +260,15 @@ function useAnalyticsData(raw: AnalyticsFilters) {
   // A list loaded for other filters is not this view's list.
   const posts: Load<PostList> = postList.key === listKey ? postList.load : LOADING;
 
-  const capped = useMemo(
-    () => (posts.status === 'ok' ? capPosts(windowPosts(posts.data.posts, windows)) : null),
+  const period = useMemo(
+    () => (posts.status === 'ok' ? splitPeriods(windowPosts(posts.data.posts, windows)) : null),
     [posts, windows],
   );
 
   // An empty period has two very different causes: nothing was published, or what was published has
   // no stored publish time (legacy posts) and so falls in no period at all. Only then is it worth
   // one more read of the list, without the date bounds, to tell them apart.
-  const periodEmpty = capped !== null && capped.currentTotal === 0;
+  const periodEmpty = period !== null && period.current.length === 0;
   const undatedKey = `${run.attempt}|${filters.platform}|${filters.connection}`;
   useEffect(() => {
     if (!periodEmpty) return;
@@ -250,43 +290,34 @@ function useAnalyticsData(raw: AnalyticsFilters) {
   }, [periodEmpty, undatedKey, filters.platform, filters.connection]);
   const undatedPosts = periodEmpty && undated.key === undatedKey ? undated.result : null;
 
+  // Latest metrics for every post of both periods: one bulk read per 200 ids. An id is asked for
+  // once; a failed read marks its posts, not the page.
   useEffect(() => {
-    if (!capped) return;
+    if (!period) return;
     const attempt = run.attempt;
-    let stale = false;
-    const missing = [...capped.current, ...capped.prior]
+    const missing = [...period.current, ...period.prior]
       .map((p) => p.post.id)
-      .filter((id) => !metricsCache.current.has(id));
-    void (async () => {
-      for (const ids of chunk(missing, METRICS_CHUNK)) {
-        if (stale) return;
-        const settled = await Promise.all(
-          ids.map(async (id): Promise<[string, PostMetrics]> => {
-            try {
-              const res = await api.postMetrics(id);
-              return [id, { status: 'ok', latest: res.latest, series: parsePoints(res.series) }];
-            } catch (e) {
-              // One post failing marks its row, not the table.
-              return [id, { status: 'error', message: errorText(e) }];
-            }
-          }),
-        );
-        if (liveAttempt.current !== attempt) return;
-        metricsCache.current = new Map([...metricsCache.current, ...settled]);
-        setMetrics(metricsCache.current);
-      }
-    })();
-    return () => {
-      stale = true;
-    };
-  }, [capped, run.attempt]);
+      .filter((id) => !metricsAsked.current.has(id));
+    for (const id of missing) metricsAsked.current.add(id);
+    for (const ids of idChunks(missing, BULK_METRICS_MAX)) {
+      void api
+        .latestPostMetrics(ids)
+        .then((res) => bulkEntries(ids, res.metrics))
+        .catch((e: unknown) => bulkFailure(ids, errorText(e)))
+        .then((settled) => {
+          if (liveAttempt.current !== attempt) return;
+          metricsCache.current = new Map([...metricsCache.current, ...settled]);
+          setMetrics(metricsCache.current);
+        });
+    }
+  }, [period, run.attempt]);
 
   const selectedIds = selected.map((c) => c.id).join(',');
   useEffect(() => {
     if (!selectedIds) return;
     const attempt = run.attempt;
     const missing = selectedIds.split(',').filter((id) => !followersCache.current.has(id));
-    for (const ids of chunk(missing, METRICS_CHUNK)) {
+    for (const ids of chunk(missing, FOLLOWERS_CHUNK)) {
       void Promise.all(
         ids.map(async (id): Promise<[string, FollowerLoad]> => {
           try {
@@ -324,12 +355,14 @@ function useAnalyticsData(raw: AnalyticsFilters) {
 
   return {
     connections,
+    status,
+    now: run.now,
     all,
     filters,
     selected,
     windows,
     posts,
-    capped,
+    period,
     undatedPosts,
     metrics,
     followers,
@@ -344,22 +377,32 @@ export function Analytics() {
   const [params, setParams] = useSearchParams();
   const raw = useMemo(() => parseFilters(params), [params]);
   const data = useAnalyticsData(raw);
-  const { connections, all, filters, selected, windows, posts, capped, metrics, followers } = data;
+  const { connections, all, filters, selected, windows, posts, period, metrics, followers } = data;
 
   const workspace = me?.user.memberships.find((m) => m.workspaceId === me.activeWorkspaceId);
   // Clients see the same numbers without operator affordances. Cosmetic until #20 enforces the
   // role at the API.
   const isClient = isClientRole(workspace?.role);
+  // The metric the comparison chart and "best post" use. Kept in the URL beside the filters; a
+  // name the data does not have (a stale link) falls back to the first one that exists.
+  const wantedMetric = params.get('metric') ?? '';
+  const write = (next: AnalyticsFilters, metric: string) => {
+    const out = filtersToParams(next);
+    if (metric) out.set('metric', metric);
+    setParams(out, { replace: true });
+  };
   const setFilters = (patch: Partial<AnalyticsFilters>) =>
-    setParams(filtersToParams(resolveFilters({ ...filters, ...patch }, all)), { replace: true });
+    write(resolveFilters({ ...filters, ...patch }, all), wantedMetric);
 
-  const loaded = useMemo(() => (capped ? [...capped.current, ...capped.prior] : []), [capped]);
+  const loaded = useMemo(() => (period ? [...period.current, ...period.prior] : []), [period]);
   const progress = useMemo(() => loadProgress(loaded, metrics), [loaded, metrics]);
-  const metricsSettled = capped !== null && progress.done === progress.total;
+  const metricsSettled = period !== null && progress.done === progress.total;
   const lastByConnection = useMemo(
     () => lastCaptureByConnection(loaded, metrics, data.followersSoFar),
     [loaded, metrics, data.followersSoFar],
   );
+  // A list cut short at the paging limit is missing posts on one side or the other: no comparison.
+  const complete = posts.status === 'ok' && !posts.data.truncated;
 
   const sectionError =
     posts.status === 'error'
@@ -367,17 +410,27 @@ export function Analytics() {
       : followers.status === 'error'
         ? followers.message
         : null;
-  const settled = capped !== null && metricsSettled && followers.status === 'ok';
+  const settled = period !== null && metricsSettled && followers.status === 'ok';
   const tiles = useMemo(
     () =>
-      capped && followers.status === 'ok' && metricsSettled
-        ? buildTiles(capped, metrics, followers.data.values(), windows)
+      period && followers.status === 'ok' && metricsSettled
+        ? buildTiles(period, metrics, followers.data.values(), windows, complete)
         : [],
-    [capped, followers, metricsSettled, metrics, windows],
+    [period, followers, metricsSettled, metrics, windows, complete],
   );
+  // The metric picker lists the per-post names by period total, largest first, so the default is
+  // the headline number and a metric a post can be "best" at; followers (an account's number, not
+  // a post's) comes last and stays pickable for the comparison chart. All from the data.
+  const postNames = tiles
+    .filter((t) => t.name !== FOLLOWERS)
+    .sort((a, b) => (b.value ?? 0) - (a.value ?? 0) || a.name.localeCompare(b.name))
+    .map((t) => t.name);
+  const names = tiles.some((t) => t.name === FOLLOWERS) ? [...postNames, FOLLOWERS] : postNames;
+  const metric = names.includes(wantedMetric) ? wantedMetric : names[0];
+  const bestMetric = metric && metric !== FOLLOWERS ? metric : postNames[0];
   const nothingYet =
-    capped !== null &&
-    capped.currentTotal === 0 &&
+    period !== null &&
+    period.current.length === 0 &&
     followers.status === 'ok' &&
     [...followers.data.values()].every((points) => points.length === 0);
 
@@ -389,7 +442,6 @@ export function Analytics() {
           ? `Published posts and connected accounts for ${workspace.name}.`
           : 'Published posts and connected accounts for this client.'
       }
-      className="mb-0"
       actions={
         !VALIDATED && (
           <Badge variant="neutral">
@@ -402,7 +454,7 @@ export function Analytics() {
 
   if (connections.status === 'error') {
     return (
-      <div className="space-y-4">
+      <div>
         {header}
         <ErrorState
           title="Couldn't load analytics"
@@ -415,7 +467,7 @@ export function Analytics() {
 
   if (connections.status === 'ok' && all.length === 0) {
     return (
-      <div className="space-y-4">
+      <div>
         {header}
         <EmptyState
           title="Connect an account to start collecting analytics."
@@ -433,22 +485,66 @@ export function Analytics() {
   }
 
   const booting = connections.status === 'loading';
+  const rangeText = `${new Date(windows.start).toLocaleDateString()} – ${new Date(windows.end).toLocaleDateString()}`;
 
   return (
-    <div className="space-y-4">
+    <div>
       {header}
 
-      <Filters
-        filters={filters}
-        connections={all}
-        disabled={booting}
-        onChange={setFilters}
-        windows={windows}
+      <FilterBar
+        className="mb-2"
+        filters={
+          <>
+            <FilterSelect
+              label="Platform"
+              value={filters.platform}
+              onChange={(v) => setFilters({ platform: v })}
+              options={[
+                { value: '', label: 'All platforms' },
+                ...platformsOf(all).map((p) => ({ value: p, label: platformLabel(p) })),
+              ]}
+            />
+            <FilterSelect
+              label="Profile"
+              value={filters.connection}
+              onChange={(v) => setFilters({ connection: v })}
+              options={[
+                { value: '', label: 'All profiles' },
+                ...connectionsFor(all, filters.platform).map((c) => ({
+                  value: c.id,
+                  // Without a platform filter two accounts can share a name, so the platform is spelled out.
+                  label: filters.platform
+                    ? c.displayName
+                    : `${c.displayName} · ${platformLabel(c.provider)}`,
+                })),
+              ]}
+            />
+            <FilterSelect
+              label="Date range"
+              value={String(filters.days)}
+              onChange={(v) => setFilters({ days: Number(v) as RangeDays })}
+              // The default first, so the pill reads as "no filter" until the range is changed.
+              options={[30, ...RANGE_DAYS.filter((d) => d !== 30)].map((days) => ({
+                value: String(days),
+                label: `Last ${days} days`,
+              }))}
+            />
+            {metric !== undefined && (
+              <FilterSelect
+                label="Metric for the comparison chart and best post"
+                value={metric}
+                onChange={(v) => write(filters, v === names[0] ? '' : v)}
+                options={names.map((name) => ({ value: name, label: humanizeMetric(name) }))}
+              />
+            )}
+          </>
+        }
+        actions={<p className="tnum text-caption text-muted">{rangeText}</p>}
       />
 
       <SyncLine
-        asOf={latestCapture(lastByConnection)}
-        settled={settled}
+        status={data.status}
+        now={data.now}
         stale={selected.filter(needsReconnect)}
         lastByConnection={lastByConnection}
         canReconnect={!isClient}
@@ -474,28 +570,33 @@ export function Analytics() {
           icon={ChartLineUp}
         />
       ) : (
-        <>
-          <section aria-label="Totals" className="space-y-2">
+        <div className="space-y-4">
+          <section aria-label="Totals" className="space-y-1.5">
             {sectionError ? (
               <ErrorState
                 title="Couldn't load totals"
                 message={sectionError}
                 onRetry={data.retry}
               />
-            ) : !settled || !capped ? (
-              <TilesSkeleton progress={capped ? progress : null} />
+            ) : !settled || !period ? (
+              <KpiSkeleton progress={period ? progress : null} />
             ) : (
-              <Tiles
+              <Kpis
                 tiles={tiles}
+                period={period}
+                complete={complete}
                 days={filters.days}
-                capped={capped}
                 failed={progress.failed}
-                truncated={posts.status === 'ok' && posts.data.truncated}
+                best={
+                  bestMetric
+                    ? { name: bestMetric, hit: bestPost(period.current, metrics, bestMetric) }
+                    : null
+                }
               />
             )}
           </section>
 
-          <section aria-label="Charts" className="grid gap-4 lg:grid-cols-2">
+          <section aria-label="Charts" className="grid gap-3 lg:grid-cols-2">
             {sectionError ? (
               <ChartFrame title="By platform">
                 <ErrorState
@@ -504,16 +605,16 @@ export function Analytics() {
                   onRetry={data.retry}
                 />
               </ChartFrame>
-            ) : !settled || !capped || followers.status !== 'ok' ? (
+            ) : !settled || !period || followers.status !== 'ok' ? (
               <ChartFrame title="By platform">
-                <Skeleton className="h-64 w-full" />
+                <Skeleton className="h-56 w-full" />
               </ChartFrame>
             ) : (
               <ComparisonChart
-                names={tiles.map((t) => t.name)}
+                metric={metric}
                 byProfile={filters.platform !== ''}
                 connections={selected}
-                capped={capped}
+                period={period}
                 metrics={metrics}
                 followers={followers.data}
                 windows={windows}
@@ -529,7 +630,7 @@ export function Analytics() {
               </ChartFrame>
             ) : followers.status === 'loading' || booting ? (
               <ChartFrame title="Followers over time">
-                <Skeleton className="h-64 w-full" />
+                <Skeleton className="h-56 w-full" />
               </ChartFrame>
             ) : (
               <FollowersChart
@@ -550,128 +651,75 @@ export function Analytics() {
                 message={posts.message}
                 onRetry={data.retry}
               />
-            ) : !capped ? (
+            ) : !period ? (
               <PostsTableSkeleton />
             ) : (
               <PostsTable
                 // A new filter set starts again from the first page with every row collapsed.
                 key={`${filters.platform}|${filters.connection}|${filters.days}`}
-                capped={capped}
+                period={period}
                 undated={data.undatedPosts}
                 metrics={metrics}
                 connections={all}
               />
             )}
           </section>
-        </>
+        </div>
       )}
     </div>
   );
 }
 
-function Filters({
-  filters,
-  connections,
-  disabled,
-  onChange,
-  windows,
-}: {
-  filters: AnalyticsFilters;
-  connections: ConnectionView[];
-  disabled: boolean;
-  onChange: (patch: Partial<AnalyticsFilters>) => void;
-  windows: Windows;
-}) {
-  const period = `${new Date(windows.start).toLocaleDateString()} – ${new Date(windows.end).toLocaleDateString()}`;
-  return (
-    <div className="flex flex-wrap items-end gap-3">
-      <div className="space-y-1.5">
-        <Label htmlFor="analytics-platform">Platform</Label>
-        <Select
-          id="analytics-platform"
-          value={filters.platform}
-          disabled={disabled}
-          onChange={(e) => onChange({ platform: e.target.value })}
-          className="w-48"
-        >
-          <option value="">All platforms</option>
-          {platformsOf(connections).map((provider) => (
-            <option key={provider} value={provider}>
-              {platformLabel(provider)}
-            </option>
-          ))}
-        </Select>
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="analytics-profile">Profile</Label>
-        <Select
-          id="analytics-profile"
-          value={filters.connection}
-          disabled={disabled}
-          onChange={(e) => onChange({ connection: e.target.value })}
-          className="w-56"
-        >
-          <option value="">All profiles</option>
-          {connectionsFor(connections, filters.platform).map((c) => (
-            <option key={c.id} value={c.id}>
-              {/* Without a platform filter two accounts can share a name, so the platform is spelled out. */}
-              {filters.platform ? c.displayName : `${c.displayName} · ${platformLabel(c.provider)}`}
-            </option>
-          ))}
-        </Select>
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="analytics-days">Date range</Label>
-        <Select
-          id="analytics-days"
-          value={filters.days}
-          disabled={disabled}
-          onChange={(e) => onChange({ days: Number(e.target.value) as RangeDays })}
-          className="w-40"
-        >
-          {RANGE_DAYS.map((days) => (
-            <option key={days} value={days}>
-              Last {days} days
-            </option>
-          ))}
-        </Select>
-      </div>
-      <p className="tnum pb-2.5 text-caption text-muted">{period}</p>
-    </div>
-  );
-}
-
 /**
- * When the data was last captured. The cadence is static text: the API exposes neither the last nor
- * the next sync, so the newest capture among what is loaded is the only honest "as of".
+ * When the data was last collected and when the next collection falls due — both facts from
+ * `GET /v1/analytics/status`, with the collection rules worded from the cadence it reports. "Next
+ * refresh from" because that is when something becomes due; the hourly run after it collects.
  */
 function SyncLine({
-  asOf,
-  settled,
+  status,
+  now,
   stale,
   lastByConnection,
   canReconnect,
 }: {
-  asOf: number | null;
-  settled: boolean;
+  status: Load<AnalyticsStatusView>;
+  now: number;
   stale: ConnectionView[];
   lastByConnection: ReadonlyMap<string, number>;
   canReconnect: boolean;
 }) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      <p className="tnum text-caption text-muted">
-        {asOf !== null ? (
-          <>
-            Data as of <time dateTime={new Date(asOf).toISOString()}>{formatCapture(asOf)}</time>
-          </>
-        ) : settled ? (
-          'No data collected yet'
+  const at = (ms: number) => (
+    <time dateTime={new Date(ms).toISOString()}>{shortDateTime(new Date(ms), new Date(now))}</time>
+  );
+  let line: ReactNode;
+  if (status.status === 'loading') line = 'Checking when data was last collected…';
+  else if (status.status === 'error') line = 'Couldn’t check when data was last collected.';
+  else {
+    const captured = status.data.lastCapturedAt
+      ? new Date(status.data.lastCapturedAt).getTime()
+      : null;
+    const next = nextRefresh(status.data, now);
+    line = (
+      <>
+        {captured !== null ? <>Data as of {at(captured)}</> : 'No data collected yet'}
+        {' · '}
+        {next.kind === 'at' ? (
+          <>next refresh from {at(next.at)}</>
+        ) : next.kind === 'due' ? (
+          'next refresh due now'
         ) : (
-          'Loading…'
+          'nothing to refresh: no account can be read'
         )}
-        {' · posts refresh hourly for 48 h then daily · followers daily'}
-      </p>
+        <span className="hidden sm:inline">
+          {' · '}
+          {cadenceText(status.data.cadence)}
+        </span>
+      </>
+    );
+  }
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      <p className="tnum text-caption text-muted">{line}</p>
       {stale.map((c) => {
         const last = lastByConnection.get(c.id);
         return (
@@ -694,90 +742,178 @@ function SyncLine({
 
 const TILE_HINT = 'Posts published in the period, all-time totals';
 const FOLLOWERS_HINT = 'Latest capture in the period, summed across the selected profiles';
+const POSTS_HINT = 'Posts published in the period';
+// One cell of the strip: StatTile without its own frame, divided from its neighbours by hairlines.
+// The grid's -1px margins hide the dividers on the strip's right and bottom edges.
+const CELL = 'rounded-none border-0 border-b border-r border-hairline-soft';
 
-function Tiles({
+/**
+ * The headline numbers as one bordered strip: followers, posts published, then every metric the
+ * period's posts report — whatever their names are — and the best post by the chosen metric.
+ */
+function Kpis({
   tiles,
+  period,
+  complete,
   days,
-  capped,
   failed,
-  truncated,
+  best,
 }: {
   tiles: Tile[];
+  period: PeriodPosts;
+  complete: boolean;
   days: number;
-  capped: CappedPosts;
   failed: number;
-  truncated: boolean;
+  best: { name: string; hit: { post: PostView; value: number } | null } | null;
 }) {
-  if (tiles.length === 0) {
-    return (
-      <EmptyState
-        title="No metrics captured for this period yet"
-        description="Posts are checked hourly for their first 48 hours, then daily."
-      />
-    );
-  }
-  const overCap = capped.currentTotal > capped.current.length;
+  // Short, so a delta stays on one line in a narrow cell; the note under the strip names the period.
+  const deltaLabel = 'vs prior';
+  const count = postCount(period, complete);
+  const account = tiles.find((t) => t.name === FOLLOWERS);
+  const perPost = tiles.filter((t) => t.name !== FOLLOWERS);
   return (
     <>
-      <div className="grid grid-cols-tiles gap-3">
-        {tiles.map((tile) => (
+      <div className="overflow-hidden rounded-md border border-hairline bg-canvas">
+        <div className="-mb-px -mr-px grid grid-cols-2 sm:grid-cols-kpis">
+          {account && (
+            <StatTile
+              className={CELL}
+              label={humanizeMetric(account.name)}
+              value={formatValue(account.value)}
+              delta={account.delta}
+              deltaLabel={deltaLabel}
+              showMissingDelta
+              hint={FOLLOWERS_HINT}
+            />
+          )}
           <StatTile
-            key={tile.name}
-            label={humanizeMetric(tile.name)}
-            value={formatValue(tile.value)}
-            delta={tile.delta}
-            deltaLabel={`vs prior ${days} days`}
+            className={CELL}
+            label="Posts published"
+            value={count.value.toLocaleString()}
+            delta={count.delta}
+            deltaLabel={deltaLabel}
             showMissingDelta
-            hint={tile.name === FOLLOWERS ? FOLLOWERS_HINT : TILE_HINT}
+            hint={POSTS_HINT}
           />
-        ))}
+          {perPost.map((tile) => (
+            <StatTile
+              key={tile.name}
+              className={CELL}
+              label={humanizeMetric(tile.name)}
+              value={formatValue(tile.value)}
+              delta={tile.delta}
+              deltaLabel={deltaLabel}
+              showMissingDelta
+              hint={TILE_HINT}
+            />
+          ))}
+          {best && <BestPost name={best.name} hit={best.hit} className={CELL} />}
+        </div>
       </div>
       {/* The definitions are also on hover, but hover alone is not reachable by keyboard or touch. */}
       <p className="text-caption text-muted">
-        Post metrics add up the all-time totals of posts published in the period, so an older post
-        counts everything it has gathered since. Followers is the latest capture in the period.
+        {perPost.length > 0
+          ? `Compared with the ${days} days before. Post metrics add up the all-time totals of posts published in the period, so an older post counts everything it has gathered since. Followers is the latest capture in the period.`
+          : 'No post metrics captured for this period yet.'}
       </p>
-      {overCap && (
-        <p className="text-caption font-semibold text-status-warn">
-          Showing the newest {capped.current.length.toLocaleString()} of{' '}
-          {capped.currentTotal.toLocaleString()} posts published in this period — totals cover those
-          only.
-        </p>
-      )}
-      {!overCap && !capped.priorComplete && (
-        <p className="text-caption text-muted">
-          The prior period has more posts than the {POST_CAP}-post limit can load, so post metrics
-          show no change vs prior.
-        </p>
-      )}
       {failed > 0 && (
         <p className="text-caption font-semibold text-status-warn">
           Metrics for {failed.toLocaleString()} {failed === 1 ? 'post' : 'posts'} could not be
           loaded — totals leave them out and show no change vs prior.
         </p>
       )}
-      {truncated && (
+      {!complete && (
         <p className="text-caption font-semibold text-status-warn">
           There are more published posts in this range than could be listed; the newest may be
-          missing.
+          missing, so nothing is compared with the prior period.
         </p>
       )}
     </>
   );
 }
 
-/** Same box geometry as the loaded tiles, so nothing jumps when the numbers arrive. */
-function TilesSkeleton({ progress }: { progress: { total: number; done: number } | null }) {
+/** The post with the highest value of the chosen metric, linking to it. */
+function BestPost({
+  name,
+  hit,
+  className,
+}: {
+  name: string;
+  hit: { post: PostView; value: number } | null;
+  className?: string;
+}) {
+  const label = humanizeMetric(name);
+  const url = hit ? safeExternalUrl(hit.post.releaseUrl) : null;
+  const body = hit && (
+    <>
+      <PostThumb
+        thumb={mediaThumb(hit.post.media)}
+        caption={hit.post.caption}
+        size="sm"
+        className="h-10 w-10"
+      />
+      <span className="min-w-0 flex-1">
+        <span className="tnum block text-lg font-semibold leading-tight text-ink">
+          {formatValue(hit.value)}
+        </span>
+        <span className="block truncate text-caption text-muted">
+          {captionSnippet(hit.post.caption, 60)}
+        </span>
+      </span>
+    </>
+  );
+  const row = 'mt-1 flex min-w-0 items-center gap-2.5 rounded-sm';
+  return (
+    <div className={cn('col-span-2 min-w-0 bg-canvas p-3', className)}>
+      <div className="flex items-center justify-between gap-2 text-caption font-medium text-muted">
+        <span className="truncate" title={name}>
+          Best post · {label}
+        </span>
+        <Trophy size={16} className="flex-none" aria-hidden="true" />
+      </div>
+      {!hit ? (
+        <p className="mt-1 text-sm text-muted">
+          <span aria-hidden="true">— </span>No post in this period reports {label}.
+        </p>
+      ) : url ? (
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`Best post by ${label}, ${formatValue(hit.value)}: ${captionSnippet(hit.post.caption)} (opens on ${platformLabel(hit.post.provider)} in a new tab)`}
+          className={cn(row, 'hover:bg-surface-soft')}
+        >
+          {body}
+          <ArrowSquareOut size={14} className="flex-none text-muted" aria-hidden="true" />
+        </a>
+      ) : (
+        // No link to the platform was stored for this post, so it opens where it can be found.
+        <Link
+          to="/content"
+          aria-label={`Best post by ${label}, ${formatValue(hit.value)}: ${captionSnippet(hit.post.caption)}. Open Content`}
+          className={cn(row, 'hover:bg-surface-soft')}
+        >
+          {body}
+        </Link>
+      )}
+    </div>
+  );
+}
+
+/** Same strip geometry as the loaded numbers, so nothing jumps when they arrive. */
+function KpiSkeleton({ progress }: { progress: { total: number; done: number } | null }) {
   return (
     <>
-      <div className="grid grid-cols-tiles gap-3">
-        {Array.from({ length: 4 }, (_, i) => (
-          <div key={i} className="rounded-md border border-hairline bg-canvas p-4">
-            <Skeleton className="h-5 w-24" />
-            <Skeleton className="mt-1 h-8 w-20" />
-            <Skeleton className="mt-1 h-5 w-28" />
-          </div>
-        ))}
+      <div className="overflow-hidden rounded-md border border-hairline bg-canvas">
+        <div className="-mb-px -mr-px grid grid-cols-2 sm:grid-cols-kpis">
+          {Array.from({ length: 6 }, (_, i) => (
+            <div key={i} className={cn('p-3', CELL)}>
+              <Skeleton className="h-4 w-20" />
+              <Skeleton className="mt-1.5 h-7 w-16" />
+              <Skeleton className="mt-1.5 h-4 w-24" />
+            </div>
+          ))}
+        </div>
       </div>
       <p className="tnum text-caption text-muted">
         {progress && progress.total > 0
@@ -791,20 +927,39 @@ function TilesSkeleton({ progress }: { progress: { total: number; done: number }
 /** The chart card's frame for the states that have no chart to draw. */
 function ChartFrame({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <Card className="p-4">
-      <h2 className="mb-3 text-body font-semibold text-ink">{title}</h2>
+    <Card className="p-3">
+      <h2 className="mb-2 text-body font-semibold text-ink">{title}</h2>
       {children}
     </Card>
   );
 }
 
-/** The values behind a chart, as text: every platform/profile is listed, with "—" where it has none. */
-function ValueList({ rows }: { rows: Array<{ key: string; label: string; value: ReactNode }> }) {
+/**
+ * The values behind a chart, as text: every platform/profile is listed, with "—" where it has
+ * none. With a `color` per row it is also the chart's key, so the series is named beside its number.
+ */
+function ValueList({
+  rows,
+}: {
+  rows: Array<{ key: string; label: string; value: ReactNode; color?: string }>;
+}) {
   return (
-    <ul className="mt-3 divide-y divide-hairline-soft text-sm">
+    <ul className="mt-2 grid gap-x-6 text-sm sm:grid-cols-2">
       {rows.map((row) => (
-        <li key={row.key} className="flex items-baseline justify-between gap-3 py-1.5">
-          <span className="min-w-0 truncate text-body-ink">{row.label}</span>
+        <li
+          key={row.key}
+          className="flex items-baseline justify-between gap-3 border-t border-hairline-soft py-1"
+        >
+          <span className="flex min-w-0 items-center gap-1.5 text-body-ink">
+            {row.color !== undefined && (
+              <span
+                aria-hidden="true"
+                className="h-0.5 w-3 flex-none"
+                style={{ background: row.color || 'transparent' }}
+              />
+            )}
+            <span className="truncate">{row.label}</span>
+          </span>
           <span className="tnum flex-none font-semibold text-ink">{row.value}</span>
         </li>
       ))}
@@ -823,24 +978,23 @@ const noValue = (why: string) => (
 
 /** One metric's period total per platform, or per profile once a platform is chosen. */
 function ComparisonChart({
-  names,
+  metric,
   byProfile,
   connections,
-  capped,
+  period,
   metrics,
   followers,
   windows,
 }: {
-  names: string[];
+  /** The metric picked in the filter bar; undefined when the period has none. */
+  metric: string | undefined;
   byProfile: boolean;
   connections: ConnectionView[];
-  capped: CappedPosts;
+  period: PeriodPosts;
   metrics: MetricsByPost;
   followers: FollowersByConnection;
   windows: Windows;
 }) {
-  const [picked, setPicked] = useState('');
-  const metric = names.includes(picked) ? picked : names[0];
   const heading = byProfile ? 'By profile' : 'By platform';
   if (metric === undefined) {
     return (
@@ -853,7 +1007,7 @@ function ComparisonChart({
     metric,
     groupBy: byProfile ? 'connection' : 'platform',
     connections,
-    posts: capped.current,
+    posts: period.current,
     metrics,
     followers,
     windows,
@@ -872,20 +1026,6 @@ function ComparisonChart({
       xLabel={byProfile ? 'Profile' : 'Platform'}
       data={rows.map((r) => ({ group: r.label, value: r.value }))}
       series={[{ key: 'value', label }]}
-      actions={
-        <Select
-          aria-label="Metric to compare"
-          value={metric}
-          onChange={(e) => setPicked(e.target.value)}
-          className="h-9 w-48 text-sm"
-        >
-          {names.map((name) => (
-            <option key={name} value={name}>
-              {humanizeMetric(name)}
-            </option>
-          ))}
-        </Select>
-      }
       footer={
         <ValueList
           rows={rows.map((r) => ({
@@ -939,6 +1079,8 @@ function FollowersChart({
       </ChartFrame>
     );
   }
+  // The colour each charted profile is drawn in, so the list under the plot can be its key.
+  const colorOf = new Map(charted.map((c, i) => [c.id, chartColor(i)]));
   return (
     <Chart
       type="line"
@@ -947,7 +1089,9 @@ function FollowersChart({
       xLabel="Day"
       data={timeline.rows}
       series={charted.map((c) => ({ key: c.id, label: labels.get(c.id) ?? c.displayName }))}
-      dots={timeline.sparse || days <= 30}
+      dots={timeline.sparse || days <= 7}
+      // The list below names every profile beside its colour and its latest number.
+      legend={false}
       footer={
         <ValueList
           rows={connections.map((c) => {
@@ -956,6 +1100,8 @@ function FollowersChart({
             return {
               key: c.id,
               label: labels.get(c.id) ?? c.displayName,
+              // A profile with no line still takes the swatch's width, so the names line up.
+              color: colorOf.get(c.id) ?? '',
               value: current
                 ? formatValue(current.value)
                 : noValue(
@@ -971,7 +1117,7 @@ function FollowersChart({
   );
 }
 
-const POST_COLUMNS = ['Published', 'Platform', 'Profile', 'Post'];
+const POST_COLUMNS = ['Published', 'Profile', 'Post'];
 
 /** Same header and row geometry as the loaded table. */
 function PostsTableSkeleton() {
@@ -993,7 +1139,7 @@ function PostsTableSkeleton() {
 function MetricValue({ cell }: { cell: MetricCell }) {
   switch (cell.kind) {
     case 'value':
-      return <>{formatValue(cell.value)}</>;
+      return <span title={cell.value.toLocaleString()}>{compactNumber(cell.value)}</span>;
     case 'pending':
       // Still loading: a dash, never a 0 that could be read as a number.
       return (
@@ -1014,17 +1160,36 @@ function MetricValue({ cell }: { cell: MetricCell }) {
   }
 }
 
-/** The expanded row: each metric's capture history as a sparkline with its point count. */
-function PostHistory({ entry }: { entry: PostMetrics | undefined }) {
-  if (!entry) return <p className="text-caption text-muted">Loading metrics…</p>;
-  if (entry.status === 'error') {
+/**
+ * The expanded row: each metric's capture history as a sparkline with its point count. The history
+ * is one read per post, made only when its row is opened — the table itself runs on the bulk read.
+ */
+function PostHistory({ postId }: { postId: string }) {
+  const [load, setLoad] = useState<Load<MetricPoint[]>>(LOADING);
+  useEffect(() => {
+    let stale = false;
+    api
+      .postMetrics(postId)
+      .then((res) => {
+        if (!stale) setLoad({ status: 'ok', data: parsePoints(res.series) });
+      })
+      .catch((e: unknown) => {
+        if (!stale) setLoad({ status: 'error', message: errorText(e) });
+      });
+    return () => {
+      stale = true;
+    };
+  }, [postId]);
+
+  if (load.status === 'loading') return <p className="text-caption text-muted">Loading history…</p>;
+  if (load.status === 'error') {
     return (
       <p className="text-caption text-status-bad">
-        Couldn’t load metrics for this post: {entry.message}
+        Couldn’t load the history for this post: {load.message}
       </p>
     );
   }
-  const histories = metricHistories(entry.series);
+  const histories = metricHistories(load.data);
   if (histories.length === 0) {
     return <p className="text-caption text-muted">No captures for this post yet.</p>;
   }
@@ -1059,15 +1224,15 @@ function PostHistory({ entry }: { entry: PostMetrics | undefined }) {
 
 /**
  * Published posts of the period, newest first, with one column per metric name the rows on screen
- * returned. Rows fill in as their metrics request settles.
+ * returned. Cells fill in as the bulk read that carries their post settles.
  */
 function PostsTable({
-  capped,
+  period,
   undated,
   metrics,
   connections,
 }: {
-  capped: CappedPosts;
+  period: PeriodPosts;
   /** Published posts with no publish time, counted only when the period is empty; null = unknown. */
   undated: { count: number; atLeast: boolean } | null;
   metrics: MetricsByPost;
@@ -1075,7 +1240,7 @@ function PostsTable({
 }) {
   const [shown, setShown] = useState(TABLE_PAGE);
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
-  const rows = capped.current.slice(0, shown);
+  const rows = period.current.slice(0, shown);
   const names = tableMetricColumns(rows, metrics);
   const profiles = new Map(connections.map((c) => [c.id, c.displayName]));
   const toggle = (id: string) =>
@@ -1113,29 +1278,26 @@ function PostsTable({
       key: 'published',
       header: 'Published',
       className: 'whitespace-nowrap',
-      cell: ({ post, at }) => (
-        <time dateTime={new Date(at).toISOString()}>{postTimeLabel(post)}</time>
+      cell: ({ at }) => (
+        <time dateTime={new Date(at).toISOString()} title={new Date(at).toLocaleString()}>
+          {shortDateTime(new Date(at))}
+        </time>
       ),
-    },
-    {
-      key: 'platform',
-      header: 'Platform',
-      className: 'whitespace-nowrap',
-      cell: ({ post }) => {
-        const platform = platformMeta({ identifier: post.provider, displayName: post.provider });
-        return (
-          <span className="inline-flex items-center gap-2">
-            <platform.Icon size={18} aria-hidden="true" className="flex-none text-muted" />
-            {platform.label}
-          </span>
-        );
-      },
     },
     {
       key: 'profile',
       header: 'Profile',
       className: 'whitespace-nowrap',
-      cell: ({ post }) => profiles.get(post.connectionId) ?? noValue('Unknown profile'),
+      cell: ({ post }) => {
+        const platform = platformMeta({ identifier: post.provider, displayName: post.provider });
+        return (
+          <span className="inline-flex items-center gap-2" title={platform.label}>
+            <platform.Icon size={16} aria-hidden="true" className="flex-none text-muted" />
+            <span className="sr-only">{platform.label}: </span>
+            {profiles.get(post.connectionId) ?? noValue('Unknown profile')}
+          </span>
+        );
+      },
     },
     {
       key: 'post',
@@ -1144,20 +1306,25 @@ function PostsTable({
       cell: ({ post }) => {
         const url = safeExternalUrl(post.releaseUrl);
         const text = captionSnippet(post.caption, 80);
-        return url ? (
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="inline-flex items-baseline gap-1 text-body-ink underline"
-          >
-            {text}
-            <ArrowSquareOut size={14} aria-hidden="true" className="flex-none self-center" />
-            <span className="sr-only">(opens in a new tab)</span>
-          </a>
-        ) : (
-          <span className="text-body-ink">{text}</span>
+        return (
+          <span className="flex min-w-0 items-center gap-2">
+            <PostThumb thumb={mediaThumb(post.media)} caption={post.caption} size="sm" />
+            {url ? (
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex min-w-0 items-baseline gap-1 text-body-ink underline"
+              >
+                <span className="line-clamp-1">{text}</span>
+                <ArrowSquareOut size={14} aria-hidden="true" className="flex-none self-center" />
+                <span className="sr-only">(opens in a new tab)</span>
+              </a>
+            ) : (
+              <span className="line-clamp-1 text-body-ink">{text}</span>
+            )}
+          </span>
         );
       },
     },
@@ -1182,7 +1349,7 @@ function PostsTable({
         columns={columns}
         onRowClick={(row) => toggle(row.post.id)}
         renderExpanded={(row) =>
-          open.has(row.post.id) ? <PostHistory entry={metrics.get(row.post.id)} /> : null
+          open.has(row.post.id) ? <PostHistory postId={row.post.id} /> : null
         }
         empty={{
           title: 'No published posts in this period',
@@ -1193,12 +1360,10 @@ function PostsTable({
       {rows.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="tnum text-caption text-muted">
-            Showing {rows.length.toLocaleString()} of {capped.current.length.toLocaleString()} posts
-            {capped.currentTotal > capped.current.length &&
-              ` — only the newest ${capped.current.length.toLocaleString()} of ${capped.currentTotal.toLocaleString()} in this period are loaded`}
-            . Values are each post’s all-time totals as of its last capture.
+            Showing {rows.length.toLocaleString()} of {period.current.length.toLocaleString()}{' '}
+            posts. Values are each post’s all-time totals as of its last capture.
           </p>
-          {shown < capped.current.length && (
+          {shown < period.current.length && (
             <Button variant="outline" size="sm" onClick={() => setShown((n) => n + TABLE_PAGE)}>
               Load more
             </Button>

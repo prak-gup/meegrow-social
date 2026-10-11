@@ -1,5 +1,3 @@
-import type { PostStatus, PostView } from '@meegrow-social/contracts';
-
 /**
  * Posts published "now" were once stored with the Unix epoch as `publishAt`, and a pending fix
  * stores `null` instead. Both mean "no date": anything before 2001 (and anything unparseable) is
@@ -37,19 +35,6 @@ export function formatPublishTime(value: PublishAt): string {
 
 /**
  * Shown where a published post's time would go when none was stored. These are legacy posts and
- * are not being backfilled, so the gap is named instead of left blank.
+ * are not being backfilled, so the gap is named instead of left blank (lib/postGroups `groupWhen`).
  */
 export const TIME_NOT_RECORDED = 'Time not recorded';
-
-/** Stand-in for a missing time: only a published post is expected to have one. */
-export function missingTimeLabel(status: PostStatus): string {
-  return status === 'published' ? TIME_NOT_RECORDED : '—';
-}
-
-/** A post's time for display (`format` picks date + time or time only), or the stand-in. */
-export function postTimeLabel(
-  post: Pick<PostView, 'status' | 'publishAt'>,
-  format: (value: PublishAt) => string = formatPublishAt,
-): string {
-  return hasPublishDate(post.publishAt) ? format(post.publishAt) : missingTimeLabel(post.status);
-}

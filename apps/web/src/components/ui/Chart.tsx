@@ -2,7 +2,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -34,6 +33,11 @@ export interface ChartProps {
   actions?: ReactNode;
   /** Rendered under the plot, inside the frame (e.g. a values list). */
   footer?: ReactNode;
+  /**
+   * The series key under the title when there is more than one series (default true). Turn it off
+   * when the `footer` already names every series beside its colour.
+   */
+  legend?: boolean;
   /** Line charts: mark each data point. Needed when a series may have a single point. */
   dots?: boolean;
   /** Tailwind height class for the plot area (default `h-64`); width is always responsive. */
@@ -48,6 +52,8 @@ const SERIES_TOKENS = [
   'hsl(var(--chart-4))',
   'hsl(var(--chart-5))',
 ];
+/** The colour series `index` is drawn in when it sets none — for a caller's own legend or list. */
+export const chartColor = (index: number): string => SERIES_TOKENS[index % SERIES_TOKENS.length]!;
 const GRID = 'hsl(var(--hairline-soft))';
 const AXIS = 'hsl(var(--muted))';
 // recharts takes numbers/inline styles for these (no className hook); mirrors the radius/type tokens.
@@ -80,12 +86,12 @@ export function Chart({
   xLabel,
   actions,
   footer,
+  legend = true,
   dots = false,
-  plotClassName = 'h-64',
+  plotClassName = 'h-56',
   className,
 }: ChartProps) {
-  const colorOf = (s: ChartSeries, i: number) =>
-    s.color ?? SERIES_TOKENS[i % SERIES_TOKENS.length]!;
+  const colorOf = (s: ChartSeries, i: number) => s.color ?? chartColor(i);
   const common = { data, margin: PLOT_MARGIN };
   const axes = (
     <>
@@ -102,15 +108,29 @@ export function Chart({
           fontSize: TOOLTIP_FONT_SIZE,
         }}
       />
-      {series.length > 1 && <Legend iconType={type === 'line' ? 'plainline' : 'circle'} />}
     </>
   );
   return (
-    <figure className={cn('rounded-md border border-hairline bg-canvas p-4', className)}>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+    // min-w-0: as a grid or flex item the figure must be allowed to shrink below the plot's width.
+    <figure className={cn('min-w-0 rounded-md border border-hairline bg-canvas p-3', className)}>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <figcaption className="text-body font-semibold text-ink">{title}</figcaption>
         {actions}
       </div>
+      {/* Our own key, above the plot: recharts' legend floats under it and wraps unpredictably. */}
+      {legend && series.length > 1 && (
+        <ul aria-hidden="true" className="mb-2 flex flex-wrap gap-x-4 gap-y-1">
+          {series.map((s, i) => (
+            <li key={s.key} className="flex min-w-0 items-center gap-1.5 text-caption text-muted">
+              <span
+                className={cn('flex-none', type === 'line' ? 'h-0.5 w-3' : 'h-2 w-2 rounded-full')}
+                style={{ background: colorOf(s, i) }}
+              />
+              <span className="truncate">{s.label}</span>
+            </li>
+          ))}
+        </ul>
+      )}
       <div role="img" aria-label={title} className={plotClassName}>
         <ResponsiveContainer width="100%" height="100%">
           {type === 'bar' ? (
@@ -145,29 +165,33 @@ export function Chart({
           )}
         </ResponsiveContainer>
       </div>
-      <table className="sr-only">
-        <caption>{title}</caption>
-        <thead>
-          <tr>
-            <th scope="col">{xLabel ?? xKey}</th>
-            {series.map((s) => (
-              <th key={s.key} scope="col">
-                {s.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((row, i) => (
-            <tr key={i}>
-              <th scope="row">{row[xKey]}</th>
+      {/* The wrapper is what is visually hidden: a <table> ignores the 1px width `sr-only` sets
+          and would stretch the page sideways on a phone. */}
+      <div className="sr-only">
+        <table>
+          <caption>{title}</caption>
+          <thead>
+            <tr>
+              <th scope="col">{xLabel ?? xKey}</th>
               {series.map((s) => (
-                <td key={s.key}>{row[s.key] ?? '—'}</td>
+                <th key={s.key} scope="col">
+                  {s.label}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {data.map((row, i) => (
+              <tr key={i}>
+                <th scope="row">{row[xKey]}</th>
+                {series.map((s) => (
+                  <td key={s.key}>{row[s.key] ?? '—'}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       {footer}
     </figure>
   );
