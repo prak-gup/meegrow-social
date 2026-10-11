@@ -95,6 +95,7 @@ Docs:
   `post_clicks` returned. Meta **400s the entire insights call** on one unknown metric name rather
   than omitting it — so request metrics ONE AT A TIME and skip failures, or a single retired name
   costs you every metric. This is §6's deprecation risk, live.
+  **Superseded 2026-10-11 (#54):** the name is no longer requested; see §5.2.1 for the replacement set.
 - **An IG permalink is an opaque shortcode** (`/p/CxYz123/`), NOT the numeric media id that
   `media_publish` returns. `instagram.com/p/{media-id}` 404s — fetch `?fields=permalink` instead.
 - **A Page with no linked IG Business account** simply omits `instagram_business_account` from the
@@ -172,12 +173,53 @@ Docs:
 - https://developers.facebook.com/docs/instagram-platform/api-reference/instagram-media/insights/
 
 ### 5.2 Facebook Pages
-- **Per-post:** `GET /v25.0/{post-id}/insights?metric=post_impressions,post_reactions_by_type_total,...` — **but** `post_impressions` (and organic/paid breakdowns) are being removed; migrate to **`post_media_view`** / views-based metrics.
+- **Per-post:** `GET /{post-id}/insights?metric=<one name>` — the `post_impressions*` family is gone for all API versions; the views-era set we request is in §5.2.1.
 - **Page-level:** `GET /v25.0/{page-id}/insights?metric=page_impressions,page_fans,...&period=day` — again, **`page_impressions` and `page_fans` are deprecated Nov 15 2025**, replaced by **`page_media_view`** (views) and **Page followers** (`followers_count` field / `page_follows`). A larger sweep of Page Insights metrics is scheduled to drop for **all versions by June 15 2026**.
 - **Current follower/like counts:** read as fields — `GET /v25.0/{page-id}?fields=followers_count,fan_count`.
 - Scope: `read_insights`.
 - https://developers.facebook.com/docs/graph-api/reference/insights/
 - https://developers.facebook.com/blog/post/2025/08/15/page-insights-api-updates/
+
+### 5.2.1 Per-post metric set (issue #54, researched 2026-10-11 — documentation only, NOT verified live)
+
+No credentials were used for this pass: every name below comes from Meta's public reference, read
+on 2026-10-11, and only the two marked "live" have ever been seen in a real response. The code asks
+for one name per call and skips failures, so a name that turns out not to be served is simply absent.
+
+| Requested name                 | What Meta documents                                                                                                                  | Status                                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `post_media_view`              | "The number of times your content was played or displayed." Period `lifetime`; optional breakdowns `is_from_ads`, `is_from_followers` | Documented as current, and as the replacement for `post_impressions`. Not seen live.       |
+| `post_total_media_view_unique` | "The number of total unique media viewers for FB post". Period `lifetime`                                                            | Documented as current, and as the replacement for `post_impressions_unique`. Not seen live. |
+| `post_reactions_like_total`    | "Total "like" reactions of a post." Period `lifetime`                                                                                | Documented, no deprecation notice. Not seen live.                                          |
+| `post_clicks`                  | Clicks anywhere on the post that do not generate a story. Period `lifetime`                                                          | Live 2026-07-16 (§2.4).                                                                    |
+| `post_video_views`             | Plays of at least 3 seconds. Periods `lifetime`, `day`                                                                               | Live 2026-07-16 (§2.4).                                                                    |
+
+What the documentation does **not** settle, so check after deploy:
+
+- **Value shape of `post_media_view`.** The reference lists breakdowns but shows no response. We send
+  no `breakdown` parameter and expect a plain number; if Meta returns an object the point is dropped
+  (the column stays absent, nothing is stored wrongly).
+- **Graph version.** `client.ts` pins `v21.0`. The deprecation page says the retired names are gone
+  "for all API versions" and the reference marks them "Deprecated above Graph API v25", but neither
+  says from which version the `*_media_view` names are served. If both come back absent on v21.0,
+  the version is the first thing to suspect. (v21.0 is available until 2027-01-21 per the versions
+  page, so a bump is due before then regardless — it touches publishing too and is not part of #54.)
+- **Reactions.** Only "like" is requested. `post_reactions_love_total`, `_wow_`, `_haha_`, `_sorry_`,
+  `_anger_` are documented the same way and cost one call each per post per sweep;
+  `post_reactions_by_type_total` and `post_activity_by_action_type` return objects, which the
+  key-value store cannot hold without inventing names (invariant 7). Comments and shares are not
+  insights metrics at all — they are fields on the post node.
+
+Retired, do not request (documented as returning an invalid-metric error on all versions):
+`post_impressions`, `post_impressions_unique`, and their `_paid`, `_fan`, `_organic`, `_viral`,
+`_nonviral` variants; also `post_activity`, `post_activity_unique`, `post_video_views_unique`.
+
+Sources (read 2026-10-11):
+
+- Insights reference, metric tables: https://developers.facebook.com/docs/graph-api/reference/insights/
+- Deprecated Page Insights metrics and their replacements: https://developers.facebook.com/docs/platforminsights/page/deprecated-metrics
+- Page Insights API updates (Aug 2025): https://developers.facebook.com/blog/post/2025/08/15/page-insights-api-updates/
+- Graph API versions and expiry dates: https://developers.facebook.com/docs/graph-api/changelog/versions
 
 ### 5.3 Polling cadence
 - Insights are **not real-time** — reach/views settle over ~24–48 h. Poll new posts hourly for the first 48 h, then daily for ~28 days, then weekly. Account-level follower counts: daily is plenty.

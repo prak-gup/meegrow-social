@@ -29,12 +29,30 @@ import { MetaClient, type MetaClientConfig } from './client.js';
  */
 
 /**
- * Per-post metrics. Meta deprecated the `impressions` family across Nov 2025–Jun 2026 in favour of
- * views-era names, and querying a dead metric errors the whole call rather than omitting it — so
- * these are requested one-by-one and failures are skipped (see postAnalytics).
- * CONFIRM AT LIVE BRING-UP (the HITL half of #14) and re-record fixtures if Meta has moved again.
+ * Per-post metrics, in the views-era names (issue #54; sources in RESEARCH meta.md §5.2.1).
+ *
+ * Meta retired the `post_impressions*` family for ALL API versions (unique variants June 2025, the
+ * rest November 2025), and an unknown name errors the whole call rather than being omitted — so
+ * these are requested one-by-one and failures are skipped (see postAnalytics). A name Meta retires
+ * next degrades to "absent", never to "no metrics at all".
+ *
+ *   post_media_view               documented replacement for post_impressions        — NOT seen live
+ *   post_total_media_view_unique  documented replacement for post_impressions_unique — NOT seen live
+ *   post_reactions_like_total     documented, no deprecation notice                  — NOT seen live
+ *   post_clicks, post_video_views returned by live Graph on 2026-07-16
+ *
+ * Only metrics whose value is a plain number belong here: postAnalytics drops object values
+ * (`post_reactions_by_type_total`, `post_activity_by_action_type`), and splitting one into several
+ * stored names would be a renaming map (spec invariant 7).
+ * CONFIRM AFTER DEPLOY which of the three unseen names return rows, and re-record the fixtures.
  */
-const POST_METRICS = ['post_impressions_unique', 'post_video_views', 'post_clicks'] as const;
+const POST_METRICS = [
+  'post_media_view',
+  'post_total_media_view_unique',
+  'post_reactions_like_total',
+  'post_clicks',
+  'post_video_views',
+] as const;
 
 interface PageAccount {
   id: string;
@@ -132,7 +150,7 @@ export class FacebookPagesProvider implements SocialProvider {
   /**
    * Per-post insights. Metrics are requested individually so one metric Meta has retired doesn't
    * nuke the whole response — Meta errors the entire call rather than omitting an unknown name
-   * (RESEARCH meta.md §6), and the `impressions` family was retired across Nov 2025–Jun 2026.
+   * (RESEARCH meta.md §2.4). Names are stored exactly as Meta returns them.
    */
   async postAnalytics(tokens: AuthTokens, externalPostId: string): Promise<MetricPoint[]> {
     const capturedAt = new Date();

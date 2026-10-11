@@ -83,11 +83,11 @@ table, `packages/db/src/schema.ts:262-271`, RLS-forced like every tenant table (
 **Metric names you will actually see today** (Meta only; GBP/LinkedIn/YouTube providers do not
 exist yet, spec line 21):
 
-| Provider  | Per-post names (requested one at a time; missing ones are simply absent)                                                                                                                                             | Account names                                                           |
-| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| facebook  | `post_video_views`, `post_clicks` — `packages/core/src/providers/meta/facebook.ts:37`. `post_impressions_unique` is requested but **Meta rejects it** (#54, `docs/dev/research/meta.md:94-97`), so it never appears. | `followers` — `facebook.ts:173`                                         |
-| instagram | `views`, `reach`, `total_interactions`, `likes`, `comments`, `saved` — `instagram.ts:43-50`                                                                                                                          | `followers` — `instagram.ts:207`                                        |
-| gmb       | Planned: `LOCAL_POST_VIEWS_SEARCH`, `LOCAL_POST_ACTIONS_CALL_TO_ACTION` (spec lines 251–253)                                                                                                                         | Planned: `BUSINESS_IMPRESSIONS_*` etc.; **no followers** (spec 261–262) |
+| Provider  | Per-post names (requested one at a time; missing ones are simply absent)                                                                                                                                                                                                                                                                                | Account names                                                           |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| facebook  | `post_media_view`, `post_total_media_view_unique`, `post_reactions_like_total`, `post_clicks`, `post_video_views` — `POST_METRICS` in `packages/core/src/providers/meta/facebook.ts`. The first three are from Meta's documentation and unconfirmed against live traffic (#54, `docs/dev/research/meta.md` §5.2.1); any Meta rejects are simply absent. | `followers` — `facebook.ts:173`                                         |
+| instagram | `views`, `reach`, `total_interactions`, `likes`, `comments`, `saved` — `instagram.ts:43-50`                                                                                                                                                                                                                                                             | `followers` — `instagram.ts:207`                                        |
+| gmb       | Planned: `LOCAL_POST_VIEWS_SEARCH`, `LOCAL_POST_ACTIONS_CALL_TO_ACTION` (spec lines 251–253)                                                                                                                                                                                                                                                            | Planned: `BUSINESS_IMPRESSIONS_*` etc.; **no followers** (spec 261–262) |
 
 Treat this table as "examples of what the union might contain", never as a list to code against.
 
@@ -241,8 +241,10 @@ Prakhar signs off by approving PR 4.
    store `capturedAt` in UTC and render in the browser's local zone — note any day-boundary drift);
    the `capturedAt` of the point we displayed.
 5. **Known discrepancies, listed, not hidden:**
-   - #54: Facebook `post_impressions_unique` is rejected by Meta, so FB posts have no impressions
-     or reach column until that issue ships. Expected; note it.
+   - #54: Facebook now requests `post_media_view` / `post_total_media_view_unique` /
+     `post_reactions_like_total` in place of the rejected `post_impressions_unique`. These names
+     come from Meta's documentation and were not verified live; a Facebook post with no such
+     columns after a sweep means Meta rejected them (`docs/dev/research/meta.md` §5.2.1).
    - `latest` is cumulative as of the last sweep; the native UI may show a later number if the sweep
      is behind. A gap that closes on the next hourly tick is fine; one that persists is a bug.
    - Followers are a daily snapshot; an intraday change in the native UI is not a discrepancy.

@@ -9,9 +9,10 @@ import {
 import type { AuthTokens } from '../types.js';
 
 /**
- * Contract tests for the Facebook Pages provider (#14), driven entirely by recorded Graph
+ * Contract tests for the Facebook Pages provider (#14), driven entirely by canned Graph
  * responses — CI never touches Meta. Fixture shapes are those documented in
- * docs/dev/research/meta.md; the live bring-up (HITL) re-records them if Meta drifts.
+ * docs/dev/research/meta.md; the live bring-up (HITL) re-records them if Meta drifts. The
+ * postAnalytics fixtures in particular are documentation-built, not recorded (see there).
  */
 
 interface Recorded {
@@ -291,25 +292,100 @@ describe('post', () => {
   });
 });
 
-describe('postAnalytics', () => {
-  it('collects per-metric insights', async () => {
-    const { fb } = provider([
+/**
+ * NOT recorded traffic. These insights bodies are built from Meta's public reference (the
+ * `{ data: [{ name, period, values: [{ value }] }] }` envelope and the metric names in
+ * docs/dev/research/meta.md §5.2.1); no credentials were available when #54 was written. Of the
+ * names below only post_clicks and post_video_views have been seen in a live response. Replace with
+ * recorded bodies after the first production sweep.
+ */
+const insight = (name: string, value: unknown): Recorded => ({
+  match: `metric=${name}&`,
+  body: {
+    data: [
       {
-        match: 'insights',
-        body: { data: [{ name: 'post_impressions_unique', values: [{ value: 42 }] }] },
+        name,
+        period: 'lifetime',
+        values: [{ value }],
+        id: `1112223334_9001/insights/${name}/lifetime`,
       },
+    ],
+  },
+});
+const INVALID_METRIC = {
+  status: 400,
+  body: { error: { message: '(#100) The value must be a valid insights metric', code: 100 } },
+};
+const DOCUMENTED_INSIGHTS: Recorded[] = [
+  insight('post_media_view', 310),
+  insight('post_total_media_view_unique', 204),
+  insight('post_reactions_like_total', 17),
+  insight('post_clicks', 9),
+  insight('post_video_views', 0),
+];
+
+describe('postAnalytics', () => {
+  it('asks for the views-era metrics one per call, and never the retired impressions names', async () => {
+    const { fb, calls } = provider(DOCUMENTED_INSIGHTS);
+    await fb.postAnalytics(PAGE_TOKENS, '1112223334_9001');
+
+    const requested = calls.map((c) => new URL(c.url).searchParams.get('metric'));
+    expect(requested).toEqual([
+      'post_media_view',
+      'post_total_media_view_unique',
+      'post_reactions_like_total',
+      'post_clicks',
+      'post_video_views',
+    ]);
+    expect(calls.every((c) => c.url.includes('/1112223334_9001/insights?'))).toBe(true);
+    expect(calls.some((c) => c.url.includes('impressions'))).toBe(false);
+  });
+
+  it('stores each metric under the name Meta returned, zero included', async () => {
+    const { fb } = provider(DOCUMENTED_INSIGHTS);
+    const points = await fb.postAnalytics(PAGE_TOKENS, '1112223334_9001');
+
+    expect(Object.fromEntries(points.map((p) => [p.metric, p.value]))).toEqual({
+      post_media_view: 310,
+      post_total_media_view_unique: 204,
+      post_reactions_like_total: 17,
+      post_clicks: 9,
+      post_video_views: 0,
+    });
+  });
+
+  it('keeps the other metrics when Meta rejects one name', async () => {
+    // If a documented name turns out not to be served, the post loses that column only.
+    const { fb } = provider([
+      { match: 'metric=post_total_media_view_unique&', ...INVALID_METRIC },
+      ...DOCUMENTED_INSIGHTS,
     ]);
     const points = await fb.postAnalytics(PAGE_TOKENS, '1112223334_9001');
 
-    expect(points.some((p) => p.metric === 'post_impressions_unique' && p.value === 42)).toBe(true);
+    expect(points.map((p) => p.metric)).toEqual([
+      'post_media_view',
+      'post_reactions_like_total',
+      'post_clicks',
+      'post_video_views',
+    ]);
+  });
+
+  it('drops a value that is not a plain number rather than inventing names for its parts', async () => {
+    const { fb } = provider([
+      insight('post_media_view', { is_from_followers: 200, is_from_ads: 110 }),
+      ...DOCUMENTED_INSIGHTS,
+    ]);
+    const points = await fb.postAnalytics(PAGE_TOKENS, '1112223334_9001');
+
+    expect(points.some((p) => p.metric === 'post_media_view')).toBe(false);
+    expect(points).toHaveLength(4);
   });
 
   it('skips a metric Meta has retired instead of failing the whole collection', async () => {
     const { fb } = provider([
       {
         match: 'insights',
-        status: 400,
-        body: { error: { message: '(#100) metric no longer supported', code: 100 } },
+        ...INVALID_METRIC,
       },
     ]);
     // Every requested metric 400s — the call still resolves rather than throwing, so one retired
