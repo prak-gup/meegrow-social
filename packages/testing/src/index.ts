@@ -6,6 +6,7 @@ import {
   DiskStorageDriver,
   encryptToken,
   hashPassword,
+  resetAttemptStore,
   setScheduler,
   setStorageDriver,
   type Scheduler,
@@ -13,8 +14,13 @@ import {
 import type { WeeklySlot } from '@meegrow-social/contracts';
 import { sql } from 'drizzle-orm';
 
-/** Truncate every table — call in beforeEach for isolated integration tests. */
+/**
+ * Truncate every table — call in beforeEach for isolated integration tests. Also forgets the
+ * login/password attempt counts: they are keyed on email and client address, which tests reuse, so
+ * without this one test's wrong passwords would rate-limit the next.
+ */
 export async function resetDb(): Promise<void> {
+  resetAttemptStore();
   const tables = [
     'oauth_flows',
     'sessions',

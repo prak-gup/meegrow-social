@@ -2,7 +2,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { closeDb, db, schema, withWorkspace } from '@meegrow-social/db';
-import { createApiKeyForWorkspace, verifyPassword } from '@meegrow-social/core';
+import {
+  AUTH_ATTEMPT_LIMITS,
+  createApiKeyForWorkspace,
+  verifyPassword,
+} from '@meegrow-social/core';
 import { createMembership, createUser, createWorkspace, resetDb } from '@meegrow-social/testing';
 import { buildServer } from './server.js';
 
@@ -248,5 +252,86 @@ describe('POST /v1/auth/password', () => {
     expect(rows.map((r) => r.status).sort()).toEqual(['200', '422']);
     const dump = JSON.stringify(rows);
     for (const secret of [OLD, NEW, 'wrong-guess-1']) expect(dump).not.toContain(secret);
+  });
+});
+
+/**
+ * Brute-force limits on the current-password check: a stolen session cookie must not be a free
+ * oracle for the account's password. `resetDb` (beforeEach) clears the attempt counters.
+ */
+describe('POST /v1/auth/password attempt limiting', () => {
+  const { perAccount } = AUTH_ATTEMPT_LIMITS.password;
+  const guess = (sid: string, currentPassword: string) =>
+    changePassword(sessionHeaders(sid), { currentPassword, newPassword: NEW });
+
+  it('429s with Retry-After after too many wrong current passwords, and changes nothing', async () => {
+    const { userId } = await seedOwner();
+    const sid = extractSid(await login(EMAIL, OLD))!;
+    const before = await storedHash(userId);
+
+    for (let i = 0; i < perAccount; i++) {
+      expect((await guess(sid, `wrong-guess-${i}`)).statusCode).toBe(422);
+    }
+    const res = await guess(sid, 'wrong-guess-again');
+    expect(res.statusCode).toBe(429);
+    expect(res.json()).toEqual({ error: 'too many attempts, try again later' });
+    expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+    expect(extractSid(res)).toBeNull();
+
+    // The right current password is refused too, so the limit cannot be probed around.
+    expect((await guess(sid, OLD)).statusCode).toBe(429);
+    expect(await storedHash(userId)).toBe(before);
+    // The session itself is untouched, and signing in is counted separately.
+    expect((await me(sid)).statusCode).toBe(200);
+    expect((await login(EMAIL, OLD)).statusCode).toBe(200);
+  });
+
+  it('is counted per user: a second session of the same user shares the budget', async () => {
+    await seedOwner();
+    const first = extractSid(await login(EMAIL, OLD))!;
+    const second = extractSid(await login(EMAIL, OLD))!;
+    for (let i = 0; i < perAccount; i++) await guess(first, `wrong-guess-${i}`);
+    expect((await guess(second, 'wrong-guess-again')).statusCode).toBe(429);
+  });
+
+  it('does not limit another user', async () => {
+    await seedOwner();
+    const other = await createUser('other@test.local', 'other-password-1');
+    await createMembership(other.id, await createWorkspace('Other'), 'owner');
+    const sid = extractSid(await login(EMAIL, OLD))!;
+    const otherSid = extractSid(await login('other@test.local', 'other-password-1'))!;
+
+    for (let i = 0; i < perAccount; i++) await guess(sid, `wrong-guess-${i}`);
+    expect((await guess(sid, OLD)).statusCode).toBe(429);
+    const res = await changePassword(sessionHeaders(otherSid), {
+      currentPassword: 'other-password-1',
+      newPassword: NEW,
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('a successful change clears the count', async () => {
+    await seedOwner();
+    const sid = extractSid(await login(EMAIL, OLD))!;
+    for (let i = 0; i < perAccount - 1; i++) await guess(sid, `wrong-guess-${i}`);
+    const changed = await guess(sid, OLD);
+    expect(changed.statusCode).toBe(200);
+    const newSid = extractSid(changed)!;
+    for (let i = 0; i < perAccount; i++) {
+      expect((await guess(newSid, `wrong-guess-${i}`)).statusCode).toBe(422);
+    }
+  });
+
+  it('a body that fails validation is a 400 and uses up no attempt', async () => {
+    await seedOwner();
+    const sid = extractSid(await login(EMAIL, OLD))!;
+    for (let i = 0; i < perAccount + 3; i++) {
+      const res = await changePassword(sessionHeaders(sid), {
+        currentPassword: 'wrong-guess',
+        newPassword: 'short',
+      });
+      expect(res.statusCode).toBe(400);
+    }
+    expect((await guess(sid, OLD)).statusCode).toBe(200);
   });
 });
