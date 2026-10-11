@@ -55,5 +55,13 @@ export {
   ShareNetwork,
   ArrowSquareOut,
   CheckCircle as CheckIcon,
+  Rows,
+  PencilSimple,
+  FileDashed,
+  CircleNotch,
+  Prohibit,
+  Play,
+  Images,
+  Trophy,
 } from '@phosphor-icons/react';
 export type { Icon as IconComponent } from '@phosphor-icons/react';

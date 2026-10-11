@@ -17,6 +17,15 @@ export interface RowMenuProps {
   label: string;
   items: RowMenuItem[];
   className?: string;
+  /**
+   * Draw the trigger yourself (an account row, a calendar entry) instead of the "…" icon. The
+   * button then carries only `className`, so the caller owns its size and look.
+   */
+  children?: ReactNode;
+  /** Which edge of the trigger the menu lines up with. Default `end` (right), as under a "…". */
+  align?: 'start' | 'end';
+  /** Menu width in px, for longer item names. Default 176. */
+  width?: number;
 }
 
 const MENU_WIDTH = 176;
@@ -27,8 +36,16 @@ const MENU_WIDTH = 176;
  * rendered fixed in a portal so a table's scroll frame can never clip it, and it flips upward near
  * the bottom of the screen. Hand-built because no Radix menu package is installed.
  * Usage: <RowMenu label="Actions for Acme" items={[{ label: 'Disconnect', onSelect, danger: true }]} />
+ *        <RowMenu label="Account" items={items} align="start" className="…">{row}</RowMenu>
  */
-export function RowMenu({ label, items, className }: RowMenuProps) {
+export function RowMenu({
+  label,
+  items,
+  className,
+  children,
+  align = 'end',
+  width = MENU_WIDTH,
+}: RowMenuProps) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -43,7 +60,8 @@ export function RowMenu({ label, items, className }: RowMenuProps) {
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
     const r = triggerRef.current.getBoundingClientRect();
-    const left = Math.max(8, Math.min(r.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8));
+    const edge = align === 'start' ? r.left : r.right - width;
+    const left = Math.max(8, Math.min(edge, window.innerWidth - width - 8));
     const room = window.innerHeight - r.bottom;
     const needed = items.length * 36 + 12;
     setPos(
@@ -51,7 +69,7 @@ export function RowMenu({ label, items, className }: RowMenuProps) {
         ? { bottom: window.innerHeight - r.top + 4, left }
         : { top: r.bottom + 4, left },
     );
-  }, [open, items.length]);
+  }, [open, items.length, align, width]);
 
   // Focus the first enabled item once the menu has a position.
   useEffect(() => {
@@ -114,13 +132,17 @@ export function RowMenu({ label, items, className }: RowMenuProps) {
             setOpen(true);
           }
         }}
-        className={cn(
-          'grid h-11 w-11 flex-none place-items-center rounded-sm text-muted hover:bg-surface-strong hover:text-ink md:h-7 md:w-7',
-          open && 'bg-surface-strong text-ink',
-          className,
-        )}
+        className={
+          children
+            ? className
+            : cn(
+                'grid h-11 w-11 flex-none place-items-center rounded-sm text-muted hover:bg-surface-strong hover:text-ink md:h-7 md:w-7',
+                open && 'bg-surface-strong text-ink',
+                className,
+              )
+        }
       >
-        <DotsThree size={20} weight="bold" aria-hidden="true" />
+        {children ?? <DotsThree size={20} weight="bold" aria-hidden="true" />}
       </button>
       {open &&
         createPortal(
@@ -131,15 +153,15 @@ export function RowMenu({ label, items, className }: RowMenuProps) {
             onKeyDown={onMenuKey}
             style={{
               position: 'fixed',
-              width: MENU_WIDTH,
+              width,
               visibility: pos ? 'visible' : 'hidden',
               ...pos,
             }}
             className="z-50 rounded-md border border-hairline bg-canvas p-1 shadow-1"
           >
-            {items.map((it) => (
+            {items.map((it, index) => (
               <button
-                key={it.label}
+                key={`${index}:${it.label}`}
                 type="button"
                 role="menuitem"
                 tabIndex={-1}
@@ -154,7 +176,7 @@ export function RowMenu({ label, items, className }: RowMenuProps) {
                 )}
               >
                 {it.icon}
-                {it.label}
+                <span className="min-w-0 truncate">{it.label}</span>
               </button>
             ))}
           </div>,

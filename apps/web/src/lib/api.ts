@@ -21,6 +21,9 @@ import type {
   CreatedApiKeyView,
   PostMetricsView,
   FollowerSeriesView,
+  PostGroupSummary,
+  BulkPostMetricsView,
+  AnalyticsStatusView,
 } from '@meegrow-social/contracts';
 
 /**
@@ -158,12 +161,41 @@ export const api = {
   calendar: (year: number, month: number, timezone: string) =>
     request<CalendarView>('GET', '/v1/posts/calendar', undefined, { year, month, timezone }),
   getPostGroup: (id: string) => request<{ group: PostGroupView }>('GET', `/v1/post-groups/${id}`),
+  // One item per composed post, with every per-platform post in it. `limit`/`offset` count groups,
+  // so a multi-platform post is never split across two pages. Filters apply to the variants.
+  listPostGroups: (
+    query: {
+      status?: string;
+      provider?: string;
+      connectionId?: string;
+      from?: string;
+      to?: string;
+      q?: string;
+      order?: 'asc' | 'desc';
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) => request<{ groups: PostGroupSummary[] }>('GET', '/v1/post-groups', undefined, query),
+  /** Copies every variant into a new group of drafts. Publishes nothing. */
+  duplicatePostGroup: (id: string) =>
+    request<{ group: PostGroupSummary }>(
+      'POST',
+      `/v1/post-groups/${encodeURIComponent(id)}/duplicate`,
+    ),
+  /** Queues a `failed` post again: it PUBLISHES for real, now or at its still-future time. */
+  retryPost: (id: string) =>
+    request<{ post: PostView }>('POST', `/v1/posts/${encodeURIComponent(id)}/retry`),
 
   // --- Analytics (#9, #28) ---
   // `capturedAt` arrives as an ISO string (responses are not run through the Zod parsers). The post
   // series is oldest first; the follower series is newest first.
   postMetrics: (id: string) =>
     request<PostMetricsView>('GET', `/v1/posts/${encodeURIComponent(id)}/metrics`),
+  // Newest value per metric name for up to 200 posts (BULK_METRICS_MAX_POSTS). An id that is not a
+  // post of this workspace has no entry; a post with nothing collected has an empty `latest`.
+  latestPostMetrics: (postIds: string[]) =>
+    request<BulkPostMetricsView>('POST', '/v1/posts/metrics/latest', { postIds }),
+  analyticsStatus: () => request<AnalyticsStatusView>('GET', '/v1/analytics/status'),
   connectionFollowers: (id: string) =>
     request<FollowerSeriesView>('GET', `/v1/connections/${encodeURIComponent(id)}/followers`),
 

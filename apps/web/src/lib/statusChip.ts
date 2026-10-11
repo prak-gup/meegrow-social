@@ -17,6 +17,7 @@ export type ChipStatus =
   | 'publishing'
   | 'published'
   | 'failed'
+  | 'partly_failed'
   | 'cancelled';
 
 export const CHIP: Record<ChipStatus, { label: string; tone: ChipTone }> = {
@@ -29,6 +30,8 @@ export const CHIP: Record<ChipStatus, { label: string; tone: ChipTone }> = {
   publishing: { label: 'Publishing', tone: 'info' },
   published: { label: 'Published', tone: 'success' },
   failed: { label: 'Failed', tone: 'danger' },
+  // A multi-platform post where some accounts failed and others did not (contracts groupDisplayStatus).
+  partly_failed: { label: 'Partly failed', tone: 'danger' },
   cancelled: { label: 'Cancelled', tone: 'neutral' },
 };
 
