@@ -3,7 +3,7 @@ import { cn } from '../lib/cn';
 /** The meegrow·social mark + wordmark. Colours come from tokens via fill/stroke utilities. */
 export function Logo({ className, size = 30 }: { className?: string; size?: number }) {
   return (
-    <span className={cn('flex items-center gap-2.5', className)}>
+    <span className={cn('flex items-center gap-2', className)}>
       <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
         <rect width="32" height="32" rx="9" className="fill-canvas stroke-hairline" />
         <path

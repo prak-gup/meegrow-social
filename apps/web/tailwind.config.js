@@ -1,6 +1,8 @@
 /** @type {import('tailwindcss').Config} */
-// Airbnb DLS token mapping (Tailwind v3). Colors are HSL CSS vars defined in index.css.
-// Light-only; Rausch is the single accent. See docs/dev/DESIGN-airbnb.md.
+// Token mapping (Tailwind v3). Colors are HSL CSS vars defined in index.css. Light-only.
+// Density pass: a compact work-tool scale (13-14px text, 32px controls, hairlines, 6-8px radii).
+// Rausch is the single accent and appears once per screen (the Create post action).
+// Origin of the palette: docs/dev/DESIGN-airbnb.md; the SCALE here deliberately departs from it.
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
@@ -53,15 +55,23 @@ export default {
           idle: 'hsl(var(--status-idle) / <alpha-value>)',
         },
       },
-      // Typography tokens replace arbitrary text-[Npx] values.
+      // Typography tokens replace arbitrary text-[Npx] values. The stock Tailwind steps are
+      // overridden so the whole app inherits the compact scale: sm is table/control text.
       fontSize: {
         micro: ['0.6875rem', { lineHeight: '1rem' }],
-        caption: ['0.8125rem', { lineHeight: '1.25rem' }],
-        body: ['0.9375rem', { lineHeight: '1.5rem' }],
-        wordmark: ['1.1875rem', { lineHeight: '1.5rem' }],
-        title: ['1.625rem', { lineHeight: '2rem', letterSpacing: '-0.01em' }],
+        xs: ['0.75rem', { lineHeight: '1rem' }],
+        caption: ['0.75rem', { lineHeight: '1rem' }],
+        sm: ['0.8125rem', { lineHeight: '1.25rem' }],
+        body: ['0.8125rem', { lineHeight: '1.25rem' }],
+        base: ['0.875rem', { lineHeight: '1.25rem' }],
+        lg: ['1rem', { lineHeight: '1.5rem' }],
+        xl: ['1.125rem', { lineHeight: '1.5rem' }],
+        '2xl': ['1.25rem', { lineHeight: '1.75rem' }],
+        '3xl': ['1.5rem', { lineHeight: '2rem' }],
+        wordmark: ['1rem', { lineHeight: '1.5rem' }],
+        title: ['1.25rem', { lineHeight: '1.75rem', letterSpacing: '-0.01em' }],
       },
-      spacing: { 4.5: '1.125rem', sidebar: '15rem' },
+      spacing: { 4.5: '1.125rem', sidebar: '11rem' },
       minWidth: { field: '17.5rem', switcher: '9.5rem' },
       minHeight: { textarea: '6rem' },
       width: { 'card-sm': '22.5rem' },
@@ -75,14 +85,15 @@ export default {
       },
       borderRadius: {
         xs: '4px',
-        sm: '8px',
-        md: '14px',
-        lg: '20px',
-        xl: '32px',
+        sm: '6px',
+        md: '8px',
+        lg: '12px',
+        xl: '16px',
         full: '9999px',
       },
       boxShadow: {
-        1: 'rgba(0,0,0,0.02) 0 0 0 1px, rgba(0,0,0,0.04) 0 2px 6px 0, rgba(0,0,0,0.1) 0 4px 8px 0',
+        // Overlays only (menus, popovers, modals, the drawer). Cards and rows use hairlines instead.
+        1: 'rgba(0,0,0,0.04) 0 0 0 1px, rgba(0,0,0,0.08) 0 6px 20px -4px',
       },
       maxWidth: { content: '90rem' },
     },

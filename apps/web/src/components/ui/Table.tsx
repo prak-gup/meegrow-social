@@ -21,7 +21,7 @@ export interface TableProps<T> {
   empty?: EmptyStateProps;
   /** Accessible name for the table. */
   caption?: string;
-  /** Tighter rows (`py-2`) for data-heavy tables. */
+  /** Tighter rows (`py-1.5`) for data-heavy tables. */
   dense?: boolean;
   /** Keep the header in view: the frame becomes a scroll area no taller than the screen. */
   stickyHeader?: boolean;
@@ -47,8 +47,8 @@ export function Table<T>({
   className,
 }: TableProps<T>) {
   if (rows.length === 0 && empty) return <EmptyState {...empty} className={className} />;
-  const pad = dense ? 'px-3 py-2' : 'px-4 py-3';
-  const headPad = dense ? 'px-3 py-2' : 'px-4 py-2.5';
+  const pad = dense ? 'px-3 py-1.5' : 'px-3 py-2';
+  const headPad = 'px-3 py-2';
   const sticky = stickyHeader && 'sticky top-0 z-10 bg-surface-soft';
   const span = columns.length + (rowActions ? 1 : 0);
   return (
@@ -70,7 +70,7 @@ export function Table<T>({
                 className={cn(
                   headPad,
                   sticky,
-                  'text-caption font-bold text-muted',
+                  'text-caption font-medium text-muted',
                   c.align === 'right' && 'text-right',
                   c.className,
                 )}
@@ -114,7 +114,7 @@ export function Table<T>({
                     // A `w-full` column elsewhere squeezes this one to its narrowest content, which
                     // for a two-word button is one word per line. Actions never wrap.
                     <td className={cn(pad, 'whitespace-nowrap')}>
-                      <div className="flex items-center justify-end gap-2">{rowActions(row)}</div>
+                      <div className="flex items-center justify-end gap-1.5">{rowActions(row)}</div>
                     </td>
                   )}
                 </tr>

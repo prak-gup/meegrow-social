@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   CallbackResult,
-  ConnectionHealth,
   ConnectionView,
   ProviderAccountView,
   ProviderView,
@@ -12,28 +11,20 @@ import { providerVisible } from '../lib/devProviders';
 import { platformMeta } from '../lib/platforms';
 import { missingAccountHelp } from '../lib/connectHelp';
 import { InviteLinkRow, useInviteLinks } from '../components/InviteLinks';
+import { connectionChip, type ChipStatus } from '../lib/statusChip';
+import { canReconnect, expiryLabel, filterConnections, shortDate } from '../lib/connectionRows';
+import { clientHue } from '../lib/clientHue';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { PageHeader } from '../components/ui/PageHeader';
 import { EmptyState } from '../components/ui/EmptyState';
-import {
-  Plugs,
-  ArrowClockwise,
-  LinkSimple,
-  Copy,
-  CheckCircle,
-  Warning,
-  WarningCircle,
-  type IconComponent,
-} from '../lib/icons';
-
-type IconType = IconComponent;
-
-const HEALTH: Record<ConnectionHealth, { label: string; cls: string; Icon: IconType }> = {
-  healthy: { label: 'Healthy', cls: 'text-status-ok', Icon: CheckCircle },
-  expiring: { label: 'Expiring soon', cls: 'text-status-warn', Icon: Warning },
-  needs_reconnect: { label: 'Needs reconnect', cls: 'text-status-bad', Icon: WarningCircle },
-};
+import { FilterBar, FilterSelect } from '../components/ui/FilterBar';
+import { PlatformBadge } from '../components/ui/PlatformBadge';
+import { RowMenu } from '../components/ui/RowMenu';
+import { Skeleton } from '../components/ui/Skeleton';
+import { StatusChip } from '../components/ui/StatusChip';
+import { Table } from '../components/ui/Table';
+import { Plugs, ArrowClockwise, LinkSimple, Copy, Plus, Trash } from '../lib/icons';
 
 type ConnectMessage = CallbackResult | { status: 'error'; error: string };
 interface PendingPick {
@@ -93,6 +84,9 @@ export function Connections() {
     null,
   );
   const [copied, setCopied] = useState(false);
+  const [q, setQ] = useState('');
+  const [statusFilter, setStatusFilter] = useState<ChipStatus | ''>('');
+  const [platformFilter, setPlatformFilter] = useState('');
   const links = useInviteLinks();
   const reloadLinks = links.reload;
   // Which platform the open popup belongs to, for the account picker's guidance and retry.
@@ -179,33 +173,64 @@ export function Connections() {
   const connectable = providers.filter((p) => providerVisible(p.identifier));
   const visibleConns = conns.filter((c) => providerVisible(c.provider));
 
+  const shown = filterConnections(visibleConns, {
+    q,
+    status: statusFilter,
+    provider: platformFilter,
+  });
+  const platformOptions = [
+    { value: '', label: 'All platforms' },
+    ...Array.from(new Set(visibleConns.map((c) => c.provider))).map((id) => ({
+      value: id,
+      label: platformMeta({ identifier: id, displayName: id }).label,
+    })),
+  ];
+  const filtering = q.trim() !== '' || statusFilter !== '' || platformFilter !== '';
+  const activeHue = clientHue(activeName);
+
+  const goToAdd = () => {
+    const el = document.getElementById('add-account');
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el?.querySelector<HTMLElement>('button')?.focus({ preventScroll: true });
+  };
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <PageHeader
         title="Connections"
         subtitle={`The accounts you publish to for ${activeName}.`}
         className="mb-0"
         actions={
-          <Button variant="outline" size="sm" onClick={() => void load()}>
-            <ArrowClockwise size={16} />
-            Refresh
-          </Button>
+          <>
+            <Button variant="outline" size="sm" onClick={() => void load()}>
+              <ArrowClockwise size={14} />
+              Refresh
+            </Button>
+            <Button size="sm" onClick={goToAdd}>
+              <Plus size={14} weight="bold" />
+              Add account
+            </Button>
+          </>
         }
       />
 
       {msg && (
-        <div className="rounded-md border border-hairline bg-surface-soft px-4 py-3 text-sm text-ink">
+        <div
+          role="status"
+          className="rounded-md border border-hairline bg-surface-soft px-3 py-2 text-sm text-ink"
+        >
           {msg}
         </div>
       )}
 
       {/* connected accounts */}
-      <section>
-        <h2 className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">
-          Connected accounts
-        </h2>
+      <section aria-label="Connected accounts">
         {loading ? (
-          <p className="text-muted">Loading…</p>
+          <div className="space-y-px" aria-busy="true" aria-label="Loading accounts">
+            {Array.from({ length: 6 }, (_, i) => (
+              <Skeleton key={i} className="h-11" />
+            ))}
+          </div>
         ) : visibleConns.length === 0 ? (
           <EmptyState
             title="No accounts connected yet"
@@ -213,106 +238,229 @@ export function Connections() {
             icon={Plugs}
           />
         ) : (
-          <div className="grid gap-4 md:grid-cols-2">
-            {visibleConns.map((c) => {
-              const m = platformMeta({ identifier: c.provider, displayName: c.provider });
-              const h = HEALTH[c.health];
-              return (
-                <div key={c.id} className="rounded-md border border-hairline bg-canvas p-5">
-                  <div className="flex items-start gap-3.5">
-                    <span
-                      className={`grid h-11 w-11 flex-none place-items-center rounded-md text-white ${m.brand}`}
-                    >
-                      <m.Icon size={24} weight="fill" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-base font-semibold">{c.displayName}</span>
-                        <span
-                          className={'flex items-center gap-1.5 text-xs font-semibold ' + h.cls}
-                        >
-                          <h.Icon size={15} weight="fill" />
-                          {h.label}
-                        </span>
+          <>
+            <FilterBar
+              search={{
+                value: q,
+                onChange: setQ,
+                placeholder: 'Search accounts…',
+                label: 'Search accounts',
+              }}
+              filters={
+                <>
+                  <FilterSelect
+                    label="Platform"
+                    value={platformFilter}
+                    onChange={setPlatformFilter}
+                    options={platformOptions}
+                  />
+                  <FilterSelect
+                    label="Status"
+                    value={statusFilter}
+                    onChange={(v) => setStatusFilter(v as ChipStatus | '')}
+                    options={[
+                      { value: '', label: 'All statuses' },
+                      { value: 'healthy', label: 'Healthy' },
+                      { value: 'expiring', label: 'Expiring soon' },
+                      { value: 'needs_reconnect', label: 'Needs reconnect' },
+                    ]}
+                  />
+                </>
+              }
+              actions={
+                <span aria-live="polite" className="tnum text-caption text-muted">
+                  {filtering ? `${shown.length} of ${visibleConns.length}` : visibleConns.length}{' '}
+                  {visibleConns.length === 1 ? 'account' : 'accounts'}
+                </span>
+              }
+            />
+            <Table
+              caption="Connected accounts"
+              dense
+              rows={shown}
+              rowKey={(c) => c.id}
+              empty={{
+                title: 'No accounts match these filters',
+                icon: Plugs,
+                action: (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setQ('');
+                      setStatusFilter('');
+                      setPlatformFilter('');
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                ),
+              }}
+              columns={[
+                {
+                  key: 'account',
+                  header: 'Account',
+                  cell: (c) => {
+                    const m = platformMeta({ identifier: c.provider, displayName: c.provider });
+                    return (
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <PlatformBadge provider={c.provider} name={c.displayName} />
+                        <div className="min-w-0 max-w-[15rem]">
+                          <div className="truncate font-medium leading-4 text-ink">
+                            {c.displayName}
+                          </div>
+                          <div className="truncate text-caption leading-4 text-muted">
+                            {m.label} · {c.externalId}
+                          </div>
+                          {/* the Status column is hidden on a phone, so the chip rides here */}
+                          <StatusChip
+                            status={connectionChip(c.health, c.expiresInDays)}
+                            className="mt-1 sm:hidden"
+                          />
+                        </div>
                       </div>
-                      <p className="mt-0.5 text-caption text-muted">{m.label}</p>
-                      <p className="tnum mt-0.5 text-caption text-muted">
-                        {c.expiresInDays == null
-                          ? 'Token never expires'
-                          : `Renews in ${c.expiresInDays}d`}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-4 flex justify-end">
-                    <Button variant="ghost" size="sm" onClick={() => void disconnect(c.id)}>
-                      Disconnect
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                    );
+                  },
+                },
+                {
+                  key: 'client',
+                  header: 'Client',
+                  className: 'hidden whitespace-nowrap lg:table-cell',
+                  cell: () => (
+                    <span className="flex items-center gap-2">
+                      <span
+                        aria-hidden="true"
+                        className="h-2 w-2 flex-none rounded-full"
+                        style={{ background: activeHue }}
+                      />
+                      {activeName}
+                    </span>
+                  ),
+                },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  className: 'hidden sm:table-cell',
+                  cell: (c) => <StatusChip status={connectionChip(c.health, c.expiresInDays)} />,
+                },
+                {
+                  key: 'expiry',
+                  header: 'Token expiry',
+                  className: 'hidden whitespace-nowrap sm:table-cell',
+                  cell: (c) => {
+                    const chip = connectionChip(c.health, c.expiresInDays);
+                    return (
+                      <span
+                        className={
+                          'tnum ' +
+                          (chip === 'needs_reconnect'
+                            ? 'font-medium text-status-bad'
+                            : chip === 'expiring'
+                              ? 'font-medium text-status-warn'
+                              : 'text-muted')
+                        }
+                      >
+                        {expiryLabel(c.expiresInDays)}
+                      </span>
+                    );
+                  },
+                },
+                {
+                  key: 'connected',
+                  header: 'Connected',
+                  className: 'hidden whitespace-nowrap md:table-cell',
+                  cell: (c) => <span className="tnum text-muted">{shortDate(c.createdAt)}</span>,
+                },
+              ]}
+              rowActions={(c) => {
+                const chip = connectionChip(c.health, c.expiresInDays);
+                const provider = connectable.find((p) => p.identifier === c.provider);
+                return (
+                  <RowMenu
+                    label={`Actions for ${c.displayName}`}
+                    items={[
+                      ...(canReconnect(chip) && provider
+                        ? [
+                            {
+                              label: 'Reconnect',
+                              icon: <ArrowClockwise size={14} />,
+                              onSelect: () => void connect(provider),
+                            },
+                          ]
+                        : []),
+                      {
+                        label: 'Disconnect',
+                        icon: <Trash size={14} />,
+                        danger: true,
+                        onSelect: () => void disconnect(c.id),
+                      },
+                    ]}
+                  />
+                );
+              }}
+            />
+          </>
         )}
       </section>
 
       {/* add an account */}
-      <section>
-        <h2 className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">
+      <section id="add-account" aria-labelledby="add-account-h" className="scroll-mt-4">
+        <h2 id="add-account-h" className="mb-2 text-sm font-semibold text-ink">
           Add an account
         </h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {connectable.map((p) => {
             const m = platformMeta(p);
             return (
-              <div key={p.identifier} className="rounded-md border border-hairline bg-canvas p-5">
-                <div className="flex items-center gap-3.5">
-                  <span
-                    className={`grid h-11 w-11 flex-none place-items-center rounded-md text-white ${m.brand}`}
-                  >
-                    <m.Icon size={24} weight="fill" />
-                  </span>
-                  <div>
-                    <div className="text-base font-semibold">{m.label}</div>
-                    <div className="text-caption text-muted">{m.blurb}</div>
-                  </div>
+              <li
+                key={p.identifier}
+                className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-hairline bg-canvas px-2.5 py-2"
+              >
+                <span
+                  aria-hidden="true"
+                  className={`grid h-6 w-6 flex-none place-items-center rounded-sm text-white ${m.brand}`}
+                >
+                  <m.Icon size={14} weight="fill" />
+                </span>
+                <div className="min-w-0 flex-1 leading-tight">
+                  <div className="truncate font-medium text-ink">{m.label}</div>
+                  <div className="truncate text-caption text-muted">{m.blurb}</div>
                 </div>
-                <div className="mt-4 flex gap-2">
-                  <Button variant="secondary" size="sm" onClick={() => void connect(p)}>
-                    Connect
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => void makeInvite(p)}>
-                    <LinkSimple size={16} />
-                    Invite client
-                  </Button>
-                </div>
-              </div>
+                <Button variant="outline" size="sm" onClick={() => void connect(p)}>
+                  Connect
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => void makeInvite(p)}>
+                  <LinkSimple size={14} />
+                  Invite client
+                </Button>
+              </li>
             );
           })}
-        </div>
-        <p className="mt-3 text-caption text-muted">
-          <b className="text-ink">Connect</b> authorises the account yourself.{' '}
-          <b className="text-ink">Invite client</b> makes a link {activeName} opens to connect their
-          own account — no password shared.
+        </ul>
+        <p className="mt-2 text-caption text-muted">
+          <b className="font-semibold text-ink">Connect</b> authorises the account yourself.{' '}
+          <b className="font-semibold text-ink">Invite client</b> makes a link {activeName} opens to
+          connect their own account — no password shared.
         </p>
       </section>
 
       {/* invite links that still work */}
       {links.invites && links.invites.length > 0 && (
-        <section>
-          <h2 className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">
+        <section aria-labelledby="invites-h">
+          <h2 id="invites-h" className="mb-2 text-sm font-semibold text-ink">
             Invite links that still work
           </h2>
-          <ul className="space-y-3 rounded-md border border-hairline bg-canvas p-5">
+          <ul className="divide-y divide-hairline-soft rounded-md border border-hairline bg-canvas">
             {links.invites.map((i) => (
-              <li key={i.id}>
-                <p className="mb-1 text-sm font-medium">
+              <li key={i.id} className="px-3 py-2">
+                <p className="mb-1 text-xs font-medium text-muted">
                   {platformMeta({ identifier: i.provider, displayName: i.provider }).label}
                 </p>
                 <InviteLinkRow invite={i} onCancel={links.cancel} />
               </li>
             ))}
           </ul>
-          <p className="mt-3 text-caption text-muted">
+          <p className="mt-2 text-caption text-muted">
             Anyone holding one of these can connect an account for {activeName}. A link stops
             working once it has connected an account; cancel any you no longer need.
           </p>
@@ -328,7 +476,7 @@ export function Connections() {
             the account connects here. Their password never touches you. (External sign-in needs
             Meta App Review, issue&nbsp;#53; you can already use it for accounts you can reach.)
           </p>
-          <div className="flex items-center gap-2.5 rounded-sm border border-hairline bg-surface-soft px-3.5 py-2.5">
+          <div className="flex items-center gap-2.5 rounded-sm border border-hairline bg-surface-soft px-3 py-2">
             <LinkSimple size={16} className="text-muted" />
             <code className="flex-1 truncate font-mono text-sm text-ink">{invite.url}</code>
           </div>
@@ -360,11 +508,11 @@ export function Connections() {
               }}
             />
           ) : (
-            <ul className="space-y-2">
+            <ul className="space-y-1.5">
               {pick.accounts.map((a) => (
                 <li
                   key={a.externalId}
-                  className="flex items-center justify-between gap-3 rounded-sm border border-hairline px-3.5 py-3"
+                  className="flex items-center justify-between gap-3 rounded-sm border border-hairline px-3 py-2"
                 >
                   <div className="min-w-0">
                     <p className="truncate font-medium">{a.displayName}</p>

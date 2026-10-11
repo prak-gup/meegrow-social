@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
+import { CloseIcon } from '../../lib/icons';
 
 /**
  * Minimal accessible modal: overlay + click-outside, Escape-to-close, initial focus into the
@@ -35,23 +36,28 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"
+      className="fixed inset-0 z-50 grid place-items-center bg-scrim/40 p-4"
       onClick={onClose}
       role="presentation"
     >
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className="w-full max-w-md rounded-lg border border-hairline bg-canvas p-6 shadow-1 focus:outline-none"
+        className="w-full max-w-md rounded-lg border border-hairline bg-canvas p-4 shadow-1 md:p-5 focus:outline-none"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label={title}
       >
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="font-semibold">{title}</h3>
-          <button onClick={onClose} className="text-muted hover:text-ink" aria-label="Close">
-            ✕
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-lg font-semibold md:text-base">{title}</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="-mr-2 grid h-11 w-11 flex-none place-items-center rounded-sm text-muted hover:bg-surface-strong hover:text-ink md:h-8 md:w-8"
+            aria-label="Close"
+          >
+            <CloseIcon size={16} />
           </button>
         </div>
         {children}

@@ -13,11 +13,11 @@ export interface PageHeaderProps {
 export function PageHeader({ title, subtitle, actions, className }: PageHeaderProps) {
   return (
     <header
-      className={cn('mb-6 flex flex-wrap items-start justify-between gap-x-4 gap-y-3', className)}
+      className={cn('mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2', className)}
     >
       <div className="min-w-0">
         <h1 className="text-title font-semibold text-ink">{title}</h1>
-        {subtitle && <p className="mt-0.5 text-body text-muted">{subtitle}</p>}
+        {subtitle && <p className="text-sm text-muted">{subtitle}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </header>

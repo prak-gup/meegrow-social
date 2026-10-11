@@ -3,35 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import type { OverviewView, ClientOverview } from '@meegrow-social/contracts';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { clientCover, clientHue, initial } from '../lib/clientHue';
+import { clientHue } from '../lib/clientHue';
+import { clientChip } from '../lib/statusChip';
+import { nextPublishLabel } from '../lib/clientRows';
 import { AddClientModal } from '../components/AddClientModal';
+import { Button } from '../components/ui/Button';
 import { PageHeader } from '../components/ui/PageHeader';
+import { StatusChip } from '../components/ui/StatusChip';
 import { Table } from '../components/ui/Table';
-import { Warning, WarningCircle, SquaresFour, Lightning, Plus } from '../lib/icons';
-
-function healthLabel(c: ClientOverview): { text: string; pip: string } {
-  if (c.health === 'bad') return { text: 'Reconnect', pip: 'bg-status-bad' };
-  if (c.health === 'warn')
-    return {
-      text: c.failedThisWeek > 0 ? `${c.failedThisWeek} failed` : 'Queue empty',
-      pip: 'bg-status-warn',
-    };
-  return { text: 'Healthy', pip: 'bg-status-ok' };
-}
-
-// The API client returns JSON as-is, so dates arrive as ISO strings despite the contract's Date type.
-function whenLabel(value: Date | string | null): string {
-  if (!value) return 'Nothing scheduled';
-  const d = new Date(value);
-  const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
-  const tmr = new Date(now.getTime() + 86400_000);
-  const isTomorrow = d.toDateString() === tmr.toDateString();
-  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  if (sameDay) return `Today · ${time}`;
-  if (isTomorrow) return `Tomorrow · ${time}`;
-  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-}
+import { Warning, WarningCircle, SquaresFour, CheckCircle, Plus } from '../lib/icons';
 
 export function Overview() {
   const { me, switchWorkspace } = useAuth();
@@ -64,28 +44,31 @@ export function Overview() {
   };
 
   const attn = ov?.attention;
-  const attentionCards = attn
+  const attention = attn
     ? [
         {
           n: attn.failedPublishes,
-          label: attn.failedPublishes === 1 ? 'Post failed to publish' : 'Posts failed to publish',
+          label: attn.failedPublishes === 1 ? 'post failed to publish' : 'posts failed to publish',
           Icon: WarningCircle,
-          tone: 'crit' as const,
+          tone: 'text-status-bad',
         },
         {
           n: attn.needsReconnect + attn.tokensExpiring,
-          label: 'Connections need attention',
+          label: 'connections need attention',
           Icon: Warning,
-          tone: 'warn' as const,
+          tone: 'text-status-warn',
         },
         {
           n: attn.emptyQueues,
-          label: attn.emptyQueues === 1 ? 'Queue is empty' : 'Queues are empty',
+          label: attn.emptyQueues === 1 ? 'queue is empty' : 'queues are empty',
           Icon: SquaresFour,
-          tone: 'warn' as const,
+          tone: 'text-status-warn',
         },
       ]
     : [];
+  const anyAttention =
+    attn &&
+    (attn.failedPublishes || attn.needsReconnect || attn.tokensExpiring || attn.emptyQueues);
 
   return (
     <div>
@@ -98,115 +81,145 @@ export function Overview() {
         }
       />
 
-      {/* attention */}
-      {attn &&
-      (attn.failedPublishes || attn.needsReconnect || attn.tokensExpiring || attn.emptyQueues) ? (
-        <div className="mt-5 grid gap-4 sm:grid-cols-3">
-          {attentionCards.map((a, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-3.5 rounded-md border border-hairline bg-canvas p-4.5 hover:shadow-1"
-            >
+      {/* attention: one strip, not three tiles */}
+      {anyAttention ? (
+        <ul
+          aria-label="Needs attention"
+          className="grid divide-y divide-hairline-soft rounded-md border border-hairline bg-canvas sm:grid-cols-3 sm:divide-x sm:divide-y-0"
+        >
+          {attention.map((a) => (
+            <li key={a.label} className="flex items-center gap-2.5 px-3 py-2.5">
+              <a.Icon size={16} aria-hidden="true" className={a.n > 0 ? a.tone : 'text-muted'} />
               <span
                 className={
-                  'grid h-11 w-11 flex-none place-items-center rounded-full ' +
-                  (a.tone === 'crit'
-                    ? 'bg-status-bad/10 text-status-bad'
-                    : 'bg-status-warn/10 text-status-warn')
+                  'tnum text-xl font-semibold leading-none ' + (a.n > 0 ? a.tone : 'text-muted')
                 }
               >
-                <a.Icon size={22} />
+                {a.n}
               </span>
-              <div className="flex flex-col gap-0.5">
-                <span
-                  className={
-                    'tnum text-2xl font-semibold leading-none ' +
-                    (a.tone === 'crit' ? 'text-error' : 'text-ink')
-                  }
-                >
-                  {a.n}
-                </span>
-                <span className="text-sm text-ink">{a.label}</span>
-              </div>
-            </div>
+              <span className="text-sm text-body-ink">{a.label}</span>
+            </li>
           ))}
-        </div>
+        </ul>
       ) : (
         !loading && (
-          <div className="mt-5 rounded-md border border-hairline bg-surface-soft p-5 text-sm text-muted">
+          <div className="flex items-center gap-2 rounded-md border border-hairline bg-surface-soft px-3 py-2.5 text-sm text-muted">
+            <CheckCircle size={16} className="text-status-ok" aria-hidden="true" />
             All clear — nothing needs you right now.
           </div>
         )
       )}
 
       {/* clients */}
-      <div className="mb-3.5 mt-9 flex items-baseline justify-between">
-        <h2 className="text-xl font-semibold tracking-tight">Your clients</h2>
-        <button
-          className="text-sm underline underline-offset-4"
-          onClick={() => navigate('/clients')}
-        >
-          Manage all
-        </button>
+      <div className="mb-2 mt-5 flex items-center justify-between gap-3">
+        <h2 className="text-base font-semibold text-ink">Your clients</h2>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="min-h-11 text-sm text-muted underline underline-offset-4 hover:text-ink md:min-h-0"
+            onClick={() => navigate('/clients')}
+          >
+            Manage all
+          </button>
+          <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
+            <Plus size={14} weight="bold" />
+            Add client
+          </Button>
+        </div>
       </div>
-      <div className="grid grid-cols-tiles gap-x-5 gap-y-6">
-        {(ov?.clients ?? []).map((c) => {
-          const h = healthLabel(c);
-          return (
-            <button key={c.workspaceId} className="text-left" onClick={() => void openClient(c)}>
-              <div
-                className="relative grid aspect-cover place-items-center overflow-hidden rounded-md text-white"
-                style={{ background: clientCover(c.name) }}
-              >
-                <span className="text-4xl font-bold opacity-95">{initial(c.name)}</span>
-                <span className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-canvas px-2.5 py-1 text-xs font-semibold text-ink shadow-1">
-                  <span className={'h-2 w-2 rounded-full ' + h.pip} />
-                  {h.text}
-                </span>
+      <Table
+        caption="Your clients"
+        dense
+        rows={ov?.clients ?? []}
+        rowKey={(c) => c.workspaceId}
+        onRowClick={(c) => void openClient(c)}
+        empty={{
+          title: loading ? 'Loading…' : 'No clients yet',
+          description: loading ? undefined : 'Add your first one to start publishing.',
+        }}
+        columns={[
+          {
+            key: 'client',
+            header: 'Client',
+            cell: (c) => (
+              <span className="flex items-center gap-2.5">
+                <span
+                  aria-hidden="true"
+                  className="h-2.5 w-2.5 flex-none rounded-full"
+                  style={{ background: clientHue(c.name) }}
+                />
+                <button
+                  type="button"
+                  className="min-h-11 truncate text-left font-medium text-ink hover:underline md:min-h-0"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void openClient(c);
+                  }}
+                >
+                  {c.name}
+                </button>
                 {c.automationLive && (
-                  <span className="absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-scrim/60 px-2.5 py-1 text-micro font-semibold text-white">
-                    <Lightning size={11} weight="fill" className="text-status-ok" />
+                  <span className="hidden text-micro font-medium text-status-ok sm:inline">
                     Bot live
                   </span>
                 )}
-              </div>
-              <div className="pt-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-base font-semibold">{c.name}</span>
-                  <span className="tnum text-body font-semibold">{c.publishedThisWeek}</span>
-                </div>
-                <div className="mt-0.5 text-sm text-muted">
-                  {c.connectionCount} {c.connectionCount === 1 ? 'account' : 'accounts'}
-                  {c.followers != null ? ` · ${c.followers.toLocaleString()} followers` : ''}
-                </div>
-                <div className="mt-0.5 text-sm text-muted">{whenLabel(c.nextPublishAt)}</div>
-              </div>
-            </button>
-          );
-        })}
-
-        {/* add tile */}
-        <button
-          onClick={() => setAdding(true)}
-          className="grid aspect-cover place-items-center rounded-md border-1.5 border-dashed border-hairline-strong bg-surface-soft text-muted hover:border-ink hover:bg-canvas hover:text-ink"
-        >
-          <span className="flex flex-col items-center gap-2 text-sm font-semibold">
-            <span className="grid h-11 w-11 place-items-center rounded-full border border-hairline bg-canvas">
-              <Plus size={18} weight="bold" />
-            </span>
-            Add client
-          </span>
-        </button>
-      </div>
+              </span>
+            ),
+          },
+          {
+            key: 'accounts',
+            header: 'Accounts',
+            align: 'right',
+            className: 'hidden sm:table-cell',
+            cell: (c) => c.connectionCount,
+          },
+          {
+            key: 'published',
+            header: 'Published this week',
+            align: 'right',
+            className: 'hidden whitespace-nowrap md:table-cell',
+            cell: (c) => c.publishedThisWeek,
+          },
+          {
+            key: 'followers',
+            header: 'Followers',
+            align: 'right',
+            className: 'hidden lg:table-cell',
+            cell: (c) =>
+              c.followers != null ? (
+                c.followers.toLocaleString()
+              ) : (
+                <span className="text-muted">—</span>
+              ),
+          },
+          {
+            key: 'next',
+            header: 'Next scheduled',
+            className: 'hidden whitespace-nowrap lg:table-cell',
+            cell: (c) => (
+              <span className={c.nextPublishAt ? 'text-ink' : 'text-muted'}>
+                {nextPublishLabel(c.nextPublishAt)}
+              </span>
+            ),
+          },
+          {
+            key: 'health',
+            header: 'Health',
+            cell: (c) => {
+              const chip = clientChip(c.health, c.failedThisWeek);
+              return <StatusChip status={chip.status} label={chip.label} />;
+            },
+          },
+        ]}
+      />
 
       {/* publishing next */}
       {ov && ov.upcoming.length > 0 && (
         <>
-          <div className="mb-3.5 mt-9 flex items-baseline justify-between">
-            <h2 className="text-xl font-semibold tracking-tight">Publishing next</h2>
-          </div>
+          <h2 className="mb-2 mt-5 text-base font-semibold text-ink">Publishing next</h2>
           <Table
             caption="Publishing next"
+            dense
             rows={ov.upcoming}
             rowKey={(u, i) => `${i}-${u.workspaceName}`}
             columns={[
@@ -214,16 +227,17 @@ export function Overview() {
                 key: 'when',
                 header: 'When',
                 className: 'whitespace-nowrap text-muted',
-                cell: (u) => whenLabel(u.publishAt),
+                cell: (u) => nextPublishLabel(u.publishAt),
               },
               {
                 key: 'client',
                 header: 'Client',
-                className: 'hidden sm:table-cell',
+                className: 'hidden whitespace-nowrap sm:table-cell',
                 cell: (u) => (
                   <span className="flex items-center gap-2">
                     <span
-                      className="h-2.5 w-2.5 flex-none rounded-full"
+                      aria-hidden="true"
+                      className="h-2 w-2 flex-none rounded-full"
                       style={{ background: clientHue(u.workspaceName) }}
                     />
                     {u.workspaceName}
@@ -233,20 +247,13 @@ export function Overview() {
               {
                 key: 'caption',
                 header: 'Post',
-                className: 'max-w-0 w-full truncate',
+                className: 'w-full max-w-0 truncate',
                 cell: (u) => u.caption || '(no caption)',
               },
             ]}
           />
         </>
       )}
-
-      <div className="mt-7 rounded-md bg-surface-soft p-5 text-sm leading-relaxed text-body-ink">
-        <b className="text-ink">Why this is the home screen, not a chart wall.</b> Your bot
-        publishes through per-client API keys, so your attention belongs on what it got wrong or is
-        about to send — failed posts, dead tokens, empty queues — then a glance at each client. Full
-        analytics graphs live one click deeper, where you go on purpose.
-      </div>
 
       {adding && <AddClientModal onClose={() => setAdding(false)} />}
     </div>

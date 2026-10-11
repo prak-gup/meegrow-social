@@ -3,24 +3,20 @@ import { useNavigate } from 'react-router-dom';
 import type { OverviewView, ClientOverview, ProviderView } from '@meegrow-social/contracts';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { clientHue, initial } from '../lib/clientHue';
+import { clientHue } from '../lib/clientHue';
+import { clientChip, type ChipStatus } from '../lib/statusChip';
+import { filterClients, nextPublishLabel } from '../lib/clientRows';
 import { providerVisible } from '../lib/devProviders';
 import { platformMeta } from '../lib/platforms';
 import { AddClientModal } from '../components/AddClientModal';
 import { InviteLinkRow, useInviteLinks } from '../components/InviteLinks';
 import { Button } from '../components/ui/Button';
 import { PageHeader } from '../components/ui/PageHeader';
-import { Plus, LinkSimple, PlugsConnected } from '../lib/icons';
-
-function pip(c: ClientOverview): { text: string; cls: string } {
-  if (c.health === 'bad') return { text: 'Reconnect an account', cls: 'bg-status-bad' };
-  if (c.health === 'warn')
-    return {
-      text: c.failedThisWeek > 0 ? `${c.failedThisWeek} failed` : 'Queue empty',
-      cls: 'bg-status-warn',
-    };
-  return { text: c.automationLive ? 'Healthy · bot live' : 'Healthy', cls: 'bg-status-ok' };
-}
+import { FilterBar, FilterSelect } from '../components/ui/FilterBar';
+import { RowMenu } from '../components/ui/RowMenu';
+import { StatusChip } from '../components/ui/StatusChip';
+import { Table } from '../components/ui/Table';
+import { Plus, LinkSimple, PlugsConnected, SquaresFour, UsersThree } from '../lib/icons';
 
 /**
  * The two ways to get a client's accounts connected, kept visibly apart: send the client a link
@@ -55,7 +51,7 @@ function ConnectPanel({
   };
 
   return (
-    <div className="mx-6 mb-4 grid gap-4 rounded-md bg-surface-soft p-4 lg:grid-cols-[1fr_auto]">
+    <div className="grid gap-4 lg:grid-cols-[1fr_auto]">
       <div>
         <div className="text-caption font-semibold text-ink">Send {client.name} a link</div>
         <p className="mt-1 text-caption text-muted">
@@ -69,20 +65,20 @@ function ConnectPanel({
             No platform can be connected in this environment yet.
           </p>
         )}
-        <ul className="mt-3 space-y-2">
+        <ul className="mt-2 space-y-1.5">
           {(providers ?? []).map((p) => {
             const meta = platformMeta(p);
             const open = (invites ?? []).filter((i) => i.provider === p.identifier);
             return (
               <li
                 key={p.identifier}
-                className="rounded-sm border border-hairline bg-canvas px-3.5 py-2.5"
+                className="rounded-sm border border-hairline bg-canvas px-3 py-2"
               >
                 <div className="flex flex-wrap items-center gap-3">
                   <span
-                    className={`grid h-7 w-7 flex-none place-items-center rounded-xs text-white ${meta.brand}`}
+                    className={`grid h-6 w-6 flex-none place-items-center rounded-xs text-white ${meta.brand}`}
                   >
-                    <meta.Icon size={16} weight="fill" />
+                    <meta.Icon size={14} weight="fill" />
                   </span>
                   <span className="flex-1 text-sm font-medium">{meta.label}</span>
                   <Button
@@ -91,7 +87,7 @@ function ConnectPanel({
                     disabled={busy !== null}
                     onClick={() => void mint(p.identifier)}
                   >
-                    <LinkSimple size={16} />
+                    <LinkSimple size={14} />
                     {busy === p.identifier
                       ? 'Creating…'
                       : open.length > 0
@@ -121,13 +117,22 @@ function ConnectPanel({
           For accounts you can sign into. This switches you to {client.name} and opens their
           Connections page.
         </p>
-        <Button className="mt-3" size="sm" onClick={onConnectYourself}>
-          <PlugsConnected size={16} />
+        <Button
+          className="mt-2 h-auto min-h-11 whitespace-normal py-1.5 text-left md:min-h-7"
+          size="sm"
+          onClick={onConnectYourself}
+        >
+          <PlugsConnected size={14} />
           Go to {client.name}’s connections
         </Button>
       </div>
     </div>
   );
+}
+
+function HealthChip({ c, className }: { c: ClientOverview; className?: string }) {
+  const chip = clientChip(c.health, c.failedThisWeek);
+  return <StatusChip status={chip.status} label={chip.label} className={className} />;
 }
 
 export function Clients() {
@@ -162,87 +167,194 @@ export function Clients() {
     await switchWorkspace(c.workspaceId);
     navigate('/connections');
   };
+  const openContent = async (c: ClientOverview) => {
+    await switchWorkspace(c.workspaceId);
+    navigate('/content');
+  };
+
+  const [q, setQ] = useState('');
+  const [health, setHealth] = useState<ChipStatus | ''>('');
+  const clients = ov?.clients ?? [];
+  const shown = filterClients(clients, { q, status: health });
+  const filtering = q.trim() !== '' || health !== '';
 
   return (
     <div>
       <PageHeader
         title="Clients"
-        subtitle={`${ov?.clients.length ?? '…'} clients · add one, or send a client a link they open to connect their own accounts`}
+        subtitle={`${ov?.clients.length ?? '…'} clients · connect accounts yourself, or send a client a link to connect their own`}
         actions={
           <Button onClick={() => setAdding(true)}>
-            <Plus size={18} weight="bold" />
+            <Plus size={14} weight="bold" />
             Add client
           </Button>
         }
       />
 
-      <div className="overflow-hidden rounded-md border border-hairline">
-        <div className="grid grid-cols-[1fr_auto] sm:grid-cols-clients gap-4 bg-surface-soft px-6 py-3 text-xs font-bold text-muted">
-          <span>Client</span>
-          <span className="hidden sm:block">This week</span>
-          <span className="hidden sm:block">Health</span>
-          <span />
-        </div>
-        {(ov?.clients ?? []).map((c) => {
-          const p = pip(c);
-          const showing = openInvite === c.workspaceId;
-          return (
-            <div key={c.workspaceId} className="border-t border-hairline-soft">
-              <div className="grid grid-cols-[1fr_auto] sm:grid-cols-clients items-center gap-4 px-6 py-4">
-                <div className="flex items-center gap-3.5">
-                  <span
-                    className="grid h-11 w-11 flex-none place-items-center rounded-md font-bold text-white"
-                    style={{ background: clientHue(c.name) }}
-                  >
-                    {initial(c.name)}
-                  </span>
-                  <div>
-                    <div className="text-base font-semibold">{c.name}</div>
-                    <div className="text-caption text-muted">
-                      {c.connectionCount} {c.connectionCount === 1 ? 'account' : 'accounts'}{' '}
-                      connected
-                    </div>
-                    <div className="mt-0.5 flex items-center gap-1.5 text-caption text-muted sm:hidden">
-                      <span className={'h-2 w-2 flex-none rounded-full ' + p.cls} />
-                      {p.text}
-                    </div>
-                  </div>
-                </div>
-                <div className="tnum hidden text-body sm:block">
-                  {c.publishedThisWeek} published
-                </div>
-                <div className="hidden items-center gap-2 text-sm sm:flex">
-                  <span className={'h-2 w-2 flex-none rounded-full ' + p.cls} />
-                  {p.text}
-                </div>
-                <div className="flex items-center gap-2 justify-self-end">
-                  <button
-                    onClick={() => setOpenInvite(showing ? null : c.workspaceId)}
-                    className="inline-flex h-9 items-center gap-2 rounded-full border border-hairline px-3.5 text-sm font-medium hover:border-ink"
-                  >
-                    <LinkSimple size={16} />
-                    <span className="sm:hidden">Connect</span>
-                    <span className="hidden sm:inline">Connect accounts</span>
-                  </button>
-                </div>
-              </div>
+      {ov && clients.length > 0 && (
+        <FilterBar
+          search={{
+            value: q,
+            onChange: setQ,
+            placeholder: 'Search clients…',
+            label: 'Search clients',
+          }}
+          filters={
+            <FilterSelect
+              label="Health"
+              value={health}
+              onChange={(v) => setHealth(v as ChipStatus | '')}
+              options={[
+                { value: '', label: 'All health' },
+                { value: 'healthy', label: 'Healthy' },
+                { value: 'expiring', label: 'Queue empty' },
+                { value: 'failed', label: 'Failed posts' },
+                { value: 'needs_reconnect', label: 'Needs reconnect' },
+              ]}
+            />
+          }
+          actions={
+            <span aria-live="polite" className="tnum text-caption text-muted">
+              {filtering ? `${shown.length} of ${clients.length}` : clients.length}{' '}
+              {clients.length === 1 ? 'client' : 'clients'}
+            </span>
+          }
+        />
+      )}
 
-              {showing && (
+      {ov === null ? (
+        <p className="text-sm text-muted">Loading…</p>
+      ) : (
+        <Table
+          caption="Clients"
+          dense
+          rows={shown}
+          rowKey={(c) => c.workspaceId}
+          empty={
+            clients.length === 0
+              ? {
+                  title: 'No clients yet',
+                  description: 'Add your first one to start publishing.',
+                  icon: UsersThree,
+                }
+              : {
+                  title: 'No clients match these filters',
+                  icon: UsersThree,
+                  action: (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setQ('');
+                        setHealth('');
+                      }}
+                    >
+                      Clear filters
+                    </Button>
+                  ),
+                }
+          }
+          renderExpanded={(c) =>
+            openInvite === c.workspaceId ? (
+              <div id={`connect-${c.workspaceId}`}>
                 <ConnectPanel
                   client={c}
                   providers={providers}
                   onConnectYourself={() => void connectNow(c)}
                 />
-              )}
-            </div>
-          );
-        })}
-        {ov && ov.clients.length === 0 && (
-          <div className="px-6 py-10 text-center text-muted">
-            No clients yet. Add your first one to start publishing.
-          </div>
-        )}
-      </div>
+              </div>
+            ) : null
+          }
+          columns={[
+            {
+              key: 'client',
+              header: 'Client',
+              cell: (c) => (
+                <span className="flex items-center gap-2.5 font-medium text-ink">
+                  <span
+                    aria-hidden="true"
+                    className="h-2.5 w-2.5 flex-none rounded-full"
+                    style={{ background: clientHue(c.name) }}
+                  />
+                  <span className="min-w-0">
+                    <span className="block truncate">{c.name}</span>
+                    {/* the Health column is hidden on a phone, so the chip rides here */}
+                    <HealthChip c={c} className="mt-1 sm:hidden" />
+                  </span>
+                  {c.automationLive && (
+                    <span className="hidden text-micro font-medium text-status-ok sm:inline">
+                      Bot live
+                    </span>
+                  )}
+                </span>
+              ),
+            },
+            {
+              key: 'accounts',
+              header: 'Accounts',
+              align: 'right',
+              className: 'hidden sm:table-cell',
+              cell: (c) => c.connectionCount,
+            },
+            {
+              key: 'published',
+              header: 'Published this week',
+              align: 'right',
+              className: 'hidden whitespace-nowrap md:table-cell',
+              cell: (c) => c.publishedThisWeek,
+            },
+            {
+              key: 'next',
+              header: 'Next scheduled',
+              className: 'hidden whitespace-nowrap lg:table-cell',
+              cell: (c) => (
+                <span className={c.nextPublishAt ? 'text-ink' : 'text-muted'}>
+                  {nextPublishLabel(c.nextPublishAt)}
+                </span>
+              ),
+            },
+            {
+              key: 'health',
+              header: 'Health',
+              className: 'hidden sm:table-cell',
+              cell: (c) => <HealthChip c={c} />,
+            },
+          ]}
+          rowActions={(c) => {
+            const showing = openInvite === c.workspaceId;
+            return (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  aria-expanded={showing}
+                  aria-controls={`connect-${c.workspaceId}`}
+                  onClick={() => setOpenInvite(showing ? null : c.workspaceId)}
+                >
+                  <LinkSimple size={14} />
+                  <span className="sm:hidden">Connect</span>
+                  <span className="hidden sm:inline">Connect accounts</span>
+                </Button>
+                <RowMenu
+                  label={`Actions for ${c.name}`}
+                  items={[
+                    {
+                      label: 'Open content',
+                      icon: <SquaresFour size={14} />,
+                      onSelect: () => void openContent(c),
+                    },
+                    {
+                      label: 'Open connections',
+                      icon: <PlugsConnected size={14} />,
+                      onSelect: () => void connectNow(c),
+                    },
+                  ]}
+                />
+              </>
+            );
+          }}
+        />
+      )}
 
       {adding && <AddClientModal onClose={() => setAdding(false)} />}
     </div>
