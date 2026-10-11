@@ -9,6 +9,7 @@ import {
   parseStoredOptions,
   type MediaRef,
   type PostGroupView,
+  type PostVariant,
   type PostView,
   type UpdatePostInput,
 } from '@meegrow-social/contracts';
@@ -17,6 +18,7 @@ import { and, asc, eq, gte, isNotNull, lte, sql } from 'drizzle-orm';
 import { DateTime } from 'luxon';
 import { getScheduler } from './scheduler.js';
 import { nextFreeSlotForQueue } from './queues.js';
+import { ConnectionNotFoundError, findMissingConnectionIds } from './connections.js';
 import { tryGetProvider } from '../providers/registry.js';
 import { ProviderBadRequestError } from '../errors.js';
 
@@ -53,19 +55,22 @@ function statusFor(mode: Exclude<CreatePostInput['schedule'], { type: 'queue' }>
  * a provider's check must key off `kind` and arity, never `url`.
  */
 function assertVariantsPublishable(input: CreatePostInput): void {
-  for (const v of input.variants) {
-    // Non-throwing lookup: an unconfigured provider must not change what the API accepts, or CI
-    // (fakes only, no platform secrets) would diverge from production.
-    const provider = tryGetProvider(v.provider);
-    if (!provider?.assertPublishable) continue;
-    provider.assertPublishable([
-      {
-        caption: v.caption ?? input.caption,
-        media: v.media ?? input.media,
-        options: v.options,
-      },
-    ]);
-  }
+  for (const v of input.variants) assertVariantPublishable(input, v);
+}
+
+/** One variant of `assertVariantsPublishable` — exported so the dry run reports per variant. */
+export function assertVariantPublishable(input: CreatePostInput, v: PostVariant): void {
+  // Non-throwing lookup: an unconfigured provider must not change what the API accepts, or CI
+  // (fakes only, no platform secrets) would diverge from production.
+  const provider = tryGetProvider(v.provider);
+  if (!provider?.assertPublishable) return;
+  provider.assertPublishable([
+    {
+      caption: v.caption ?? input.caption,
+      media: v.media ?? input.media,
+      options: v.options,
+    },
+  ]);
 }
 
 /**
@@ -155,6 +160,16 @@ export async function createPost(
     const replay = await findByIdempotencyKey(workspaceId, idempotencyKey);
     if (replay) return replay;
   }
+
+  // Every variant must target a connection of THIS workspace. `posts.connection_id` has no FK, so
+  // without this a post naming another tenant's (or a made-up) connection was stored and only
+  // failed hours later, in the worker. After the replay check: a replay must still return its
+  // posts when the connection has since been removed.
+  const [missing] = await findMissingConnectionIds(
+    workspaceId,
+    input.variants.map((v) => v.connectionId),
+  );
+  if (missing) throw new ConnectionNotFoundError(`connection ${missing} not found`);
 
   let status: string;
   let publishAt: Date | null;
@@ -348,6 +363,60 @@ export async function updatePost(
     await getScheduler().schedulePublish({ workspaceId, postId, when: result.when! });
   }
   return toView(result.updated);
+}
+
+/**
+ * Retry a `failed` post: put it back to `scheduled` and hand it to the scheduler to publish now.
+ * It goes through the same job → `publishPost` path as a first attempt, never inline. Any other
+ * status is a `PostStateError`; `failed` is the only failure status — there is no partial one,
+ * because every variant is its own post and is retried on its own.
+ *
+ * Cannot double-post a variant that went out: `published` is refused here, the flip
+ * happens under a row lock (so of two concurrent retries exactly one enqueues), and
+ * `publishPost` itself no-ops on a published post. What it CANNOT see is a post the platform
+ * accepted but that was recorded as failed (the provider threw after the platform took it) — that
+ * is indistinguishable from a real failure in stored state, and a retry publishes it again.
+ */
+export async function retryPost(workspaceId: string, postId: string): Promise<PostView | null> {
+  const outcome = await withWorkspace(workspaceId, async (tx) => {
+    // Row lock: a concurrent retry waits here, then reads `scheduled` and is refused below.
+    const [row] = await tx
+      .select({ status: schema.posts.status, error: schema.posts.error })
+      .from(schema.posts)
+      .where(eq(schema.posts.id, postId))
+      .limit(1)
+      .for('update');
+    if (!row) return 'missing' as const;
+    if (row.status !== 'failed') return row.status;
+    const [updated] = await tx
+      .update(schema.posts)
+      .set({ status: 'scheduled', error: null })
+      .where(eq(schema.posts.id, postId))
+      .returning();
+    return { updated: updated!, previousError: row.error };
+  });
+  if (outcome === 'missing') return null;
+  if (typeof outcome === 'string') {
+    throw new PostStateError(`a '${outcome}' post cannot be retried`);
+  }
+
+  try {
+    // The job engine keys a post's publish job on the post id and drops a second add while one
+    // still exists in any state — so clear a leftover job first, or the retry could silently vanish.
+    await getScheduler().cancelPublish({ postId });
+    await getScheduler().schedulePublish({ workspaceId, postId, when: 'now' });
+  } catch (err) {
+    // Nothing was enqueued: put the post back so it reads `failed` (and can be retried again)
+    // instead of sitting `scheduled` with no job behind it.
+    await withWorkspace(workspaceId, async (tx) => {
+      await tx
+        .update(schema.posts)
+        .set({ status: 'failed', error: outcome.previousError })
+        .where(and(eq(schema.posts.id, postId), eq(schema.posts.status, 'scheduled')));
+    });
+    throw err;
+  }
+  return toView(outcome.updated);
 }
 
 /**
