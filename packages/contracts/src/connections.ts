@@ -191,3 +191,25 @@ export const passwordConnectResult = z.object({
   endpoint: z.string(),
 });
 export type PasswordConnectResult = z.infer<typeof passwordConnectResult>;
+
+/**
+ * Body of `POST /v1/connections/:provider/credentials`, for a provider whose `connectInput` is
+ * `credentials`. Which fields a provider wants is the provider's own business (core), so this only
+ * bounds the shape: a handful of short named strings. The values are secrets — nothing may log or
+ * echo this body.
+ */
+export const connectCredentialsInput = z.object({
+  fields: z
+    .record(z.string().min(1).max(40), z.string().max(4096))
+    .refine((fields) => Object.keys(fields).length <= 8, 'too many fields'),
+});
+export type ConnectCredentialsInput = z.infer<typeof connectCredentialsInput>;
+
+/** What a credential connect answers with. Never anything that was sent in. */
+export const connectCredentialsResult = z.object({
+  connectionId: z.string().uuid(),
+  displayName: z.string(),
+  /** True when an existing connection to the same account was given the new credential. */
+  reconnected: z.boolean(),
+});
+export type ConnectCredentialsResult = z.infer<typeof connectCredentialsResult>;

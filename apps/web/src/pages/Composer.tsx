@@ -25,12 +25,15 @@ import {
   featuredImage,
   hasErrors,
   isDirty,
+  isMessageProvider,
   nextSlotError,
   nextSlotFromView,
   nextSlotText,
   outcomeMessage,
+  platformCounts,
   plural,
   postStatusSummary,
+  previewNote,
   scheduleSummary,
   selectedConnections,
   submitLabel,
@@ -327,6 +330,9 @@ function Preview({
   const first = media[0];
   const mediaFirst = current ? MEDIA_FIRST.has(current.provider) : false;
   const asArticle = current ? isArticleProvider(current.provider) : false;
+  const asMessage = current ? isMessageProvider(current.provider) : false;
+  const note = current ? previewNote(current.provider) : null;
+  const count = current ? platformCounts([current], caption, media.length)[0] : undefined;
   // The image the article gets is the first IMAGE attached, wherever it sits in the list.
   const featuredId = featuredImage(media.map((m) => m.ref))[0]?.mediaId;
 
@@ -428,6 +434,14 @@ function Preview({
             body={caption}
             image={media.find((m) => m.ref.mediaId === featuredId)}
           />
+        ) : asMessage ? (
+          // A message in a channel, not a post on a profile: one bubble, text then attachment.
+          <div className="bg-surface-soft p-3">
+            <div className="overflow-hidden rounded-md border border-hairline-soft bg-canvas">
+              {text}
+              {picture}
+            </div>
+          </div>
         ) : mediaFirst ? (
           <>
             {picture}
@@ -449,6 +463,13 @@ function Preview({
           The site’s theme decides the final look. This shows the structure that is sent.
         </p>
       )}
+      {count && platform && (
+        <p className={cn('tnum mt-1 text-caption', count.over ? 'text-error' : 'text-muted')}>
+          {count.length.toLocaleString()} / {count.max.toLocaleString()} characters on{' '}
+          {platform.label}
+        </p>
+      )}
+      {note && <p className="mt-1 text-caption text-muted">{note}</p>}
     </section>
   );
 }
@@ -625,6 +646,7 @@ export function Composer({
   const targets = selectedConnections(conns, connectionIds);
   const role = captionRole(targets);
   const writingArticle = role.kind !== 'caption';
+  const counts = platformCounts(targets, caption, media.length);
   const setArticleField = <K extends keyof ArticleForm>(field: K, value: ArticleForm[K]) =>
     setArticle((prev) => ({ ...prev, [field]: value }));
   const warnings = accountWarnings(conns, issues);
@@ -1019,6 +1041,20 @@ export function Composer({
               <p id="caption-hint" className="text-caption text-muted">
                 {role.hint}
               </p>
+            )}
+            {counts.length > 0 && (
+              <ul
+                aria-label="Length on each platform"
+                className="flex flex-wrap gap-x-3 gap-y-1 text-caption text-muted"
+              >
+                {counts.map((c) => (
+                  <li key={c.provider} className={cn('tnum', c.over && 'font-semibold text-error')}>
+                    {platformMeta({ identifier: c.provider, displayName: c.provider }).label}{' '}
+                    {c.length.toLocaleString()} / {c.max.toLocaleString()}
+                    {c.over && <span className="sr-only"> — over the limit</span>}
+                  </li>
+                ))}
+              </ul>
             )}
             {captionError && <FieldError id={captionErrorId}>{captionError}</FieldError>}
           </Section>

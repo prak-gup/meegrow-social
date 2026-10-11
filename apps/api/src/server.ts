@@ -9,6 +9,7 @@ import {
   bulkPostMetricsInput,
   calendarPostsQuery,
   changePasswordInput,
+  connectCredentialsInput,
   createApiKeyInput,
   createInviteInput,
   inviteIdParam,
@@ -49,6 +50,7 @@ import {
   callbackCarriesCredential,
   cancelPost,
   completeCredentialCallback,
+  connectWithCredentials,
   changePasswordWithLimit,
   checkConnectSite,
   connectWithPassword,
@@ -115,7 +117,10 @@ import {
   type AuthContext,
   type InviteFinishResult,
   PostStateError,
+  ProviderAuthError,
   ProviderBadRequestError,
+  ProviderTransientError,
+  tryGetProvider,
 } from '@meegrow-social/core';
 import { buildMcpServer, newStatelessTransport } from './mcp/index.js';
 
@@ -724,6 +729,65 @@ export async function buildServer(): Promise<FastifyInstance> {
     },
   );
 
+  // Connect a provider that hands people a credential to paste (`connectInput: 'credentials'` on
+  // GET /v1/providers): a Bluesky app password, a Telegram bot token, a Discord or Slack webhook
+  // address. One authenticated POST: core verifies the credential against the platform and stores
+  // it encrypted. The body is a secret from end to end — it is not logged (the onResponse hook
+  // records route and status only; Fastify's logger is off) and no answer repeats any of it.
+  // Attempts are limited in core, per client address and per workspace + platform.
+  app.post<{ Params: { provider: string } }>(
+    '/v1/connections/:provider/credentials',
+    {
+      // Fastify's default answers with `error.message`, and a JSON parse error's message quotes
+      // the body it could not parse — here, a credential. (Same reason as the /password route.)
+      errorHandler: (error, _req, reply) => {
+        const status =
+          typeof error.statusCode === 'number' && error.statusCode >= 400 && error.statusCode < 500
+            ? error.statusCode
+            : 500;
+        void reply
+          .code(status)
+          .header('cache-control', 'no-store')
+          .send({
+            error:
+              status === 500
+                ? 'the connection could not be completed'
+                : 'the request could not be read',
+          });
+      },
+    },
+    async (req, reply) => {
+      const provider = providerIdentifier.safeParse(req.params.provider);
+      if (!provider.success) return reply.code(400).send({ error: 'unknown provider' });
+      const parsed = connectCredentialsInput.safeParse(req.body ?? {});
+      if (!parsed.success) return reply.code(400).send({ error: 'fill in every field' });
+      reply.header('cache-control', 'no-store');
+      try {
+        const result = await connectWithCredentials(
+          req.authContext!.workspaceId,
+          provider.data,
+          parsed.data.fields,
+          req.ip,
+        );
+        if (!result.ok) return tooManyAttempts(reply, result.retryAfterSeconds);
+        return reply.code(201).send({
+          connectionId: result.connectionId,
+          displayName: result.displayName,
+          reconnected: result.reconnected,
+        });
+      } catch (err) {
+        if (err instanceof ProviderBadRequestError)
+          return reply.code(400).send({ error: err.message });
+        // 422, not 401: the platform refused ITS credential; this app's session is fine.
+        if (err instanceof ProviderAuthError) return reply.code(422).send({ error: err.message });
+        if (err instanceof ProviderTransientError)
+          return reply.code(503).send({ error: err.message });
+        // Anything else is ours. Its text is not sent: it was built around a secret-bearing call.
+        return reply.code(500).send({ error: 'the connection could not be completed' });
+      }
+    },
+  );
+
   // Mint a per-platform connect-invite link (operator action). The client opens the returned URL to
   // connect their own account into the workspace. Defaults to the active client; a session may name
   // another client it belongs to (`workspaceId`), so the Clients page can mint for any row without
@@ -733,6 +797,13 @@ export async function buildServer(): Promise<FastifyInstance> {
     async (req, reply) => {
       const provider = providerIdentifier.safeParse(req.params.provider);
       if (!provider.success) return reply.code(400).send({ error: 'unknown provider' });
+      // A pasted credential is entered in the dashboard only: the public invite page has no form
+      // for one, and a link that asks a client for a token is not something to send around yet.
+      if (tryGetProvider(provider.data)?.connectInput === 'credentials') {
+        return reply
+          .code(400)
+          .send({ error: 'this platform is connected from the dashboard, not by invite link' });
+      }
       const parsed = createInviteInput.safeParse(req.body ?? {});
       if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
       const ctx = req.authContext!;

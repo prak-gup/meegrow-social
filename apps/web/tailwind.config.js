@@ -41,6 +41,10 @@ export default {
           x: 'hsl(var(--brand-x) / <alpha-value>)',
           youtube: 'hsl(var(--brand-youtube) / <alpha-value>)',
           wordpress: 'hsl(var(--brand-wordpress) / <alpha-value>)',
+          bluesky: 'hsl(var(--brand-bluesky) / <alpha-value>)',
+          telegram: 'hsl(var(--brand-telegram) / <alpha-value>)',
+          discord: 'hsl(var(--brand-discord) / <alpha-value>)',
+          slack: 'hsl(var(--brand-slack) / <alpha-value>)',
         },
         chart: {
           1: 'hsl(var(--chart-1) / <alpha-value>)',

@@ -69,8 +69,12 @@ export interface PostDetails {
 }
 
 export interface PostResult {
-  externalPostId: string;
-  releaseUrl: string;
+  /**
+   * Absent only where the platform reports neither (a Slack incoming webhook answers `ok` and
+   * nothing else). Such a post is stored without them: no link to show, nothing to poll.
+   */
+  externalPostId?: string;
+  releaseUrl?: string;
   /**
    * Set when the post went out but not as asked — YouTube forcing an upload to private, a thumbnail
    * it refused. The post is still published (failing it would invite a retry that publishes twice);
@@ -156,6 +160,13 @@ export interface SocialProvider {
    * channel, GBP location) simply omit it.
    */
   finalizeAccount?(tokens: AuthTokens, account: ProviderAccount): Promise<AuthTokens>;
+  /**
+   * Only for `connectInput: 'credentials'`: the whole connect in one call. `fields` is what the
+   * person typed into the form — unvalidated, and secret. Verify it against the platform and
+   * return what to store; throw `CredentialFormatError` for input that was never sent anywhere,
+   * `ProviderAuthError` for a credential the platform refused. Nothing thrown may contain a field.
+   */
+  connectWithCredentials?(fields: Readonly<Record<string, string>>): Promise<AuthTokens>;
   refreshToken(refreshToken: string): Promise<AuthTokens>;
   /**
    * Semantic validation of a post BEFORE it is stored (#44). Throws `ProviderBadRequestError` when

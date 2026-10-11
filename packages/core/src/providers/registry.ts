@@ -14,6 +14,10 @@ import { InstagramProvider } from './meta/instagram.js';
 import { GbpProvider } from './google/gbp.js';
 import { YouTubeProvider } from './google/youtube.js';
 import { WordPressProvider } from './wordpress/wordpress.js';
+import { BlueskyProvider } from './bluesky/bluesky.js';
+import { TelegramProvider } from './telegram/telegram.js';
+import { DiscordProvider } from './discord/discord.js';
+import { SlackProvider } from './slack/slack.js';
 
 /**
  * Explicit registry (Postiz pattern — no decorator auto-discovery). Real providers get added to
@@ -126,6 +130,14 @@ export function registerConfiguredProviders(): void {
   if (process.env.WORDPRESS_ENABLED === 'true') {
     registerProvider(new WordPressProvider());
   }
+
+  // The platforms connected with a pasted credential need nothing of ours either: each account
+  // or channel brings its own token. One exact opt-in each, off by default — none has run against
+  // the real service (docs/dev/research/quick-platforms.md has a bring-up checklist per platform).
+  if (process.env.BLUESKY_ENABLED === 'true') registerProvider(new BlueskyProvider());
+  if (process.env.TELEGRAM_ENABLED === 'true') registerProvider(new TelegramProvider());
+  if (process.env.DISCORD_ENABLED === 'true') registerProvider(new DiscordProvider());
+  if (process.env.SLACK_ENABLED === 'true') registerProvider(new SlackProvider());
 }
 
 registerConfiguredProviders();

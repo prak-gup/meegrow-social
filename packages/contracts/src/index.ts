@@ -11,4 +11,5 @@ export * from './apikeys.js';
 export * from './overview.js';
 export * from './invites.js';
 export * from './article-markdown.js';
+export * from './platform-text.js';
 export * from './imports.js';

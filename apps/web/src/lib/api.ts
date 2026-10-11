@@ -2,6 +2,7 @@ import type {
   ApiKeyView,
   AuthMeView,
   CalendarView,
+  ConnectCredentialsResult,
   ConnectionView,
   CreatePostInput,
   MediaView,
@@ -133,6 +134,17 @@ export const api = {
       'POST',
       `/v1/connections/${encodeURIComponent(provider)}/password`,
       login,
+    ),
+  /**
+   * Connect a provider that takes a pasted credential (`connectInput: 'credentials'`). The server
+   * verifies it against the platform and stores it; the answer never repeats it. Callers must not
+   * persist or log `fields`.
+   */
+  connectCredentials: (provider: string, fields: Record<string, string>) =>
+    request<ConnectCredentialsResult>(
+      'POST',
+      `/v1/connections/${encodeURIComponent(provider)}/credentials`,
+      { fields },
     ),
   /** Mints for the active client, or for `workspaceId` — any client the user belongs to. */
   createInvite: (provider: string, workspaceId?: string) =>

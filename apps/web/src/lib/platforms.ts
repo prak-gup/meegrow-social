@@ -6,11 +6,26 @@ import {
   XLogo,
   GoogleLogo,
   WordpressLogo,
+  Butterfly,
+  TelegramLogo,
+  DiscordLogo,
+  SlackLogo,
   Plugs,
   type IconComponent,
 } from './icons';
 
+/** What a platform is FOR, which is how the connect list is laid out. */
+export type PlatformGroup = 'social' | 'blog' | 'messaging';
+
+export const PLATFORM_GROUPS: ReadonlyArray<{ id: PlatformGroup; label: string }> = [
+  { id: 'social', label: 'Social' },
+  { id: 'blog', label: 'Blogs' },
+  { id: 'messaging', label: 'Messaging' },
+];
+
 export interface PlatformMeta {
+  /** Absent = `social`, which is also where an unknown (dev/fake) provider is listed. */
+  group?: PlatformGroup;
   label: string;
   Icon: IconComponent;
   /** Tailwind bg class from the --brand-* tokens. */
@@ -61,6 +76,34 @@ const PLATFORM: Record<string, PlatformMeta> = {
     Icon: WordpressLogo,
     brand: 'bg-brand-wordpress',
     blurb: 'Publish blog articles to a site',
+    group: 'blog',
+  },
+  bluesky: {
+    label: 'Bluesky',
+    Icon: Butterfly,
+    brand: 'bg-brand-bluesky',
+    blurb: 'Post to a Bluesky account',
+  },
+  telegram: {
+    label: 'Telegram',
+    Icon: TelegramLogo,
+    brand: 'bg-brand-telegram',
+    blurb: 'Broadcast to a channel through a bot',
+    group: 'messaging',
+  },
+  discord: {
+    label: 'Discord',
+    Icon: DiscordLogo,
+    brand: 'bg-brand-discord',
+    blurb: 'Post to a channel through its webhook',
+    group: 'messaging',
+  },
+  slack: {
+    label: 'Slack',
+    Icon: SlackLogo,
+    brand: 'bg-brand-slack',
+    blurb: 'Post to a channel through an incoming webhook',
+    group: 'messaging',
   },
 };
 
@@ -96,6 +139,19 @@ export function platformColor(identifier: string): string {
 }
 
 /**
+ * Providers under the kind of platform they are, in `PLATFORM_GROUPS` order, each keeping the
+ * order it arrived in. A group nobody is in is left out.
+ */
+export function groupProviders<P extends { identifier: string; displayName: string }>(
+  providers: readonly P[],
+): Array<{ id: PlatformGroup; label: string; providers: P[] }> {
+  return PLATFORM_GROUPS.map((g) => ({
+    ...g,
+    providers: providers.filter((p) => (platformMeta(p).group ?? 'social') === g.id),
+  })).filter((g) => g.providers.length > 0);
+}
+
+/**
  * The product's name as a client meets it. There is no agency/operator entity in the data model (a
  * workspace is the client; a user is a person), and this is the name the platform's own consent
  * screen shows for the app, so the invite pages use the same one.
@@ -112,6 +168,10 @@ const SIGN_IN_WITH: Record<string, string> = {
   'linkedin-page': 'LinkedIn',
   x: 'X',
   wordpress: 'WordPress',
+  bluesky: 'Bluesky',
+  telegram: 'Telegram',
+  discord: 'Discord',
+  slack: 'Slack',
 };
 
 export function signInName(p: { provider: string; providerDisplayName: string }): string {
