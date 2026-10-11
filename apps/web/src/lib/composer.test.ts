@@ -6,6 +6,9 @@ import {
   MEDIA_MAX,
   buildCreatePostInput,
   hasErrors,
+  nextSlotError,
+  nextSlotFromView,
+  nextSlotText,
   outcomeMessage,
   plural,
   postStatusSummary,
@@ -242,6 +245,29 @@ describe('scheduleSummary and outcomeMessage', () => {
     expect(scheduleSummary('queue', '', undefined)).toBe('Pick a queue.');
   });
 
+  it('puts the previewed slot in the queue summary', () => {
+    const publishAt = new Date('2026-10-12T09:30:00.000Z');
+    const when = publishAt.toLocaleString();
+    expect(scheduleSummary('queue', '', 'Weekday mornings', { state: 'ready', publishAt })).toBe(
+      `Next free slot in Weekday mornings: ${when}.`,
+    );
+    expect(scheduleSummary('queue', '', 'Weekday mornings', { state: 'none' })).toBe(
+      'Weekday mornings has no free slot in the next 90 days.',
+    );
+    // Still loading, failed, or not fetched: the summary stays as it was without a preview.
+    for (const slot of [{ state: 'loading' }, { state: 'error', message: 'x' }, null] as const) {
+      expect(scheduleSummary('queue', '', 'Weekday mornings', slot)).toBe(
+        'Next free slot in Weekday mornings.',
+      );
+    }
+    expect(scheduleSummary('queue', '', undefined, { state: 'ready', publishAt })).toBe(
+      'Pick a queue.',
+    );
+    expect(scheduleSummary('now', '', undefined, { state: 'ready', publishAt })).toContain(
+      'immediately',
+    );
+  });
+
   it('names what happened and for how many accounts', () => {
     expect(outcomeMessage('draft', 1, {})).toBe('Saved as a draft for 1 account.');
     expect(outcomeMessage('now', 2, {})).toBe('Publishing now to 2 accounts.');
@@ -270,5 +296,39 @@ describe('plural', () => {
   it('pluralises', () => {
     expect(plural(1, 'account')).toBe('1 account');
     expect(plural(2, 'account')).toBe('2 accounts');
+  });
+});
+
+describe('next queue slot', () => {
+  const slot = (publishAt: unknown) => ({ publishAt: publishAt as Date, localTime: '' });
+
+  it('takes the first slot of the response', () => {
+    // Dates arrive as ISO strings: the API client does not run responses through the Zod parsers.
+    const next = nextSlotFromView({
+      slots: [slot('2026-10-12T04:00:00.000Z'), slot('2026-10-13T04:00:00.000Z')],
+    });
+    expect(next).toEqual({ state: 'ready', publishAt: new Date('2026-10-12T04:00:00.000Z') });
+  });
+
+  it('reads an empty list or an unusable date as no free slot', () => {
+    expect(nextSlotFromView({ slots: [] })).toEqual({ state: 'none' });
+    expect(nextSlotFromView({ slots: [slot('not a date')] })).toEqual({ state: 'none' });
+  });
+
+  it('explains a failed preview by status', () => {
+    expect(nextSlotError(400)).toContain('paused');
+    expect(nextSlotError(404)).toContain('no longer exists');
+    expect(nextSlotError(500)).toBe('Could not check the next slot.');
+    expect(nextSlotError(undefined)).toBe('Could not check the next slot.');
+  });
+
+  it('words each state for the line under the queue picker', () => {
+    const publishAt = new Date('2026-10-12T04:00:00.000Z');
+    expect(nextSlotText({ state: 'loading' })).toBe('Checking the next slot…');
+    expect(nextSlotText({ state: 'ready', publishAt })).toBe(
+      `Next slot: ${publishAt.toLocaleString()}`,
+    );
+    expect(nextSlotText({ state: 'none' })).toBe('No free slot in the next 90 days.');
+    expect(nextSlotText({ state: 'error', message: 'Nope.' })).toBe('Nope.');
   });
 });

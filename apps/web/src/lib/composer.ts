@@ -3,8 +3,10 @@ import type {
   CreatePostInput,
   MediaRef,
   PostView,
+  QueueSlotsView,
   QueueView,
 } from '@meegrow-social/contracts';
+import { formatPublishAt, parsePublishAt } from './postDate';
 
 /**
  * Pure Composer logic: form state → `createPost` payload, validation and copy. Kept out of the page
@@ -145,11 +147,50 @@ export function buildCreatePostInput(
   };
 }
 
+/**
+ * The next slot the chosen queue would hand out (`GET /v1/queues/:id/slots?count=1`). A preview
+ * only: nothing is reserved, so none of these states stops a post being added to the queue.
+ */
+export type NextSlot =
+  | { state: 'loading' }
+  | { state: 'ready'; publishAt: Date }
+  /** The queue has no free slot inside its 90-day look-ahead. */
+  | { state: 'none' }
+  | { state: 'error'; message: string };
+
+/** The first slot of a response; an empty list (or an unusable date) is "no free slot". */
+export function nextSlotFromView(view: Pick<QueueSlotsView, 'slots'>): NextSlot {
+  const publishAt = parsePublishAt(view.slots[0]?.publishAt);
+  return publishAt ? { state: 'ready', publishAt } : { state: 'none' };
+}
+
+/** Why the slot could not be previewed, from the HTTP status (400 = inactive, 404 = unknown). */
+export function nextSlotError(status: number | undefined): string {
+  if (status === 400) return 'This queue is paused, so it has no next slot.';
+  if (status === 404) return 'This queue no longer exists. Reload to see the current queues.';
+  return 'Could not check the next slot.';
+}
+
+/** The line under the queue picker. */
+export function nextSlotText(slot: NextSlot): string {
+  switch (slot.state) {
+    case 'loading':
+      return 'Checking the next slot…';
+    case 'ready':
+      return `Next slot: ${formatPublishAt(slot.publishAt)}`;
+    case 'none':
+      return 'No free slot in the next 90 days.';
+    case 'error':
+      return slot.message;
+  }
+}
+
 /** The "when" half of the preview and the success message. */
 export function scheduleSummary(
   mode: ScheduleMode,
   at: string,
   queueName: string | undefined,
+  nextSlot?: NextSlot | null,
 ): string {
   switch (mode) {
     case 'draft':
@@ -163,7 +204,12 @@ export function scheduleSummary(
         : 'Pick a date and time.';
     }
     case 'queue':
-      return queueName ? `Next free slot in ${queueName}.` : 'Pick a queue.';
+      if (!queueName) return 'Pick a queue.';
+      if (nextSlot?.state === 'ready') {
+        return `Next free slot in ${queueName}: ${formatPublishAt(nextSlot.publishAt)}.`;
+      }
+      if (nextSlot?.state === 'none') return `${queueName} has no free slot in the next 90 days.`;
+      return `Next free slot in ${queueName}.`;
   }
 }
 

@@ -8,6 +8,7 @@ import type {
   PostGroupView,
   PostView,
   ProviderView,
+  QueueSlotsView,
   QueueView,
   UpdatePostInput,
   OverviewView,
@@ -141,6 +142,12 @@ export const api = {
 
   // --- Queues (#4) — composer queue picker ---
   listQueues: () => request<{ queues: QueueView[] }>('GET', '/v1/queues'),
+  // The next `count` (1–50) times the queue would hand out; a snapshot, nothing is reserved. May
+  // hold fewer than asked. 404 for an unknown queue, 400 for an inactive one.
+  queueSlots: (id: string, count: number) =>
+    request<QueueSlotsView>('GET', `/v1/queues/${encodeURIComponent(id)}/slots`, undefined, {
+      count,
+    }),
 
   // --- Media (#3) ---
   uploadMedia: async (file: File): Promise<MediaView> => {
