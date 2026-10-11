@@ -97,9 +97,14 @@ describe('whenLabel', () => {
       showDate: false,
     });
   });
-  it('shows nothing for placeholder or missing dates on sent posts', () => {
-    expect(whenLabel(post({ status: 'published', publishAt: new Date(0) }))).toBeNull();
+  it('says so when a published post has no real date', () => {
+    const missing = { prefix: 'Time not recorded', showDate: false };
+    expect(whenLabel(post({ status: 'published', publishAt: null }))).toEqual(missing);
+    expect(whenLabel(post({ status: 'published', publishAt: new Date(0) }))).toEqual(missing);
+  });
+  it('shows nothing for a missing date on a failed or cancelled post', () => {
     expect(whenLabel(post({ status: 'failed', publishAt: null }))).toBeNull();
+    expect(whenLabel(post({ status: 'cancelled', publishAt: new Date(0) }))).toBeNull();
   });
 });
 

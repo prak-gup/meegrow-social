@@ -13,7 +13,7 @@ import {
 } from '../lib/calendarGrid';
 import { cn } from '../lib/cn';
 import { platformMeta } from '../lib/platforms';
-import { formatPublishTime } from '../lib/postDate';
+import { formatPublishTime, postTimeLabel } from '../lib/postDate';
 import { replacePost } from '../lib/postList';
 import { STATUS_VARIANT, canEditPost } from '../lib/postStatus';
 import { EditCaptionModal } from '../components/EditCaptionModal';
@@ -50,7 +50,7 @@ function PostChip({
   onEdit: (post: PostView) => void;
 }) {
   const platform = platformMeta({ identifier: post.provider, displayName: post.provider });
-  const time = formatPublishTime(post.publishAt);
+  const time = postTimeLabel(post, formatPublishTime);
   const caption = post.caption || '(no caption)';
   const body = (
     <>
