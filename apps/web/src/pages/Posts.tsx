@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import type {
   ConnectionView,
   PostGroupSummary,
@@ -172,6 +172,13 @@ export function Posts() {
         .catch(() => setMetricsFailed(true));
     }
   }, [groups]);
+
+  // The composer panel sits over this page without unmounting it; when it closes after creating a
+  // post it says so in router state, and the list is read again.
+  const refreshed = (useLocation().state as { refreshed?: number } | null)?.refreshed;
+  useEffect(() => {
+    if (refreshed) setAttempt((a) => a + 1);
+  }, [refreshed]);
 
   // Platform filter options: the providers registered in this environment (fakes stay dev-only).
   useEffect(() => {

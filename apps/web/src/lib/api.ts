@@ -22,6 +22,7 @@ import type {
   PostMetricsView,
   FollowerSeriesView,
   PostGroupSummary,
+  PostValidationResult,
   BulkPostMetricsView,
   AnalyticsStatusView,
 } from '@meegrow-social/contracts';
@@ -158,6 +159,10 @@ export const api = {
   cancelPost: (id: string) => request<{ cancelled: true }>('DELETE', `/v1/posts/${id}`),
   createPost: (input: CreatePostInput) =>
     request<{ posts: PostView[] }>('POST', '/v1/posts', input),
+  // Dry run of createPost: same body, nothing created, always 200. `issues` names what create (or
+  // the publish after it) would reject, per account where it belongs to one.
+  validatePost: (input: CreatePostInput) =>
+    request<PostValidationResult>('POST', '/v1/posts/validate', input),
   calendar: (year: number, month: number, timezone: string) =>
     request<CalendarView>('GET', '/v1/posts/calendar', undefined, { year, month, timezone }),
   getPostGroup: (id: string) => request<{ group: PostGroupView }>('GET', `/v1/post-groups/${id}`),

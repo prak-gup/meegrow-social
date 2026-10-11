@@ -2,6 +2,7 @@ import type {
   ConnectionView,
   CreatePostInput,
   MediaRef,
+  PostValidationIssue,
   PostView,
   QueueSlotsView,
   QueueView,
@@ -239,4 +240,142 @@ export function postStatusSummary(posts: readonly Pick<PostView, 'status'>[]): s
   const counts = new Map<string, number>();
   for (const p of posts) counts.set(p.status, (counts.get(p.status) ?? 0) + 1);
   return [...counts].map(([status, n]) => `${n} ${status}`).join(', ');
+}
+
+// --- Account picker ---
+
+export interface AccountGroup {
+  provider: string;
+  accounts: ConnectionView[];
+}
+
+/** Accounts under their platform, platforms in first-seen order, accounts in list order. */
+export function groupAccounts(connections: readonly ConnectionView[]): AccountGroup[] {
+  const groups = new Map<string, ConnectionView[]>();
+  for (const c of connections) groups.set(c.provider, [...(groups.get(c.provider) ?? []), c]);
+  return [...groups].map(([provider, accounts]) => ({ provider, accounts }));
+}
+
+/**
+ * Accounts matching a search: every word must appear in the account's name or its platform's label
+ * (so "insta acme" finds Acme's Instagram). An empty search matches everything.
+ */
+export function matchAccounts(
+  connections: readonly ConnectionView[],
+  query: string,
+  platformLabel: (provider: string) => string,
+): ConnectionView[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [...connections];
+  return connections.filter((c) => {
+    const haystack = `${c.displayName} ${platformLabel(c.provider)}`.toLowerCase();
+    return words.every((w) => haystack.includes(w));
+  });
+}
+
+/** How much of a group is selected — what its select-all checkbox shows. */
+export function groupSelection(
+  accountIds: readonly string[],
+  selected: readonly string[],
+): 'all' | 'some' | 'none' {
+  const picked = new Set(selected);
+  const count = accountIds.filter((id) => picked.has(id)).length;
+  return count === 0 ? 'none' : count === accountIds.length ? 'all' : 'some';
+}
+
+/** Select or clear a whole group, leaving every other selection as it was. */
+export function setGroupSelected(
+  selected: readonly string[],
+  accountIds: readonly string[],
+  on: boolean,
+): string[] {
+  const group = new Set(accountIds);
+  const rest = selected.filter((id) => !group.has(id));
+  return on ? [...rest, ...accountIds] : rest;
+}
+
+/**
+ * The body of a dry run that asks about EVERY account, selected or not, so an account that cannot
+ * take this post is marked before it is picked. Always a draft: a dry run must not depend on a
+ * time or a queue.
+ */
+export function buildValidationInput(
+  form: Pick<ComposerForm, 'caption' | 'media'>,
+  connections: readonly ConnectionView[],
+): CreatePostInput {
+  return {
+    caption: form.caption,
+    media: form.media,
+    variants: connections.map((c) => ({ connectionId: c.id, provider: c.provider })),
+    schedule: { type: 'draft' },
+  };
+}
+
+export interface AccountWarning {
+  /** `reconnect`: the account itself is broken. `post`: it cannot take this post as written. */
+  kind: 'reconnect' | 'post';
+  reason: string;
+}
+
+/** A contract issue arrives as "variants.3.options: …": the path means nothing to an operator. */
+const withoutPath = (message: string): string => message.replace(/^[\w.[\]]+:\s+/, '');
+
+/**
+ * Why an account should not be posted to as things stand, per connection id. An account that needs
+ * reconnecting says so (its posts fail until it is reconnected); otherwise the first thing the dry
+ * run (`POST /v1/posts/validate`) reported for it, in the API's own words. The rules themselves
+ * live in each provider on the server — none is restated here.
+ */
+export function accountWarnings(
+  connections: readonly ConnectionView[],
+  issues: readonly PostValidationIssue[],
+): Map<string, AccountWarning> {
+  const out = new Map<string, AccountWarning>();
+  for (const c of connections) {
+    if (c.needsReconnect || c.health === 'needs_reconnect') {
+      out.set(c.id, { kind: 'reconnect', reason: 'Needs reconnecting: posts to it will fail.' });
+    }
+  }
+  for (const issue of issues) {
+    if (!issue.connectionId || out.has(issue.connectionId)) continue;
+    out.set(issue.connectionId, { kind: 'post', reason: withoutPath(issue.message) });
+  }
+  return out;
+}
+
+/**
+ * Connection ids a dry run rejected at the contract, before any other check ran. The validator
+ * stops there, so the remaining accounts are asked about again without these.
+ */
+export function contractRejected(issues: readonly PostValidationIssue[]): string[] {
+  return [
+    ...new Set(
+      issues
+        .filter((i) => i.code === 'invalid_request' && i.connectionId)
+        .map((i) => i.connectionId!),
+    ),
+  ];
+}
+
+/** Has the operator put anything in that closing would throw away? */
+export function isDirty(form: Pick<ComposerForm, 'caption' | 'media'>): boolean {
+  return form.caption.trim() !== '' || form.media.length > 0;
+}
+
+/**
+ * Where the composer panel sits over, and returns to when closed: the page it was opened from
+ * (carried in router state as `background`), or Content for a direct link to /composer. Only an
+ * in-app path is accepted, and never the composer itself.
+ */
+export function composerBackground(state: unknown): string {
+  const background = (state as { background?: unknown } | null)?.background;
+  if (
+    typeof background === 'string' &&
+    background.startsWith('/') &&
+    !background.startsWith('//') &&
+    !background.startsWith('/composer')
+  ) {
+    return background;
+  }
+  return '/content';
 }

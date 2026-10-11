@@ -81,12 +81,16 @@ export default {
         tiles: 'repeat(auto-fill, minmax(14.875rem, 1fr))',
         clients: '2fr 1fr 1fr auto',
         upcoming: '8.125rem 1fr auto',
-        composer: 'minmax(0, 1fr) 22.5rem',
+        // Composer panel: content | accounts over preview at lg; content | accounts | preview at xl.
+        composer: 'minmax(0, 1fr) 24rem',
+        'composer-wide': 'minmax(0, 1fr) 25rem 19rem',
         // Content grid: as many 264px+ cards as fit (4 at 1512, 2 on a tablet, 1 on a phone).
         posts: 'repeat(auto-fill, minmax(16.5rem, 1fr))',
         // KPI strip: cells share the row and wrap; each is at least 9.5rem.
         kpis: 'repeat(auto-fit, minmax(9.5rem, 1fr))',
       },
+      // A row sized to its content, then one that takes what is left.
+      gridTemplateRows: { 'head-fill': 'auto 1fr' },
       borderRadius: {
         xs: '4px',
         sm: '6px',
@@ -99,7 +103,7 @@ export default {
         // Overlays only (menus, popovers, modals, the drawer). Cards and rows use hairlines instead.
         1: 'rgba(0,0,0,0.04) 0 0 0 1px, rgba(0,0,0,0.08) 0 6px 20px -4px',
       },
-      maxWidth: { content: '90rem' },
+      maxWidth: { content: '90rem', sheet: '80rem' },
     },
   },
   plugins: [],
