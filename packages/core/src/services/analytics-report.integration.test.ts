@@ -122,7 +122,8 @@ describe('getAnalyticsReport', () => {
     expect(report.summary.totals.clicks.value).toBe(9);
     expect(report.summary.totals.shares.value).toBeNull();
     // (40 + 5 + 5) ÷ 500 reach, and 6 ÷ 300 views: 56 ÷ 800.
-    expect(report.summary.engagementRate).toMatchObject({ rate: 7, basis: 'mixed' });
+    expect(report.summary.engagementRate).toMatchObject({ basis: 'mixed' });
+    expect(report.summary.engagementRate?.rate).toBeCloseTo(7, 9);
     expect(report.summary.lastCapturedAt).toEqual(ago(HOUR));
     const top = report.topPosts.find((p) => p.id === a)!;
     expect(top.metrics).toMatchObject({
