@@ -122,8 +122,8 @@ describe('pruneExpiredMetrics', () => {
 
   it('leaves rows whose connection or post is gone — they can no longer be attributed to a platform', async () => {
     const ws = await createWorkspace();
-    const conn = await createConnection(ws, 'youtube', 'Channel');
-    const post = await createPost(ws, conn, 'youtube');
+    const conn = await createConnection(ws, 'facebook', 'Page');
+    const post = await createPost(ws, conn, 'facebook');
     await storeMetric(ws, { connectionId: conn }, 'followers', 45);
     await storeMetric(ws, { connectionId: conn }, 'followers', 2);
     await storeMetric(ws, { postId: post }, 'viewCount', 45);
@@ -136,6 +136,26 @@ describe('pruneExpiredMetrics', () => {
 
     expect(result.expired.youtube).toBe(0);
     expect(await countMetrics(ws)).toBe(3);
+  });
+
+  it('disconnecting a YouTube account deletes its metrics at once, whatever their age', async () => {
+    const ws = await createWorkspace();
+    const yt = await createConnection(ws, 'youtube', 'Channel');
+    const ytPost = await createPost(ws, yt, 'youtube');
+    const fb = await createConnection(ws, 'facebook', 'Page');
+    const fbPost = await createPost(ws, fb, 'facebook');
+    await storeMetric(ws, { connectionId: yt }, 'followers', 1);
+    await storeMetric(ws, { postId: ytPost }, 'viewCount', 1);
+    await storeMetric(ws, { connectionId: fb }, 'followers', 1);
+    await storeMetric(ws, { postId: fbPost }, 'viewCount', 1);
+
+    await deleteConnection(ws, yt);
+    // Only the YouTube rows went; the Facebook connection and its history are untouched.
+    expect(await countMetrics(ws)).toBe(2);
+
+    await deleteConnection(ws, fb);
+    // Another platform keeps its history when its connection is removed.
+    expect(await countMetrics(ws)).toBe(2);
   });
 
   it('stays inside each workspace', async () => {

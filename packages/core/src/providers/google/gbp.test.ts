@@ -192,20 +192,19 @@ describe('auth url', () => {
     expect(parsed.searchParams.get('response_type')).toBe('code');
     expect(parsed.searchParams.get('access_type')).toBe('offline');
     expect(parsed.searchParams.get('prompt')).toBe('consent');
-    expect(parsed.searchParams.get('include_granted_scopes')).toBe('true');
+    expect(parsed.searchParams.get('include_granted_scopes')).toBe('false');
     expect(parsed.searchParams.get('state')).toBe('flow-123');
     expect(parsed.searchParams.get('redirect_uri')).toBe(REDIRECT);
     expect(parsed.searchParams.get('client_id')).toBe('test-client.apps.googleusercontent.com');
   });
 
-  it('requests business.manage plus the userinfo scopes (#21)', async () => {
+  it('requests business.manage and nothing else', async () => {
     const { gbp } = provider([]);
     const { url } = await gbp.generateAuthUrl({ redirectUri: REDIRECT, state: 's' });
     const scopes = new URL(url).searchParams.get('scope')!.split(' ');
 
     expect(scopes).toEqual([...GBP_SCOPES]);
-    expect(scopes).toContain('https://www.googleapis.com/auth/business.manage');
-    expect(scopes.some((s) => s.includes('userinfo'))).toBe(true);
+    expect(scopes).toEqual(['https://www.googleapis.com/auth/business.manage']);
   });
 });
 

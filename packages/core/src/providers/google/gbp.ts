@@ -41,15 +41,11 @@ const PERFORMANCE_HOST = 'https://businessprofileperformance.googleapis.com/v1';
 const V4_HOST = 'https://mybusiness.googleapis.com/v4';
 
 /**
- * `business.manage` alone covers posts, locations and performance; the two userinfo scopes are the
- * ones #21 names. Nothing in this provider reads userinfo yet — the connection is named after the
- * location, not the Google user.
+ * `business.manage` alone covers posts, locations and performance. Nothing here reads userinfo —
+ * the connection is named after the location, not the Google user — and Google's verification
+ * rejects scopes the demo never exercises, so it is the only scope requested (#21 listed two more).
  */
-export const GBP_SCOPES = [
-  'https://www.googleapis.com/auth/business.manage',
-  'https://www.googleapis.com/auth/userinfo.email',
-  'https://www.googleapis.com/auth/userinfo.profile',
-] as const;
+export const GBP_SCOPES = ['https://www.googleapis.com/auth/business.manage'] as const;
 
 /** Hard cap on `summary`. Google truncates the card long before this — lead with the point. */
 export const GBP_SUMMARY_MAX = 1500;
@@ -130,7 +126,11 @@ export class GbpProvider implements SocialProvider {
   }
 
   async generateAuthUrl(params: { redirectUri: string; state: string }): Promise<GenerateAuthUrl> {
-    return { url: this.client.authUrl({ ...params, scopes: [...GBP_SCOPES] }) };
+    // `includeGrantedScopes: false`: one OAuth client serves YouTube too, and a GBP token must not
+    // pick up scopes the same Google user granted for another platform.
+    return {
+      url: this.client.authUrl({ ...params, scopes: [...GBP_SCOPES], includeGrantedScopes: false }),
+    };
   }
 
   /**
