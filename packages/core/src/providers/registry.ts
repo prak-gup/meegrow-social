@@ -12,6 +12,7 @@ import {
 import { FacebookPagesProvider } from './meta/facebook.js';
 import { InstagramProvider } from './meta/instagram.js';
 import { GbpProvider } from './google/gbp.js';
+import { YouTubeProvider } from './google/youtube.js';
 
 /**
  * Explicit registry (Postiz pattern — no decorator auto-discovery). Real providers get added to
@@ -103,6 +104,19 @@ export function registerConfiguredProviders(): void {
     // GBP (#21). Built against Google's documented shapes only — the API sits at 0 QPM until the
     // access request clears (BUILD-SPEC-V2 §A1) — so leaving these unset keeps `gmb` absent.
     registerProvider(new GbpProvider({ clientId, clientSecret }));
+
+    // YouTube (#25) shares the OAuth client but not the switch: the credentials go in for GBP
+    // first, and an unverified YouTube must not appear in the connect list just because they did.
+    // Exact opt-in, like SHOW_FAKE_PROVIDERS.
+    if (process.env.YOUTUBE_ENABLED === 'true') {
+      const limit = Number(process.env.YOUTUBE_DAILY_UPLOAD_LIMIT);
+      registerProvider(
+        new YouTubeProvider(
+          { clientId, clientSecret },
+          Number.isInteger(limit) && limit > 0 ? { dailyUploadLimit: limit } : {},
+        ),
+      );
+    }
   }
 }
 

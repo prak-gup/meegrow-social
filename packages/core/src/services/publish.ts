@@ -82,7 +82,8 @@ export async function publishPost(workspaceId: string, postId: string): Promise<
         status: 'published',
         platform: post.provider,
         account: conn.displayName,
-        message: result.releaseUrl,
+        // A provider notice ("YouTube set this to private") rides along with the link.
+        message: result.notice ? `${result.releaseUrl} — ${result.notice}` : result.releaseUrl,
       });
       return { postId, status: 'published', releaseUrl: result.releaseUrl };
     } catch (err) {

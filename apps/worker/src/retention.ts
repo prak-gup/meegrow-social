@@ -1,5 +1,5 @@
 import { Queue, Worker } from 'bullmq';
-import { pruneEventLogs } from './deps.js';
+import { METRIC_RETENTION_SWEEP_MS, pruneEventLogs, pruneExpiredMetrics } from './deps.js';
 
 // Must match apps/api's naming convention for the publish queue (see scheduler.ts).
 export const LOGS_RETENTION_QUEUE = 'logs-retention';
@@ -34,4 +34,33 @@ export function buildRetentionWorker(redisUrl: string): Worker {
     },
     { connection, concurrency: 1 },
   );
+}
+
+export const METRICS_RETENTION_QUEUE = 'metrics-retention';
+
+/**
+ * Metric retention (#61): deletes metric rows past their platform's storage limit — YouTube's 30
+ * days. THIN like the job above; which rows and what cutoff live in
+ * `core/services/metrics-retention.ts`, and the interval is that module's too because the cutoff
+ * is computed against it.
+ */
+export function buildMetricsRetentionWorker(redisUrl: string): Worker {
+  const connection = { url: redisUrl };
+  const queue = new Queue(METRICS_RETENTION_QUEUE, { connection });
+
+  void queue.add(
+    'prune',
+    {},
+    {
+      repeat: { every: METRIC_RETENTION_SWEEP_MS },
+      jobId: 'metrics-retention-sweep',
+      removeOnComplete: true,
+      removeOnFail: false,
+    },
+  );
+
+  return new Worker(METRICS_RETENTION_QUEUE, async () => pruneExpiredMetrics(), {
+    connection,
+    concurrency: 1,
+  });
 }

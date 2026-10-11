@@ -40,6 +40,12 @@ export interface PostDetails {
 export interface PostResult {
   externalPostId: string;
   releaseUrl: string;
+  /**
+   * Set when the post went out but not as asked — YouTube forcing an upload to private, a thumbnail
+   * it refused. The post is still published (failing it would invite a retry that publishes twice);
+   * the publish service records this on the event log so the difference is visible.
+   */
+  notice?: string;
 }
 
 export interface MetricPoint {

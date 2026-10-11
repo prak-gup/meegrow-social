@@ -31,15 +31,31 @@ const EXPIRY_SKEW_MS = 60_000;
 export const GBP_ACCESS_NOT_GRANTED =
   'GBP v4 access not granted for this project — see BUILD-SPEC-V2 §A1';
 
-/** Unlike Meta's Graph (token in the query string), Google wants a Bearer header and JSON bodies. */
+/**
+ * Unlike Meta's Graph (token in the query string), Google wants a Bearer header and JSON bodies.
+ * The body may also be raw bytes and the response may expose headers — YouTube's resumable upload
+ * (youtube.ts) PUTs binary chunks and reads `Location` / `Range` back. Both are optional so a
+ * JSON-only fixture stays a three-field object.
+ */
 export type GoogleFetchLike = (
   url: string,
-  init?: { method?: string; headers?: Record<string, string>; body?: string },
+  init?: { method?: string; headers?: Record<string, string>; body?: string | Uint8Array },
 ) => Promise<{
   ok: boolean;
   status: number;
+  headers?: { get(name: string): string | null };
   json: () => Promise<unknown>;
 }>;
+
+/** A response handed back unjudged — see `GoogleOAuthClient.send`. */
+export interface GoogleResponse {
+  ok: boolean;
+  status: number;
+  /** Case-insensitive header lookup; null when absent (or when the transport exposes none). */
+  header(name: string): string | null;
+  /** Parsed JSON, or undefined when the body is empty or not JSON. */
+  body: unknown;
+}
 
 export interface GoogleClientConfig {
   clientId: string;
@@ -47,6 +63,11 @@ export interface GoogleClientConfig {
   fetchImpl?: GoogleFetchLike;
   /** Injectable clock (ms) so the access-token cache is testable. */
   now?: () => number;
+  /**
+   * Error taxonomy for non-2xx answers. Defaults to `mapGoogleError`, whose 403 branch speaks about
+   * the GBP access gate; a provider on another Google API passes its own (YouTube does).
+   */
+  mapError?: (status: number, body: unknown) => Error;
 }
 
 export interface GoogleTokens {
@@ -128,6 +149,7 @@ export class GoogleOAuthClient {
   private readonly clientSecret: string;
   private readonly fetchImpl: GoogleFetchLike;
   private readonly now: () => number;
+  private readonly mapError: (status: number, body: unknown) => Error;
   /** Minted access tokens keyed by the refresh token that minted them. In-memory, per process. */
   private readonly minted = new Map<string, { accessToken: string; expiresAtMs: number }>();
 
@@ -136,13 +158,23 @@ export class GoogleOAuthClient {
     this.clientSecret = config.clientSecret;
     this.fetchImpl = config.fetchImpl ?? (globalThis.fetch as unknown as GoogleFetchLike);
     this.now = config.now ?? Date.now;
+    this.mapError = config.mapError ?? mapGoogleError;
   }
 
   /**
    * The consent URL. `access_type=offline` + `prompt=consent` is what makes Google hand back a
    * refresh token — and hand it back again on a re-consent, where it otherwise stays silent.
+   *
+   * `includeGrantedScopes` (default true, as GBP shipped) folds whatever this Google user already
+   * granted this OAuth client into the new token. Pass false to get a token carrying only the
+   * scopes asked for here.
    */
-  authUrl(params: { redirectUri: string; state: string; scopes: string[] }): string {
+  authUrl(params: {
+    redirectUri: string;
+    state: string;
+    scopes: string[];
+    includeGrantedScopes?: boolean;
+  }): string {
     const qs = new URLSearchParams({
       client_id: this.clientId,
       redirect_uri: params.redirectUri,
@@ -150,7 +182,7 @@ export class GoogleOAuthClient {
       scope: params.scopes.join(' '),
       access_type: 'offline',
       prompt: 'consent',
-      include_granted_scopes: 'true',
+      include_granted_scopes: params.includeGrantedScopes === false ? 'false' : 'true',
       state: params.state,
     });
     return `${AUTH_HOST}?${qs.toString()}`;
@@ -224,10 +256,15 @@ export class GoogleOAuthClient {
     });
   }
 
-  private async request<T>(
+  /**
+   * One request, answer handed back unjudged. For protocols where a non-2xx status is part of the
+   * conversation — a resumable upload answers 308 between chunks — so the caller decides what is an
+   * error (and turns it into one with `toError`). Only a network-level failure throws.
+   */
+  async send(
     url: string,
-    init: { method: string; headers: Record<string, string>; body?: string },
-  ): Promise<T> {
+    init: { method: string; headers: Record<string, string>; body?: string | Uint8Array },
+  ): Promise<GoogleResponse> {
     let res: Awaited<ReturnType<GoogleFetchLike>>;
     try {
       res = await this.fetchImpl(url, init);
@@ -237,8 +274,26 @@ export class GoogleOAuthClient {
         `Google API request failed: ${cause instanceof Error ? cause.message : String(cause)}`,
       );
     }
-    const parsed: unknown = await res.json().catch(() => undefined);
-    if (!res.ok) throw mapGoogleError(res.status, parsed);
-    return parsed as T;
+    const body: unknown = await res.json().catch(() => undefined);
+    return {
+      ok: res.ok,
+      status: res.status,
+      header: (name) => res.headers?.get(name) ?? null,
+      body,
+    };
+  }
+
+  /** The taxonomy error for a non-2xx answer obtained through `send`. */
+  toError(status: number, body: unknown): Error {
+    return this.mapError(status, body);
+  }
+
+  private async request<T>(
+    url: string,
+    init: { method: string; headers: Record<string, string>; body?: string },
+  ): Promise<T> {
+    const res = await this.send(url, init);
+    if (!res.ok) throw this.mapError(res.status, res.body);
+    return res.body as T;
   }
 }

@@ -156,6 +156,96 @@ _Research for the Meegrow Social publishing platform. Compiled July 2026. Cites 
 - **Custom thumbnails** require channel verification (phone) on the target channel — will fail silently otherwise.
 - **Resumable upload** is strongly preferred; simple uploads fail on large files / flaky networks with no resume.
 
+### B7. Re-read for the provider build (2026-10-11)
+
+Read from Google's reference on 2026-10-11 while building `packages/core/src/providers/google/youtube.ts`
+(#25). **Documentation only — no call was made to Google**; there were no credentials. Where this
+section and B1–B6 disagree, this is the later reading.
+
+| Page | What the provider takes from it |
+| --- | --- |
+| [Quota calculator](https://developers.google.com/youtube/v3/determine_quota_cost) (updated 2026-10-08) | `videos.insert`: its own bucket, 100 calls/day, 1 per call. `search.list` likewise. Everything else draws on 10,000 units/day: `videos.list` 1, `channels.list` 1, `thumbnails.set` 50, `videos.update` 50, `playlistItems.insert` 50. |
+| [videos.insert](https://developers.google.com/youtube/v3/docs/videos/insert) | Accepts `youtube.upload`, `youtube`, `youtubepartner`, `youtube.force-ssl`. Errors: 400 `uploadLimitExceeded`, `invalidTitle`, `invalidDescription`, `invalidTags`, `invalidCategoryId`, `mediaBodyRequired`; 403 `forbidden`, `forbiddenPrivacySetting`. **The page now reads "Videos uploaded from unverified API projects are not restricted to private viewing mode"** — the opposite of the long-standing private-lock rule. |
+| [Resumable uploads](https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol) | `POST …/upload/youtube/v3/videos?uploadType=resumable&part=…` with `X-Upload-Content-Length` / `X-Upload-Content-Type` → `200` + `Location`. Chunks: `PUT` with `Content-Range: bytes a-b/total`, multiples of 256 KB, `308` + `Range: bytes=0-N` between chunks, `201` + video resource at the end. Status query: `PUT` with `Content-Range: bytes */total`. Resumable: no response, 500/502/503/504. `404` = session expired, start over. |
+| [thumbnails.set](https://developers.google.com/youtube/v3/docs/thumbnails/set) | Accepts **`youtube.upload`** (also `youtube`, `youtubepartner`, `youtube.force-ssl`). 50 units. `image/jpeg`, `image/png`. 403 `forbidden` when the channel may not set custom thumbnails. |
+| [channels.list](https://developers.google.com/youtube/v3/docs/channels/list) | `mine=true` returns channels owned by the authenticated user. `managedByMe` / `onBehalfOfContentOwner` are for content partners (CMS accounts) only. |
+| [videos resource](https://developers.google.com/youtube/v3/docs/videos) | `status.uploadStatus` ∈ deleted/failed/processed/rejected/uploaded, with `failureReason` / `rejectionReason`. Title ≤100 chars, description ≤5000 **bytes**, neither may contain `<` `>`. Tags ≤500 chars counted with commas, +2 for a tag containing a space. Statistics are unsigned longs serialised as strings; `favoriteCount` is always 0. |
+| [reports.query](https://developers.google.com/youtube/analytics/reference/reports/query) | `GET youtubeanalytics.googleapis.com/v2/reports`, `ids=channel==MINE`. Needs `yt-analytics.readonly` **and** `youtube.readonly`. `rows` is omitted when there is no data; `day` queries leave out the most recent days. |
+| [Developer Policies](https://developers.google.com/youtube/terms/developer-policies) | III.E.4.b: Analytics data and statistics obtained with authorization may be kept while authorization is re-verified every 30 days. III.E.4.c–d: other data, 30 calendar days then delete or refresh. III.E.4.g: delete within 7 days of a user's request, including deleting their account in our app. III.D.2.c: delete within 30 days of a revocation made at Google. III.F.2: do not alter the user's metadata. |
+
+**Corrections to B1–B6 and to BUILD-SPEC-V2 §B4:**
+
+- The spec's "1,600 units per upload → ~6 videos/day" is retired (B2 above was already right). The
+  pre-flight is built against the 100-uploads/day bucket.
+- `thumbnails.set` needs no scope beyond `youtube.upload`, so it is built.
+- Not possible on the three approved scopes, and so **not built**: editing a video after upload
+  (`videos.update` — `youtube` or `youtube.force-ssl`), adding to a playlist
+  (`playlistItems.insert` — same two), comments (`youtube.force-ssl`).
+- B4's "add Meegrow as a Manager on the client's Brand Account" works only as far as Google's
+  account chooser offers that Brand Account at consent. Access granted through YouTube Studio's
+  channel *permissions* (the newer delegation model) is not usable through the Data API.
+
+### B8. Live bring-up checklist — every assumption a real run has to confirm
+
+Nothing below has been observed. Each is a place where the provider trusts the documentation.
+
+**OAuth and identity**
+
+1. The consent screen shows exactly the three scopes and returns a refresh token.
+2. `include_granted_scopes=false` yields a token without `business.manage` for a Google user who
+   has also connected GBP — and connecting one does not invalidate the other's refresh token.
+3. Revoking the app at Google kills both the GBP and the YouTube connection of that Google user
+   (one grant per user per OAuth client) — confirm, and decide whether that is acceptable.
+4. Google's account chooser offers Brand Accounts the user manages, and the token is bound to the
+   one picked; `channels.list?mine=true` then returns that channel and only that channel.
+5. An account with no channel: does `channels.list` return an empty list, or 401
+   `youtubeSignupRequired`? Both are handled; the connect screen should be checked for the empty case.
+
+**Upload**
+
+6. Our media host answers `Range` with `206` and a `Content-Range` total (S3 does; the dev disk
+   driver's static server is unverified). Without it only files ≤ one chunk (8 MiB) can upload.
+7. Session open returns `200` with `Location`; chunk PUTs return `308` with `Range: bytes=0-N`.
+8. `X-Upload-Content-Type` taken from our storage's `Content-Type` is accepted.
+9. After a failed chunk the status query reports a byte count that is **not** chunk-aligned, and a
+   resume from that offset is accepted.
+10. A status query after a lost final response returns the video resource (`200`/`201`).
+11. How long a session URI lives, and whether `404` is the only expiry signal.
+12. Access tokens are re-minted mid-upload for files that take over an hour.
+13. When Google charges the upload bucket — at session open (what the ledger assumes) or on
+    completion — and whether an abandoned session is charged.
+14. `publishPost` holds a database transaction open for the whole upload. Measure it on a large
+    file; this predates YouTube but no other provider takes minutes.
+
+**Visibility and status**
+
+15. Whether uploads from this unaudited project are in fact forced to `private` (the reference now
+    says not — see B7). Record the read-back for a `public` and an `unlisted` request.
+16. Whether the forced status is already present in the `videos.insert` response or only appears in
+    the later `videos.list` — the provider trusts the read-back over the insert response.
+17. `uploadStatus` immediately after upload is `uploaded`; a duplicate comes back `rejected` with
+    `rejectionReason: duplicate` at that point or only later.
+18. `videos.list?part=status` is readable with `youtube.readonly` for a private video the token owns.
+
+**Thumbnail and Shorts**
+
+19. `thumbnails.set` succeeds on `youtube.upload` alone, with `uploadType=media` and a raw body.
+20. The 2 MB cap (YouTube Help, not the API reference, which says 50 MB) and the 403 on a channel
+    without phone verification.
+21. A vertical ≤3-minute upload is classified a Short with and without `#Shorts`, and
+    `youtube.com/shorts/{id}` redirects to the watch page when it is not.
+
+**Analytics**
+
+22. `reports.query` with `ids=channel==MINE` on a Brand Account token returns that channel's data.
+23. `filters=video=={id}` with a `startDate` one day before `publishedAt` returns one lifetime row;
+    which metric names come back, and whether `averageViewPercentage` is refused for some videos.
+24. The real lag: the provider skips the Analytics query for 48 h after publishing and reads
+    channel days [today−4, today−2].
+25. `subscriberCount` is rounded for public reads — is it exact for the owner's own token?
+26. Error bodies: `error.errors[0].reason` values for quota (`quotaExceeded`), rate limiting, and a
+    declined scope. `mapYouTubeError` switches on these strings.
+
 ---
 
 ## Build recommendation (one-liner each)
