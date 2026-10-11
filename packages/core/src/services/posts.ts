@@ -496,6 +496,8 @@ export async function retryPost(workspaceId: string, postId: string): Promise<Po
   try {
     // The job engine keys a post's publish job on the post id and drops a second add while one
     // still exists in any state — so clear a leftover job first, or the retry could silently vanish.
+    // The job that just failed this post may still be running for another instant and cannot be
+    // removed; `schedulePublish` waits that out (see createQueueScheduler).
     await getScheduler().cancelPublish({ postId });
     const { publishAt } = outcome.updated;
     const when = publishAt && publishAt.getTime() > Date.now() ? publishAt : 'now';

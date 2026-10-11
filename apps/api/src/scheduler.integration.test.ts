@@ -115,6 +115,38 @@ describe('createBullScheduler against real BullMQ', () => {
     expect(await scheduler.publishJobState({ postId })).toBe('live');
   });
 
+  // Retry racing the job that just failed the post: the post already reads `failed`, so a retry
+  // is accepted, while that job is still active for a moment. remove() cannot take a running job
+  // and the add was dropped as a duplicate id — the retry vanished and the post was stranded.
+  it('enqueues a retry issued while the previous job is still finishing', async () => {
+    const scheduler = createBullScheduler(REDIS_URL);
+    const postId = '88888888-8888-4888-8888-888888888888';
+    await scheduler.schedulePublish({ workspaceId: 'ws-1', postId, when: 'now' });
+
+    const worker = new Worker<PublishJobData>(PUBLISH_QUEUE, null, {
+      connection: { url: REDIS_URL },
+    });
+    try {
+      const running = await worker.getNextJob('test-token');
+      expect(running?.id).toBe(publishJobId(postId));
+
+      // What retryPost does, while the job is active...
+      await scheduler.cancelPublish({ postId });
+      const retry = scheduler.schedulePublish({ workspaceId: 'ws-1', postId, when: 'now' });
+      // ...and the job completes a moment later (removeOnComplete then frees the id).
+      await new Promise((r) => setTimeout(r, 300));
+      await running!.moveToCompleted({ status: 'failed' }, 'test-token', false);
+      await retry;
+    } finally {
+      await worker.close();
+    }
+
+    const job = await queue.getJob(publishJobId(postId));
+    expect(job).toBeDefined();
+    expect(await job!.getState()).toBe('waiting');
+    expect(job!.attemptsMade).toBe(0);
+  });
+
   // What retry relies on: publish job ids are deterministic per post, and BullMQ silently drops an
   // add() whose id still exists. The recording scheduler would accept the second add either way.
   it('re-adds a post after its job is cancelled — the cancel-then-schedule a retry does', async () => {

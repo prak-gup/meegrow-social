@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ACTIVE_JOB_POLL_MS,
+  ACTIVE_JOB_WAIT_MS,
   createQueueScheduler,
   PUBLISH_ATTEMPTS,
   PUBLISH_BACKOFF_MS,
@@ -119,5 +121,84 @@ describe('createQueueScheduler', () => {
     // Stalled out or exhausted: kept in the failed set (removeOnFail is false).
     jobs.get(publishJobId(POST))!.state = 'failed';
     expect(await scheduler.publishJobState({ postId: POST })).toBe('dead');
+  });
+});
+
+/**
+ * Retry racing the job that just failed the post: the post already reads `failed` (so a retry is
+ * accepted) while its job is still active for a moment. An add in that moment used to be dropped.
+ */
+describe('schedulePublish while a job is still running under the post id', () => {
+  /** A queue holding an active job for POST, and a sleep that runs `onTick` instead of waiting. */
+  function racing(onTick: (ticks: number, jobs: ReturnType<typeof fakeQueue>['jobs']) => void) {
+    const { queue, jobs } = fakeQueue();
+    const running = { state: 'active', opts: { delay: 0 } as AddOpts, data: 'the old run' };
+    jobs.set(publishJobId(POST), running);
+    const slept: number[] = [];
+    const sleep = async (ms: number) => {
+      slept.push(ms);
+      onTick(slept.length, jobs);
+    };
+    return { scheduler: createQueueScheduler(queue, sleep), jobs, slept };
+  }
+
+  it('waits for the running job to complete, then enqueues the retry', async () => {
+    // Completes (and is removed, as removeOnComplete does) on the second look.
+    const { scheduler, jobs, slept } = racing((ticks, q) => {
+      if (ticks === 2) q.delete(publishJobId(POST));
+    });
+
+    await scheduler.schedulePublish({ ...input, when: 'now' });
+
+    expect(slept).toEqual([ACTIVE_JOB_POLL_MS, ACTIVE_JOB_POLL_MS]);
+    const job = jobs.get(publishJobId(POST))!;
+    expect(job.data).toEqual(input);
+    expect(job.state).toBe('waiting');
+  });
+
+  it('replaces the running job if it ends up failed — a dead job would block the add', async () => {
+    const { scheduler, jobs } = racing((ticks, q) => {
+      if (ticks === 1) q.get(publishJobId(POST))!.state = 'failed';
+    });
+
+    await scheduler.schedulePublish({ ...input, when: 'now' });
+
+    expect(jobs.get(publishJobId(POST))).toMatchObject({ data: input, state: 'waiting' });
+  });
+
+  it('gives way to a job that is still running after the wait, without throwing', async () => {
+    const { scheduler, jobs, slept } = racing(() => undefined);
+
+    await expect(scheduler.schedulePublish({ ...input, when: 'now' })).resolves.toBeUndefined();
+
+    // Bounded, and the running job is untouched: it reads the post as it is now.
+    expect(slept.reduce((a, b) => a + b, 0)).toBe(ACTIVE_JOB_WAIT_MS);
+    expect(jobs.get(publishJobId(POST))).toMatchObject({ data: 'the old run', state: 'active' });
+  });
+
+  it('does not wait at all when nothing is running', async () => {
+    const { queue, jobs } = fakeQueue();
+    const slept: number[] = [];
+    const scheduler = createQueueScheduler(queue, async (ms) => void slept.push(ms));
+
+    await scheduler.schedulePublish({ ...input, when: 'now' });
+    expect(slept).toEqual([]);
+    expect(jobs.size).toBe(1);
+  });
+
+  it('clears a dead job left under the id before adding', async () => {
+    const { queue, jobs } = fakeQueue();
+    jobs.set(publishJobId(POST), { state: 'failed', opts: { delay: 0 } as AddOpts, data: 'dead' });
+
+    await createQueueScheduler(queue).schedulePublish({ ...input, when: 'now' });
+    expect(jobs.get(publishJobId(POST))).toMatchObject({ data: input, state: 'waiting' });
+  });
+
+  it('still leaves a waiting or delayed job in place: a second add is ignored', async () => {
+    const { queue, jobs } = fakeQueue();
+    const scheduler = createQueueScheduler(queue);
+    await scheduler.schedulePublish({ ...input, when: new Date(Date.now() + 3_600_000) });
+    await scheduler.schedulePublish({ ...input, when: 'now' });
+    expect(jobs.get(publishJobId(POST))!.opts.delay).toBeGreaterThan(0);
   });
 });
