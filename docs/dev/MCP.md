@@ -121,6 +121,7 @@ real social account.
 | `get_media`               | One media record: kind, URL, size, probed dimensions / duration / codec                               | Read    |
 | `post_metrics`            | Collected metrics of one post: latest value per metric and the full series                            | Read    |
 | `connection_followers`    | Follower-count history of one connected account, newest first                                         | Read    |
+| `analytics_report`        | A period's performance against the one before: totals, engagement rate, breakdowns, top posts         | Read    |
 
 Notes that are easy to get wrong:
 
@@ -154,6 +155,27 @@ Notes that are easy to get wrong:
     WordPress: WordPress core has no analytics API.
   - Once published, an article cannot be edited or deleted from here (`update_post` and
     `cancel_post` only act before publishing, as for every platform).
+- `analytics_report` is the dashboard's Analytics screen as data (`GET /v1/analytics/report`), for
+  the key's workspace. Give `days` (default 30, ending now) or `from` + `to`; optional `provider`,
+  `connectionId`, `source` (`app` / `imported`), `timezone` (IANA, default `UTC` — weeks, days and
+  posting hours are cut in it) and `topPosts` (how many to return, default 20, at most 100). How to
+  read it:
+  - Numbers are **concepts** (`views`, `reach`, `likes`, `comments`, `shares`, `saves`, `clicks`,
+    `follows`), not platform metric names. `mapping` says which native name(s) feed each concept
+    on each platform; an empty list means the platform has no equivalent and its value is `null`.
+    `null` is "not reported", never zero. `rawMetrics` lists every native metric of the period's
+    posts untouched, including the ones that feed no concept. `post_metrics` still returns one
+    post's native names and history.
+  - **Engagement rate** = (likes + comments + shares + saves) ÷ reach × 100, divided by views for
+    a post without reach, summed over the posts that have both halves (`postsCounted` of `posts`).
+    `basis` is `reach`, `views` or `mixed`; `mixed` means the two denominators were combined, and
+    the number is not comparable with a pure-reach rate. `components` lists what was actually in
+    the numerator — Facebook reports only likes today, Instagram no shares.
+  - Totals and `overTime` are the **all-time counts of the posts published in the period**, grouped
+    by publish date. They are not growth measured on those dates. `deltaPct` compares with the
+    posts published in the period before and is `null` when that period has nothing to compare.
+  - `accumulation` is built from stored snapshots and only from posts that have enough of them
+    (`rules`); `points` is empty when fewer than `rules.minPosts` qualify. Imported posts never do.
 - `create_post` with `schedule` `{"type":"now"}` or `{"type":"at",…}`, `add_to_queue`,
   `schedule_post`, and `update_post` with a `publishAt` all end in a real publish. Nothing here can
   recall a post once it is published.
@@ -230,4 +252,5 @@ Each of these calls the same `core` function as the tool beside it.
 | `/v1/logs`, `/v1/logs/aggregate`                                               | Not in the D1 tool list                                                                 |
 | `GET /v1/post-groups` (list), `POST /v1/post-groups/:id/duplicate`             | Dashboard reads added with the UI pass; `list_posts` / `duplicate_post` cover the tools |
 | `POST /v1/posts/metrics/latest`, `GET /v1/analytics/status`                    | Dashboard reads added with the UI pass; `post_metrics` covers one post                  |
+| `GET /v1/analytics/report?scope=all`                                           | Spans every workspace of a signed-in user; a key has one workspace (`analytics_report`) |
 | Tags, reviews                                                                  | Workstreams C1 and B2 are not built; their tools are added with them                    |

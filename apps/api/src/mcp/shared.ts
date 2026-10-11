@@ -1,6 +1,7 @@
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { z, ZodError } from 'zod';
 import {
+  AnalyticsQueryError,
   ConnectionNotFoundError,
   ImportNotSupportedError,
   PostStateError,
@@ -43,6 +44,7 @@ function failFrom(err: unknown): CallToolResult {
   if (err instanceof QueueInactiveError) return fail('invalid_request', err.message);
   if (err instanceof ProviderBadRequestError) return fail('invalid_request', err.message);
   if (err instanceof ImportNotSupportedError) return fail('invalid_request', err.message);
+  if (err instanceof AnalyticsQueryError) return fail('invalid_request', err.message);
   if (err instanceof ZodError) {
     return fail(
       'invalid_request',

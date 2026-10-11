@@ -907,6 +907,27 @@ async function toViews(tx: Tx, rows: PostRow[]): Promise<PostView[]> {
 const coverUrlOf = (options: PostOptions | null): string | undefined =>
   options?.kind === 'meta' ? options.coverUrl : undefined;
 
+/**
+ * The media of many post rows as views, keyed by post id, in one extra query for the whole set —
+ * for a read model that is not a `PostView` (the analytics report).
+ */
+export async function mediaViewsByPost(
+  tx: Tx,
+  rows: ReadonlyArray<Pick<PostRow, 'id' | 'media' | 'options'>>,
+): Promise<Map<string, PostMediaView[]>> {
+  if (rows.length === 0) return new Map();
+  const urls = await storedMediaUrls(
+    tx,
+    rows.map((r) => mediaRefsOf(r.media)),
+  );
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      toMediaViews(mediaRefsOf(r.media), urls, coverUrlOf(parseStoredOptions(r.options))),
+    ]),
+  );
+}
+
 function toView(row: PostRow, urls: ReadonlyMap<string, string | null>): PostView {
   const options = parseStoredOptions(row.options);
   return {

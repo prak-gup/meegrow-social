@@ -31,6 +31,8 @@ import {
   idChunks,
   isImportedGroup,
   mediaThumb,
+  THUMB_RETRY_DELAYS_MS,
+  thumbRetryDelay,
   metricsToLoad,
   rangeBounds,
   shortDateTime,
@@ -186,6 +188,14 @@ describe('local updates', () => {
 });
 
 describe('thumbnail', () => {
+  it('is asked for again twice after a failed load, then given up on', () => {
+    expect(THUMB_RETRY_DELAYS_MS).toHaveLength(2);
+    expect(thumbRetryDelay(0)).toBe(1_000);
+    expect(thumbRetryDelay(1)).toBe(4_000);
+    // The third failure is final: the tile shows what kind of post it is instead.
+    expect(thumbRetryDelay(2)).toBeNull();
+  });
+
   it('is null for a text-only post', () => {
     expect(mediaThumb([])).toBeNull();
     expect(mediaThumb(undefined)).toBeNull();

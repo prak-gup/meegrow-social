@@ -5,6 +5,7 @@ import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import {
+  analyticsReportQuery,
   bulkPostMetricsInput,
   calendarPostsQuery,
   changePasswordInput,
@@ -57,6 +58,9 @@ import {
   duplicatePostGroup,
   finishConnect,
   finishInviteConnect,
+  AnalyticsQueryError,
+  getAnalyticsReport,
+  getAnalyticsReportForUser,
   getAnalyticsStatus,
   getConnectionHealth,
   getInviteFlow,
@@ -1068,6 +1072,25 @@ export async function buildServer(): Promise<FastifyInstance> {
   // When this workspace's metrics were last collected and when the next poll falls due, with the
   // cadence rules as data — so no client hardcodes "refreshes hourly".
   app.get('/v1/analytics/status', async (req) => getAnalyticsStatus(req.authContext!.workspaceId));
+
+  // The Analytics screen in one read: totals against the prior period, per-platform and over-time
+  // breakdowns, best times, formats, top posts, the raw native metrics. All arithmetic is core's.
+  // `scope=all` adds up every workspace the session's user belongs to, so it needs a session.
+  app.get('/v1/analytics/report', async (req, reply) => {
+    const parsed = analyticsReportQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const ctx = req.authContext!;
+    try {
+      if (parsed.data.scope === 'all') {
+        if (!ctx.userId) return reply.code(401).send({ error: 'session required' });
+        return await getAnalyticsReportForUser(ctx.userId, parsed.data);
+      }
+      return await getAnalyticsReport(ctx.workspaceId, parsed.data);
+    } catch (err) {
+      if (err instanceof AnalyticsQueryError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
+  });
 
   app.post('/v1/media', async (req, reply) => {
     const file = await req.file();

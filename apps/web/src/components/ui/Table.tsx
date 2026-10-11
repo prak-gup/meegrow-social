@@ -1,5 +1,6 @@
 import { Fragment, type ReactNode } from 'react';
 import { cn } from '../../lib/cn';
+import { ArrowDown, ArrowUp } from '../../lib/icons';
 import { EmptyState, type EmptyStateProps } from './EmptyState';
 
 export interface TableColumn<T> {
@@ -9,6 +10,13 @@ export interface TableColumn<T> {
   align?: 'left' | 'right';
   /** Extra classes for both header and cells, e.g. `hidden md:table-cell` to drop it on phones. */
   className?: string;
+  /** Makes the header a sort button: the key handed to `onSort` (needs `onSort` on the table). */
+  sortKey?: string;
+}
+
+export interface TableSort {
+  key: string;
+  dir: 'asc' | 'desc';
 }
 
 export interface TableProps<T> {
@@ -29,6 +37,10 @@ export interface TableProps<T> {
   onRowClick?: (row: T) => void;
   /** Detail shown in a full-width row under `row`; return null/undefined for a collapsed row. */
   renderExpanded?: (row: T) => ReactNode;
+  /** The column the rows are ordered by, marked in its header. The caller does the ordering. */
+  sort?: TableSort;
+  /** A sortable header was pressed. */
+  onSort?: (key: string) => void;
   className?: string;
 }
 
@@ -44,6 +56,8 @@ export function Table<T>({
   stickyHeader = false,
   onRowClick,
   renderExpanded,
+  sort,
+  onSort,
   className,
 }: TableProps<T>) {
   if (rows.length === 0 && empty) return <EmptyState {...empty} className={className} />;
@@ -65,21 +79,55 @@ export function Table<T>({
         {caption && <caption className="sr-only">{caption}</caption>}
         <thead className="bg-surface-soft">
           <tr>
-            {columns.map((c) => (
-              <th
-                key={c.key}
-                scope="col"
-                className={cn(
-                  headPad,
-                  sticky,
-                  'text-caption font-medium text-muted',
-                  c.align === 'right' && 'text-right',
-                  c.className,
-                )}
-              >
-                {c.header}
-              </th>
-            ))}
+            {columns.map((c) => {
+              const sortable = c.sortKey !== undefined && onSort !== undefined;
+              const sorted = sortable && sort && sort.key === c.sortKey ? sort.dir : null;
+              const SortIcon = sorted === 'asc' ? ArrowUp : ArrowDown;
+              return (
+                <th
+                  key={c.key}
+                  scope="col"
+                  aria-sort={
+                    !sortable
+                      ? undefined
+                      : sorted === 'asc'
+                        ? 'ascending'
+                        : sorted === 'desc'
+                          ? 'descending'
+                          : 'none'
+                  }
+                  className={cn(
+                    headPad,
+                    sticky,
+                    'text-caption font-medium text-muted',
+                    c.align === 'right' && 'text-right',
+                    c.className,
+                  )}
+                >
+                  {sortable ? (
+                    <button
+                      type="button"
+                      onClick={() => onSort(c.sortKey!)}
+                      className={cn(
+                        'inline-flex items-center gap-1 rounded-xs hover:text-ink',
+                        sorted && 'font-semibold text-ink',
+                      )}
+                    >
+                      {c.header}
+                      {/* The arrow is the visible half of `aria-sort`; unsorted columns keep its room. */}
+                      <SortIcon
+                        size={10}
+                        weight="bold"
+                        aria-hidden="true"
+                        className={cn('flex-none', !sorted && 'invisible')}
+                      />
+                    </button>
+                  ) : (
+                    c.header
+                  )}
+                </th>
+              );
+            })}
             {rowActions && (
               <th scope="col" className={cn(headPad, sticky)}>
                 <span className="sr-only">Actions</span>
