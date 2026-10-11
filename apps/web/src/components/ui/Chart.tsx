@@ -10,6 +10,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import type { ReactNode } from 'react';
 import { cn } from '../../lib/cn';
 
 export interface ChartSeries {
@@ -27,6 +28,14 @@ export interface ChartProps {
   series: ChartSeries[];
   /** Accessible title: shown above the chart and used as its aria-label. */
   title: string;
+  /** Column heading for the x values in the screen-reader table (default: `xKey`). */
+  xLabel?: string;
+  /** Controls shown beside the title (e.g. a metric picker). */
+  actions?: ReactNode;
+  /** Rendered under the plot, inside the frame (e.g. a values list). */
+  footer?: ReactNode;
+  /** Line charts: mark each data point. Needed when a series may have a single point. */
+  dots?: boolean;
   /** Tailwind height class for the plot area (default `h-64`); width is always responsive. */
   plotClassName?: string;
   className?: string;
@@ -49,6 +58,11 @@ const Y_AXIS_WIDTH = 44; // px: fits 5-digit tick labels without clipping
 const PLOT_MARGIN = { top: 8, right: 8, bottom: 0, left: 0 }; // px: keeps edge ticks/strokes unclipped
 const BAR_RADIUS: [number, number, number, number] = [4, 4, 0, 0]; // px: = rounded-xs on the top corners
 const LINE_WIDTH = 2; // px
+// Lines differ by dash pattern as well as colour, so a series is never identified by colour alone.
+const LINE_DASHES = [undefined, '6 3', '2 3', '8 3 2 3'];
+const compact = (v: unknown) =>
+  typeof v === 'number' ? v.toLocaleString(undefined, { notation: 'compact' }) : String(v);
+const full = (v: unknown) => (typeof v === 'number' ? v.toLocaleString() : String(v));
 const AXIS_PROPS = {
   stroke: AXIS,
   tickLine: false,
@@ -63,6 +77,10 @@ export function Chart({
   xKey,
   series,
   title,
+  xLabel,
+  actions,
+  footer,
+  dots = false,
   plotClassName = 'h-64',
   className,
 }: ChartProps) {
@@ -73,8 +91,9 @@ export function Chart({
     <>
       <CartesianGrid stroke={GRID} vertical={false} />
       <XAxis dataKey={xKey} {...AXIS_PROPS} />
-      <YAxis width={Y_AXIS_WIDTH} {...AXIS_PROPS} />
+      <YAxis width={Y_AXIS_WIDTH} tickFormatter={compact} {...AXIS_PROPS} />
       <Tooltip
+        formatter={full}
         cursor={{ fill: 'hsl(var(--surface-soft))' }}
         contentStyle={{
           border: '1px solid hsl(var(--hairline))',
@@ -83,12 +102,15 @@ export function Chart({
           fontSize: TOOLTIP_FONT_SIZE,
         }}
       />
-      {series.length > 1 && <Legend iconType="circle" />}
+      {series.length > 1 && <Legend iconType={type === 'line' ? 'plainline' : 'circle'} />}
     </>
   );
   return (
     <figure className={cn('rounded-md border border-hairline bg-canvas p-4', className)}>
-      <figcaption className="mb-3 text-body font-semibold text-ink">{title}</figcaption>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <figcaption className="text-body font-semibold text-ink">{title}</figcaption>
+        {actions}
+      </div>
       <div role="img" aria-label={title} className={plotClassName}>
         <ResponsiveContainer width="100%" height="100%">
           {type === 'bar' ? (
@@ -114,7 +136,8 @@ export function Chart({
                   name={s.label}
                   stroke={colorOf(s, i)}
                   strokeWidth={LINE_WIDTH}
-                  dot={false}
+                  strokeDasharray={LINE_DASHES[i % LINE_DASHES.length]}
+                  dot={dots}
                   connectNulls
                 />
               ))}
@@ -126,7 +149,7 @@ export function Chart({
         <caption>{title}</caption>
         <thead>
           <tr>
-            <th scope="col">{xKey}</th>
+            <th scope="col">{xLabel ?? xKey}</th>
             {series.map((s) => (
               <th key={s.key} scope="col">
                 {s.label}
@@ -145,6 +168,7 @@ export function Chart({
           ))}
         </tbody>
       </table>
+      {footer}
     </figure>
   );
 }

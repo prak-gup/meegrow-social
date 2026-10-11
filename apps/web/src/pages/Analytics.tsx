@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { ConnectionView, PostView } from '@meegrow-social/contracts';
 import { api } from '../lib/api';
@@ -18,8 +18,11 @@ import {
   chunk,
   connectionsFor,
   filtersToParams,
+  followerSnapshot,
+  followerTimeline,
   formatCapture,
   formatValue,
+  groupTotals,
   humanizeMetric,
   lastCaptureByConnection,
   latestCapture,
@@ -30,6 +33,7 @@ import {
   platformsOf,
   resolveFilters,
   selectedConnections,
+  uniqueLabels,
   windowPosts,
   windowsFor,
   type AnalyticsFilters,
@@ -44,6 +48,8 @@ import {
 } from '../lib/analytics';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
+import { Card } from '../components/ui/Card';
+import { Chart } from '../components/ui/Chart';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorState } from '../components/ui/ErrorState';
 import { Label } from '../components/ui/Label';
@@ -75,6 +81,16 @@ const NO_CONNECTIONS: ConnectionView[] = [];
 
 const platformLabel = (provider: string) =>
   platformMeta({ identifier: provider, displayName: provider }).label;
+
+/** A distinct display label per connection id. Names only — ids never reach the screen. */
+function profileLabels(connections: ConnectionView[], withPlatform: boolean): Map<string, string> {
+  const labels = uniqueLabels(
+    connections.map((c) =>
+      withPlatform ? `${c.displayName} · ${platformLabel(c.provider)}` : c.displayName,
+    ),
+  );
+  return new Map(connections.map((c, i) => [c.id, labels[i]!]));
+}
 
 /** Every published post in the range. The API pages at 100 and returns no total. */
 async function listPublished(query: {
@@ -396,21 +412,74 @@ export function Analytics() {
           icon={ChartLineUp}
         />
       ) : (
-        <section aria-label="Totals" className="space-y-2">
-          {sectionError ? (
-            <ErrorState title="Couldn't load totals" message={sectionError} onRetry={data.retry} />
-          ) : !settled || !capped ? (
-            <TilesSkeleton progress={capped ? progress : null} />
-          ) : (
-            <Tiles
-              tiles={tiles}
-              days={filters.days}
-              capped={capped}
-              failed={progress.failed}
-              truncated={posts.status === 'ok' && posts.data.truncated}
-            />
-          )}
-        </section>
+        <>
+          <section aria-label="Totals" className="space-y-2">
+            {sectionError ? (
+              <ErrorState
+                title="Couldn't load totals"
+                message={sectionError}
+                onRetry={data.retry}
+              />
+            ) : !settled || !capped ? (
+              <TilesSkeleton progress={capped ? progress : null} />
+            ) : (
+              <Tiles
+                tiles={tiles}
+                days={filters.days}
+                capped={capped}
+                failed={progress.failed}
+                truncated={posts.status === 'ok' && posts.data.truncated}
+              />
+            )}
+          </section>
+
+          <section aria-label="Charts" className="grid gap-4 lg:grid-cols-2">
+            {sectionError ? (
+              <ChartFrame title="By platform">
+                <ErrorState
+                  title="Couldn't load this chart"
+                  message={sectionError}
+                  onRetry={data.retry}
+                />
+              </ChartFrame>
+            ) : !settled || !capped || followers.status !== 'ok' ? (
+              <ChartFrame title="By platform">
+                <Skeleton className="h-64 w-full" />
+              </ChartFrame>
+            ) : (
+              <ComparisonChart
+                names={tiles.map((t) => t.name)}
+                byProfile={filters.platform !== ''}
+                connections={selected}
+                capped={capped}
+                metrics={metrics}
+                followers={followers.data}
+                windows={windows}
+              />
+            )}
+            {followers.status === 'error' ? (
+              <ChartFrame title="Followers over time">
+                <ErrorState
+                  title="Couldn't load this chart"
+                  message={followers.message}
+                  onRetry={data.retry}
+                />
+              </ChartFrame>
+            ) : followers.status === 'loading' || booting ? (
+              <ChartFrame title="Followers over time">
+                <Skeleton className="h-64 w-full" />
+              </ChartFrame>
+            ) : (
+              <FollowersChart
+                connections={selected}
+                withPlatform={filters.platform === ''}
+                followers={followers.data}
+                windows={windows}
+                days={filters.days}
+              />
+            )}
+          </section>
+        </>
       )}
     </div>
   );
@@ -630,5 +699,188 @@ function TilesSkeleton({ progress }: { progress: { total: number; done: number }
           : 'Loading…'}
       </p>
     </>
+  );
+}
+
+/** The chart card's frame for the states that have no chart to draw. */
+function ChartFrame({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <Card className="p-4">
+      <h2 className="mb-3 text-body font-semibold text-ink">{title}</h2>
+      {children}
+    </Card>
+  );
+}
+
+/** The values behind a chart, as text: every platform/profile is listed, with "—" where it has none. */
+function ValueList({ rows }: { rows: Array<{ key: string; label: string; value: ReactNode }> }) {
+  return (
+    <ul className="mt-3 divide-y divide-hairline-soft text-sm">
+      {rows.map((row) => (
+        <li key={row.key} className="flex items-baseline justify-between gap-3 py-1.5">
+          <span className="min-w-0 truncate text-body-ink">{row.label}</span>
+          <span className="tnum flex-none font-semibold text-ink">{row.value}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const noValue = (why: string) => (
+  <>
+    <span aria-hidden="true" className="font-normal text-muted">
+      —
+    </span>
+    <span className="sr-only">{why}</span>
+  </>
+);
+
+/** One metric's period total per platform, or per profile once a platform is chosen. */
+function ComparisonChart({
+  names,
+  byProfile,
+  connections,
+  capped,
+  metrics,
+  followers,
+  windows,
+}: {
+  names: string[];
+  byProfile: boolean;
+  connections: ConnectionView[];
+  capped: CappedPosts;
+  metrics: MetricsByPost;
+  followers: FollowersByConnection;
+  windows: Windows;
+}) {
+  const [picked, setPicked] = useState('');
+  const metric = names.includes(picked) ? picked : names[0];
+  const heading = byProfile ? 'By profile' : 'By platform';
+  if (metric === undefined) {
+    return (
+      <ChartFrame title={heading}>
+        <EmptyState title="No metrics captured for this period yet" />
+      </ChartFrame>
+    );
+  }
+  const totals = groupTotals({
+    metric,
+    groupBy: byProfile ? 'connection' : 'platform',
+    connections,
+    posts: capped.current,
+    metrics,
+    followers,
+    windows,
+  });
+  const profiles = profileLabels(connections, false);
+  const rows = totals.map((t) => ({
+    ...t,
+    label: byProfile ? (profiles.get(t.key) ?? t.key) : platformLabel(t.key),
+  }));
+  const label = humanizeMetric(metric);
+  return (
+    <Chart
+      type="bar"
+      title={`${label} by ${byProfile ? 'profile' : 'platform'}`}
+      xKey="group"
+      xLabel={byProfile ? 'Profile' : 'Platform'}
+      data={rows.map((r) => ({ group: r.label, value: r.value }))}
+      series={[{ key: 'value', label }]}
+      actions={
+        <Select
+          aria-label="Metric to compare"
+          value={metric}
+          onChange={(e) => setPicked(e.target.value)}
+          className="h-9 w-48 text-sm"
+        >
+          {names.map((name) => (
+            <option key={name} value={name}>
+              {humanizeMetric(name)}
+            </option>
+          ))}
+        </Select>
+      }
+      footer={
+        <ValueList
+          rows={rows.map((r) => ({
+            key: r.key,
+            label: r.label,
+            value: r.value === null ? noValue(`No ${label} for ${r.label}`) : formatValue(r.value),
+          }))}
+        />
+      }
+    />
+  );
+}
+
+/** Followers per selected profile across the period, one line each. */
+function FollowersChart({
+  connections,
+  withPlatform,
+  followers,
+  windows,
+  days,
+}: {
+  connections: ConnectionView[];
+  withPlatform: boolean;
+  followers: FollowersByConnection;
+  windows: Windows;
+  days: number;
+}) {
+  const title = 'Followers over time';
+  const labels = profileLabels(connections, withPlatform);
+  const timeline = followerTimeline(
+    connections.map((c) => ({ id: c.id, points: followers.get(c.id) ?? [] })),
+    windows,
+  );
+  const charted = connections.filter((c) => timeline.coverage.get(c.id) === 'charted');
+  if (charted.length === 0) {
+    const noSeries = connections.every((c) => timeline.coverage.get(c.id) === 'none');
+    const platforms = [...new Set(connections.map((c) => platformLabel(c.provider)))].join(', ');
+    return (
+      <ChartFrame title={title}>
+        {noSeries ? (
+          <EmptyState
+            title={`No follower data for ${platforms}`}
+            description="The platform may not report followers, or the first daily capture has not run yet."
+          />
+        ) : (
+          <EmptyState
+            title="No follower captures in this period"
+            description="A longer date range may have data."
+          />
+        )}
+      </ChartFrame>
+    );
+  }
+  return (
+    <Chart
+      type="line"
+      title={title}
+      xKey="day"
+      xLabel="Day"
+      data={timeline.rows}
+      series={charted.map((c) => ({ key: c.id, label: labels.get(c.id) ?? c.displayName }))}
+      dots={timeline.sparse || days <= 30}
+      footer={
+        <ValueList
+          rows={connections.map((c) => {
+            const coverage = timeline.coverage.get(c.id);
+            const current = followerSnapshot(followers.get(c.id) ?? [], windows).current;
+            return {
+              key: c.id,
+              label: labels.get(c.id) ?? c.displayName,
+              value: current
+                ? formatValue(current.value)
+                : noValue(
+                    coverage === 'outside'
+                      ? 'No follower captures in this period'
+                      : 'No follower data',
+                  ),
+            };
+          })}
+        />
+      }
+    />
   );
 }
