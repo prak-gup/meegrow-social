@@ -14,6 +14,8 @@ const runIntegration = process.env.MGS_RUN_INTEGRATION_TESTS === '1';
 export default defineConfig({
   resolve: {
     alias: {
+      // The subpath first: an alias also matches everything under it.
+      '@meegrow-social/contracts/group-status': src('./packages/contracts/src/group-status.ts'),
       '@meegrow-social/contracts': src('./packages/contracts/src/index.ts'),
       '@meegrow-social/core': src('./packages/core/src/index.ts'),
       '@meegrow-social/db': src('./packages/db/src/index.ts'),
