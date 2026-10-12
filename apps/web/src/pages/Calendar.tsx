@@ -1,3 +1,4 @@
+import { WordPressArticleMeta } from '../components/WordPressArticleMeta';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -99,6 +100,9 @@ function CompactEntry({ entry, accounts, items }: EntryProps) {
         )}
       >
         {entry.caption || '(no caption)'}
+        {entry.posts.some((p) => p.provider === 'wordpress') && (
+          <span className="ml-1">{CHIP[groupChip(entry)].label}</span>
+        )}
       </span>
     </RowMenu>
   );
@@ -140,6 +144,7 @@ function RoomyEntry({ entry, accounts, items }: EntryProps) {
         >
           {entry.caption || '(no caption)'}
         </span>
+        <WordPressArticleMeta posts={entry.posts} link={false} />
       </span>
     </RowMenu>
   );

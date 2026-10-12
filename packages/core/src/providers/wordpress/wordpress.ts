@@ -1,3 +1,5 @@
+import { listArticles, articlePresence } from './articles.js';
+import type { PublishedPostQuery } from '../published-posts.js';
 import {
   ARTICLE_BODY_MAX,
   articleMarkdownToHtml,
@@ -84,6 +86,7 @@ export class WordPressProvider implements SocialProvider {
   readonly tokenModel = 'one-time' as const;
   /** One site is somebody's shared hosting: keep the pressure on it low. */
   readonly maxConcurrentJobs = 2;
+  readonly importsWholeHistory = true;
   readonly connectInput = 'site_url' as const;
   readonly credentialInCallback = true;
   readonly connectMethods = ['approval', 'password'] as const;
@@ -266,6 +269,11 @@ export class WordPressProvider implements SocialProvider {
     }
     const [detail] = details as [PostDetails];
     const options = wordpressOptions(detail.options);
+    if (options.remote?.bodyFormat === 'html') {
+      throw new ProviderBadRequestError(
+        'An imported HTML article cannot be published through the Markdown composer. Manage its existing site copy instead.',
+      );
+    }
     if (options.title.trim() === '') {
       throw new ProviderBadRequestError('A WordPress article needs a title');
     }
@@ -350,6 +358,14 @@ export class WordPressProvider implements SocialProvider {
    */
   async postAnalytics(): Promise<MetricPoint[]> {
     return [];
+  }
+
+  listPublishedPosts(tokens: AuthTokens, query: PublishedPostQuery) {
+    return listArticles(this.client, this.xmlrpc, tokens, query);
+  }
+
+  publishedPostPresence(tokens: AuthTokens, id: string) {
+    return articlePresence(this.client, this.xmlrpc, tokens, id);
   }
 
   async accountAnalytics(): Promise<MetricPoint[]> {

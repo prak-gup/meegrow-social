@@ -19,9 +19,17 @@ export type ChipStatus =
   | 'failed'
   | 'partly_failed'
   | 'cancelled'
-  | 'removed';
+  | 'removed'
+  | 'site_draft'
+  | 'site_pending'
+  | 'site_future'
+  | 'site_private';
 
 export const CHIP: Record<ChipStatus, { label: string; tone: ChipTone }> = {
+  site_draft: { label: 'Draft on site', tone: 'neutral' },
+  site_pending: { label: 'Pending on site', tone: 'warning' },
+  site_future: { label: 'Scheduled on site', tone: 'info' },
+  site_private: { label: 'Private', tone: 'neutral' },
   healthy: { label: 'Healthy', tone: 'success' },
   connected: { label: 'Connected', tone: 'success' },
   expiring: { label: 'Expiring soon', tone: 'warning' },

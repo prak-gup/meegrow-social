@@ -166,7 +166,9 @@ export function articleDirty(article: ArticleForm | undefined): boolean {
  */
 export function postHeadline(post: Pick<PostView, 'caption' | 'options'> | undefined): string {
   if (!post) return '';
-  return post.options?.kind === 'wordpress' ? post.options.title : post.caption;
+  return post.options?.kind === 'wordpress'
+    ? post.options.remote?.title || post.options.title
+    : post.caption;
 }
 
 /**

@@ -97,6 +97,22 @@ const youtubeOptions = z.object({
 /** A category or tag: its WordPress term id, or its name as the site shows it. */
 const wordpressTerm = z.union([z.number().int().positive(), z.string().trim().min(1).max(200)]);
 
+/** Site-owned article facts; imported HTML is never Markdown. No database migration. */
+export const wordpressRemoteArticle = z.object({
+  title: z.string(),
+  excerpt: z.string(),
+  slug: z.string(),
+  status: z.enum(['publish', 'draft', 'pending', 'future', 'private']),
+  modifiedAt: z.string(),
+  publishedAt: z.string().nullable(),
+  categories: z.array(z.string()),
+  tags: z.array(z.string()),
+  author: z.string(),
+  bodyFormat: z.literal('html'),
+  bodyTruncated: z.boolean(),
+});
+export type WordPressRemoteArticle = z.infer<typeof wordpressRemoteArticle>;
+
 /**
  * A WordPress article. The variant's `caption` is the article BODY, written in Markdown (the
  * provider converts it to HTML and escapes any raw HTML — see providers/wordpress/markdown.ts);
@@ -105,6 +121,7 @@ const wordpressTerm = z.union([z.number().int().positive(), z.string().trim().mi
  */
 const wordpressOptions = z.object({
   kind: z.literal('wordpress'),
+  remote: wordpressRemoteArticle.optional(),
   /** Mandatory, for YouTube's reason: there is no honest way to make a headline out of a body. */
   title: z.string().trim().min(1).max(300),
   /** Hand-written summary. Omitted, WordPress derives one from the body when a theme asks. */

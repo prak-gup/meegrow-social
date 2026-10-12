@@ -1,3 +1,4 @@
+import { WordPressArticleMeta } from '../components/WordPressArticleMeta';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import type {
@@ -569,6 +570,7 @@ function GroupCard({
               </span>
             )}
           </div>
+          <WordPressArticleMeta posts={group.posts} />
           {failed && <FailureLine group={group} />}
         </div>
         <PostThumb thumb={groupThumb(group)} caption={groupCaption(group)} />
@@ -620,6 +622,7 @@ function GroupTable({
               <When group={g} className="text-caption text-muted" />
               {isImportedGroup(g) && <ImportedMark />}
             </div>
+            <WordPressArticleMeta posts={g.posts} />
             <FailureLine group={g} />
           </div>
         </div>

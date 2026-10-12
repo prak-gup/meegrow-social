@@ -315,6 +315,8 @@ export function mapWordPressError(status: number, parsed: unknown): WordPressFai
 }
 
 export interface WordPressRequest {
+  /** Inventory pages may contain multiple long HTML articles, still bounded. */
+  maxResponseBytes?: number;
   method?: 'GET' | 'POST';
   query?: Record<string, string>;
   /** JSON body. */
@@ -725,7 +727,7 @@ export class WordPressClient {
     credentials: WordPressRestCredentials,
     route: string,
     request: WordPressRequest = {},
-  ): Promise<{ data: T } | { failure: WordPressFailure }> {
+  ): Promise<{ data: T; headers: SafeResponse['headers'] } | { failure: WordPressFailure }> {
     const method = request.method ?? 'GET';
     const headers: Record<string, string> = {
       authorization: basicAuth(credentials),
@@ -750,7 +752,7 @@ export class WordPressClient {
         headers,
         body,
         timeoutMs: request.timeoutMs ?? API_TIMEOUT_MS,
-        maxResponseBytes: API_MAX_BYTES,
+        maxResponseBytes: request.maxResponseBytes ?? API_MAX_BYTES,
       });
     } catch (err) {
       throw transportFailure(err, request.creates);
@@ -770,7 +772,7 @@ export class WordPressClient {
           `adding output to API responses).${request.creates ? ` ${maybeCreated(request.creates)}` : ''}`,
       );
     }
-    return { data: parsed as T };
+    return { data: parsed as T, headers: response.headers };
   }
 
   /**

@@ -592,3 +592,115 @@ describe('readImportWindow — paging, the post limit and the rate limit', () =>
     expect(read.state).toMatchObject({ imported: 25, matched: 5 });
   });
 });
+
+// Blog inventories include site drafts from years ago and site schedules in the future.
+describe('whole blog import', () => {
+  it('keeps out-of-window articles, refreshes metadata idempotently and never schedules them', async () => {
+    const options = {
+      kind: 'wordpress' as const,
+      title: 'A blog draft',
+      status: 'draft' as const,
+      remote: {
+        title: 'A blog draft',
+        excerpt: '',
+        slug: 'a-blog-draft',
+        status: 'future' as const,
+        modifiedAt: NOW.toISOString(),
+        publishedAt: '2030-01-01T00:00:00.000Z',
+        categories: ['News'],
+        tags: ['Blog'],
+        author: 'Editor',
+        bodyFormat: 'html' as const,
+        bodyTruncated: false,
+      },
+    };
+    const articles = [
+      item('old', { publishedAt: new Date('2000-01-01'), options }),
+      item('future', { publishedAt: new Date('2030-01-01'), options }),
+    ];
+    const apply = vi.fn(async (items: PublishedPostItem[]) => ({
+      imported: items.length,
+      matched: 0,
+      recognised: items.map((i) => i.externalPostId),
+    }));
+    const result = await readImportWindow(queuedImportState(NOW, 90), NOW, {
+      wholeHistory: true,
+      list: async () => ({ items: articles, nextCursor: null, usage: null }),
+      apply,
+      sleep: async () => {},
+      now: () => NOW,
+    });
+    expect(result.state.imported).toBe(2);
+    expect(result.complete).toBe(true);
+    const plan = planImportPage(
+      [articles[0]!],
+      [
+        known('stored', {
+          source: 'imported',
+          status: 'published',
+          externalPostId: 'old',
+          options: undefined,
+        }),
+      ],
+    );
+    expect(plan.inserts).toHaveLength(0);
+    expect(plan.patches[0]!.patch.options).toEqual(options);
+    expect(plan.patches[0]!.patch).not.toHaveProperty('status');
+  });
+
+  it('caps a whole blog at 500 and paces pages even outside the social date window', async () => {
+    const apply = vi.fn(async (items: PublishedPostItem[]) => ({
+      imported: items.length,
+      matched: 0,
+      recognised: [],
+    }));
+    const sleep = vi.fn(async () => {});
+    let page = 0;
+    const result = await readImportWindow(queuedImportState(NOW, 90), NOW, {
+      wholeHistory: true,
+      list: async () => ({
+        items: Array.from({ length: IMPORT_PAGE_SIZE }, (_, i) =>
+          item(`${page}-${i}`, { publishedAt: new Date('2000-01-01') }),
+        ),
+        nextCursor: String(++page),
+        usage: null,
+      }),
+      apply,
+      sleep,
+      now: () => NOW,
+    });
+    expect(result.state.capped).toBe(true);
+    expect(result.state.imported).toBe(IMPORT_MAX_POSTS_PER_RUN);
+    expect(result.state.message).toContain('500');
+    expect(sleep).toHaveBeenCalledWith(IMPORT_PAGE_DELAY_MS);
+  });
+});
+
+it('whole blog imports retain the publishing settle guard and resume the numeric inventory cursor', async () => {
+  const options = {
+    kind: 'wordpress' as const,
+    title: 'Recent article',
+    status: 'publish' as const,
+  };
+  const start = { ...queuedImportState(NOW, 90), inventoryCursor: '4' };
+  const list = vi.fn(async () => ({
+    items: [item('just-sent', { options, publishedAt: new Date(NOW.getTime() + MINUTE) })],
+    nextCursor: null,
+    usage: null,
+  }));
+  const apply = vi.fn(async (items: PublishedPostItem[]) => ({
+    imported: items.length,
+    matched: 0,
+    recognised: [],
+  }));
+  const result = await readImportWindow(start, NOW, {
+    wholeHistory: true,
+    list,
+    apply,
+    sleep: async () => {},
+    now: () => NOW,
+  });
+  expect(list.mock.calls[0]![0]).toMatchObject({ cursor: '4' });
+  expect(result.state.imported).toBe(0);
+  expect(parseImportState(start)?.inventoryCursor).toBe('4');
+});

@@ -116,3 +116,37 @@ describe('copyThumbnail', () => {
     expect(await copyThumbnail('ws-1', item, image())).toBeNull();
   });
 });
+
+describe('WordPress thumbnail SSRF boundary', () => {
+  it('uses a bounded guarded request and copies the still to our storage', async () => {
+    const { copyWordPressThumbnail } = await import('./post-import.js');
+    const guarded = vi.fn(async () => ({
+      status: 200,
+      headers: { 'content-type': 'image/jpeg' },
+      body: Buffer.from(new Uint8Array(1200)),
+      url: item.thumbnailUrl,
+    }));
+    expect(await copyWordPressThumbnail('ws-1', item, guarded)).toMatchObject({
+      url: 'https://media.test/ws-1/stored.jpg',
+    });
+    expect(guarded).toHaveBeenCalledWith(item.thumbnailUrl, {
+      maxResponseBytes: 5 * 1024 * 1024,
+      timeoutMs: 15_000,
+      maxRedirects: 3,
+    });
+  });
+  it('leaves a missing image when the guard refuses a site-controlled URL', async () => {
+    const { copyWordPressThumbnail } = await import('./post-import.js');
+    const guarded = vi.fn(async () => {
+      throw new Error('SSRF refused');
+    });
+    expect(
+      await copyWordPressThumbnail(
+        'ws-1',
+        { ...item, thumbnailUrl: 'https://127.0.0.1/still.jpg' },
+        guarded,
+      ),
+    ).toBeNull();
+    expect(puts).toHaveLength(0);
+  });
+});
