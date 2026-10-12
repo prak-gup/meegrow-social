@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { PostView, RemotePostFields } from '@meegrow-social/contracts';
 import { ARTICLE_BODY_MAX } from '@meegrow-social/contracts';
+import { analyseEditability } from '../lib/articleDocument';
+const RichArticleEditor = lazy(() => import('./RichArticleEditor'));
+
 import { api } from '../lib/api';
 import { articleFields, articlePatch, parseSiteIds } from '../lib/remoteArticle';
 import { blogOptions } from '../lib/blog';
@@ -29,6 +32,12 @@ export function RemoteArticleEditor({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [sourceEditing, setSourceEditing] = useState(false);
+  const [bodyError, setBodyError] = useState<string | null>(null);
+  const [savePatch, setSavePatch] = useState<ReturnType<typeof articlePatch> | null>(null);
+  const [saveConfirm, setSaveConfirm] = useState(false);
+  const analysis = useMemo(() => analyseEditability(post.caption), [post.caption]);
   const [confirm, setConfirm] = useState(false);
   const remote = blogOptions(post)?.remote;
   const enabled = Boolean(remote?.modifiedAt) && !post.platformRemovedAt && !busy;
@@ -47,13 +56,10 @@ export function RemoteArticleEditor({
           confirm: true,
         });
       else {
-        const patch = articlePatch(post, {
-          ...fields,
-          categories: parseSiteIds(categories),
-          tags: parseSiteIds(tags),
-        });
+        const patch = savePatch ?? pendingPatch();
         if (!Object.keys(patch.fields).length) {
           setNotice('No fields changed.');
+          setSaveConfirm(false);
           return;
         }
         result = await api.updateRemotePost(post.id, patch);
@@ -62,6 +68,10 @@ export function RemoteArticleEditor({
       onChange(result.post);
       const next = articleFields(result.post);
       setFields(next);
+      setEditing(false);
+      setSourceEditing(false);
+      setBodyError(null);
+      setSaveConfirm(false);
       setCategories((next.categories ?? []).join(', '));
       setTags((next.tags ?? []).join(', '));
       setNotice(
@@ -82,10 +92,27 @@ export function RemoteArticleEditor({
       setBusy(false);
     }
   }
+  function pendingPatch() {
+    if (bodyError) throw new Error(bodyError);
+    return articlePatch(post, {
+      ...fields,
+      categories: parseSiteIds(categories),
+      tags: parseSiteIds(tags),
+    });
+  }
+  function reviewSave() {
+    try {
+      setSavePatch(pendingPatch());
+      setError(null);
+      setSaveConfirm(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Check the changed fields.');
+    }
+  }
   return (
     <section aria-label="Edit article on site" className="space-y-4 border-t border-hairline pt-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-body font-semibold">Edit article on site</h2>
+        <h2 className="text-body font-semibold">Article controls</h2>
         <Button
           variant="outline"
           disabled={busy || Boolean(post.platformRemovedAt)}
@@ -112,7 +139,12 @@ export function RemoteArticleEditor({
           {notice}
         </p>
       )}
-      <fieldset disabled={!enabled} className="min-w-0 space-y-3">
+      {!editing && (
+        <Button disabled={!enabled} onClick={() => setEditing(true)}>
+          Edit
+        </Button>
+      )}
+      <fieldset hidden={!editing} disabled={!enabled} className="min-w-0 space-y-3">
         <label className="block text-sm">
           Title
           <Input
@@ -121,16 +153,64 @@ export function RemoteArticleEditor({
             onChange={(e) => set('title', e.target.value)}
           />
         </label>
-        <label className="block text-sm">
-          {remote?.bodyFormat === 'html' ? 'Body — HTML source from WordPress' : 'Body — Markdown'}
-          <Textarea
-            value={fields.body ?? ''}
-            maxLength={ARTICLE_BODY_MAX}
-            disabled={!enabled || remote?.bodyTruncated}
-            onChange={(e) => set('body', e.target.value)}
-            className="min-h-80 font-mono"
-          />
-        </label>
+        {editing &&
+          remote?.bodyFormat === 'html' &&
+          !remote.bodyTruncated &&
+          analysis.kind !== 'source only' &&
+          !sourceEditing && (
+            <Suspense fallback={<p role="status">Loading document editor…</p>}>
+              <RichArticleEditor
+                key={post.caption}
+                analysis={analysis}
+                onChange={(html, message) => {
+                  setBodyError(message ?? null);
+                  if (html !== null) set('body', html);
+                }}
+              />
+            </Suspense>
+          )}
+        {analysis.kind === 'source only' && (
+          <p className="text-sm text-muted">
+            Rich editing is unavailable: {analysis.reason} Use the advanced HTML source editor or
+            edit in WordPress.
+          </p>
+        )}
+        {bodyError && (
+          <p role="alert" className="text-sm text-danger">
+            {bodyError}
+          </p>
+        )}
+        <details className="min-w-0">
+          <summary className="cursor-pointer text-sm underline">
+            Advanced: HTML source from WordPress (read-only by default)
+          </summary>
+          <p className="my-2 text-caption text-muted">
+            Source edits can change WordPress blocks. Review the complete HTML before saving.
+          </p>
+          <Button
+            variant="outline"
+            disabled={remote?.bodyTruncated}
+            onClick={() => {
+              setSourceEditing(true);
+              setBodyError(null);
+            }}
+          >
+            Edit HTML source (advanced)
+          </Button>
+          <label className="mt-2 block text-sm">
+            {remote?.bodyFormat === 'html'
+              ? 'Body — HTML source from WordPress'
+              : 'Body — Markdown'}
+            <Textarea
+              value={fields.body ?? ''}
+              maxLength={ARTICLE_BODY_MAX}
+              readOnly={!sourceEditing}
+              disabled={!enabled || remote?.bodyTruncated}
+              onChange={(e) => set('body', e.target.value)}
+              className="min-h-80 font-mono"
+            />
+          </label>
+        </details>
         {remote?.bodyTruncated && (
           <p className="text-sm text-muted">
             Body editing is disabled: the stored copy is truncated. Edit the complete body in
@@ -196,12 +276,63 @@ export function RemoteArticleEditor({
           the current assignments.
         </p>
         <div className="flex flex-wrap gap-3">
-          <Button onClick={() => void run('save')}>Save on site</Button>
+          <Button disabled={Boolean(bodyError)} onClick={reviewSave}>
+            Save on site
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setFields(articleFields(post));
+              setCategories((articleFields(post).categories ?? []).join(', '));
+              setTags((articleFields(post).tags ?? []).join(', '));
+              setEditing(false);
+              setSourceEditing(false);
+              setBodyError(null);
+            }}
+          >
+            Cancel edits
+          </Button>
           <Button variant="outline" onClick={() => setConfirm(true)}>
             Move to trash on site
           </Button>
         </div>
       </fieldset>
+      {saveConfirm && (
+        <Modal
+          title="What will change"
+          onClose={() => {
+            if (!busy) setSaveConfirm(false);
+          }}
+        >
+          <p className="text-sm">
+            Fields:{' '}
+            {Object.keys(savePatch?.fields ?? {})
+              .filter((key) => key !== 'body')
+              .join(', ') || 'none'}
+            .
+          </p>
+          <p className="mt-2 text-sm">
+            Body changed: {savePatch?.fields.body === undefined ? 'no' : 'yes'}. Protected blocks
+            kept:{' '}
+            {sourceEditing ? 'not guaranteed in advanced source mode' : analysis.protectedCount}.
+          </p>
+          {!sourceEditing && analysis.classicOnEdit && savePatch?.fields.body !== undefined && (
+            <p className="mt-2 text-sm">
+              Saved content will open in WordPress as a Classic block. Unchanged blocks retain their
+              original comments; edited regions use Classic HTML.
+            </p>
+          )}
+          <p className="mt-2 text-sm">Save changes the article on the site immediately.</p>
+          <div className="mt-4 flex gap-3">
+            <Button disabled={busy} onClick={() => void run('save')}>
+              Confirm save on site
+            </Button>
+            <Button variant="outline" disabled={busy} onClick={() => setSaveConfirm(false)}>
+              Keep editing
+            </Button>
+          </div>
+        </Modal>
+      )}
       {confirm && (
         <Modal
           title="Move article to WordPress trash?"

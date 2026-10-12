@@ -1,3 +1,5 @@
+import { ArticlePreview } from '../components/ArticlePreview';
+import { blogOptions } from '../lib/blog';
 import { WordPressArticleMeta } from '../components/WordPressArticleMeta';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -560,9 +562,13 @@ function GroupCard({
       </div>
       <div className="flex flex-1 items-start gap-3 px-3 pb-2.5 pt-1">
         <div className="min-w-0 flex-1 space-y-1.5">
-          <p className="line-clamp-2 min-h-10 whitespace-pre-line break-words text-sm text-ink">
-            {groupCaption(group) || <span className="text-muted">(no caption)</span>}
-          </p>
+          <div className="line-clamp-2 min-h-10 whitespace-pre-line break-words text-sm text-ink">
+            {group.posts.some((post) => blogOptions(post)?.remote?.bodyFormat === 'html') ? (
+              <ArticlePreview body={groupCaption(group)} html compact />
+            ) : (
+              groupCaption(group) || <span className="text-muted">(no caption)</span>
+            )}
+          </div>
           <div className="flex min-w-0 items-center gap-2">
             <StatusChip status={groupChip(group)} />
             {!failed && (
@@ -614,9 +620,13 @@ function GroupTable({
         <div className="flex min-w-0 items-center gap-2.5">
           <PostThumb thumb={groupThumb(g)} caption={groupCaption(g)} size="sm" />
           <div className="min-w-0 flex-1">
-            <p className="line-clamp-1 break-words text-ink">
-              {groupCaption(g) || <span className="text-muted">(no caption)</span>}
-            </p>
+            <div className="line-clamp-1 break-words text-ink">
+              {g.posts.some((post) => blogOptions(post)?.remote?.bodyFormat === 'html') ? (
+                <ArticlePreview body={groupCaption(g)} html compact />
+              ) : (
+                groupCaption(g) || <span className="text-muted">(no caption)</span>
+              )}
+            </div>
             {/* Phones drop the Platforms, Status and When columns, so the cell carries them. */}
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 md:hidden">
               <StatusChip status={groupChip(g)} />
