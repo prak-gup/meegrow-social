@@ -78,13 +78,26 @@ describe('registerConfiguredProviders — Google', () => {
     expect(tryGetProvider('youtube')).toBeUndefined();
   });
 
-  it('the credentials alone bring up GBP but not YouTube', () => {
+  it('the credentials alone bring up neither GBP nor YouTube', () => {
     vi.stubEnv('GOOGLE_CLIENT_ID', 'id.apps.googleusercontent.com');
     vi.stubEnv('GOOGLE_CLIENT_SECRET', 'secret');
     vi.stubEnv('YOUTUBE_ENABLED', '');
+    vi.stubEnv('GBP_ENABLED', '');
+    registerConfiguredProviders();
+    expect(tryGetProvider('gmb')).toBeUndefined();
+    expect(tryGetProvider('youtube')).toBeUndefined();
+  });
+
+  it('GBP needs the exact opt-in GBP_ENABLED=true on top of them', () => {
+    vi.stubEnv('GOOGLE_CLIENT_ID', 'id.apps.googleusercontent.com');
+    vi.stubEnv('GOOGLE_CLIENT_SECRET', 'secret');
+    vi.stubEnv('GBP_ENABLED', '1');
+    registerConfiguredProviders();
+    expect(tryGetProvider('gmb')).toBeUndefined();
+
+    vi.stubEnv('GBP_ENABLED', 'true');
     registerConfiguredProviders();
     expect(tryGetProvider('gmb')?.identifier).toBe('gmb');
-    expect(tryGetProvider('youtube')).toBeUndefined();
   });
 
   it('YouTube needs the exact opt-in YOUTUBE_ENABLED=true on top of them', () => {

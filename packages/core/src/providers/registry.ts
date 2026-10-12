@@ -107,12 +107,14 @@ export function registerConfiguredProviders(): void {
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   if (clientId && clientSecret) {
     // GBP (#21). Built against Google's documented shapes only — the API sits at 0 QPM until the
-    // access request clears (BUILD-SPEC-V2 §A1) — so leaving these unset keeps `gmb` absent.
-    registerProvider(new GbpProvider({ clientId, clientSecret }));
+    // access request clears (BUILD-SPEC-V2 §A1). It shares the OAuth client with YouTube, so the
+    // credentials alone must not put a provider that cannot work yet in the connect list. Exact
+    // opt-in, like SHOW_FAKE_PROVIDERS.
+    if (process.env.GBP_ENABLED === 'true') {
+      registerProvider(new GbpProvider({ clientId, clientSecret }));
+    }
 
-    // YouTube (#25) shares the OAuth client but not the switch: the credentials go in for GBP
-    // first, and an unverified YouTube must not appear in the connect list just because they did.
-    // Exact opt-in, like SHOW_FAKE_PROVIDERS.
+    // YouTube (#25) shares the OAuth client but not the switch. Exact opt-in as well.
     if (process.env.YOUTUBE_ENABLED === 'true') {
       const limit = Number(process.env.YOUTUBE_DAILY_UPLOAD_LIMIT);
       registerProvider(
