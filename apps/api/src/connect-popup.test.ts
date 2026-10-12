@@ -89,7 +89,9 @@ function open(payload: unknown, withOpener: boolean) {
     },
   };
   const document = {
+    querySelectorAll: () => [],
     getElementById: (id: 't' | 'm') => ({
+      onclick: null,
       set textContent(value: string) {
         shown[id] = value;
       },
@@ -99,8 +101,15 @@ function open(payload: unknown, withOpener: boolean) {
     html.indexOf('<script>') + '<script>'.length,
     html.indexOf('</script>'),
   );
-  new Function('window', 'document', script)(window, document);
-  return { title: shown.t, detail: shown.m, posted, closed };
+  const signals: unknown[] = [];
+  class Channel {
+    postMessage(signal: unknown) {
+      signals.push(signal);
+    }
+    close() {}
+  }
+  new Function('window', 'document', 'BroadcastChannel', script)(window, document, Channel);
+  return { title: shown.t, detail: shown.m, posted, closed, signals };
 }
 
 const FLOW = '0b6f1c1e-6f0a-4e0e-9a51-0d6c6f2f8a11';
@@ -130,8 +139,7 @@ describe('callback page with an opener (the dashboard popup)', () => {
     ]);
     expect(page.closed).toBe(true);
     // If the browser refuses to close it, the leftover text must not claim an outcome.
-    expect(page.title).toBe('Finishing up');
-    expect(page.detail).not.toMatch(/connected/i);
+    expect(page.title).toBe(connectOutcome(payload).title);
   });
 });
 
@@ -144,15 +152,14 @@ describe('callback page without an opener', () => {
 
   it('says Connected only when a connection was created', () => {
     const page = open(PAYLOADS.connected, false);
-    expect(page.title).toBe('Connected');
+    expect(page.title).toBe('Connected — you can close this tab');
     expect(page.detail).toContain('The account is connected');
   });
 
   it('does not call an unfinished account pick a success', () => {
     const page = open(PAYLOADS.choose_account, false);
-    expect(page.title).toBe('Not connected yet');
-    expect(page.detail).toContain('Nothing has been connected');
-    expect(page.detail).toContain('still has to be chosen');
+    expect(page.title).toBe('Choose the account to connect');
+    expect(page.detail).toContain('Choose an account');
   });
 
   it('explains an empty account list instead of a picker or a success', () => {
@@ -203,8 +210,36 @@ describe('connectOutcome', () => {
     ]) {
       const outcome = connectOutcome(payload);
       expect(outcome.connected).toBe(false);
-      expect(outcome.title).not.toBe('Connected');
+      expect(outcome.title).not.toBe('Connected — you can close this tab');
       expect(outcome.detail).toContain('Nothing has been connected');
     }
+  });
+});
+
+describe('opener-independent completion', () => {
+  it('broadcasts only a non-sensitive completion signal without an opener', () => {
+    const page = open(
+      { status: 'connected', provider: 'youtube', connectionId: 'secret-id' },
+      false,
+    );
+    expect(page.signals).toEqual([
+      { provider: 'youtube', outcome: 'success', time: expect.any(Number) },
+    ]);
+    expect(JSON.stringify(page.signals)).not.toContain('secret-id');
+  });
+  it('announces failure without broadcasting its reason', () => {
+    const page = open({ status: 'error', error: 'private reason' }, false);
+    expect(page.signals).toEqual([
+      { provider: 'unknown', outcome: 'failure', time: expect.any(Number) },
+    ]);
+    expect(page.detail).toContain('private reason');
+  });
+  it('does not announce success while an account still needs choosing', () => {
+    expect(open(PAYLOADS.choose_account, false).signals).toEqual([]);
+  });
+  it('has an explicit close action and a Connections fallback', () => {
+    const html = connectPopupHtml(PAYLOADS.connected);
+    expect(html).toContain('id="close">Close this tab');
+    expect(html).toContain('href="/connections">Back to Connections');
   });
 });

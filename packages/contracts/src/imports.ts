@@ -46,6 +46,10 @@ export const connectionImportView = z.object({
   resumeAt: z.coerce.date().nullable(),
   /** Last time a run read the platform's list to its end. Null = never. */
   lastSyncedAt: z.coerce.date().nullable(),
+  /** Inventory items read and pages completed so far; optional for older API clients. */
+  postsInWindow: z.number().int().min(0).optional(),
+  seen: z.number().int().min(0).optional(),
+  pages: z.number().int().min(0).optional(),
   /** Posts the last run added. */
   imported: z.number().int().min(0),
   /** Posts the last run recognised as ones this app published (never duplicated). */

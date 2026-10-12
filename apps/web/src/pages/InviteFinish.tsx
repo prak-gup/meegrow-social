@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import type { InviteConnectedView, InviteFlowView } from '@meegrow-social/contracts';
 import { api, ApiError } from '../lib/api';
 import { PRODUCT_NAME, signInName } from '../lib/platforms';
+import { announceConnectCompletion } from '../lib/connectCompletion';
 import { missingAccountHelp } from '../lib/connectHelp';
 import { InviteCard, InviteHeading, recallInviteToken, rememberInviteToken } from './Invite';
 
@@ -133,6 +134,7 @@ export function InviteFinish() {
           help: false,
         });
       } catch (e) {
+        announceConnectCompletion('unknown', 'failure');
         setState({ step: 'stopped', ...stopped(e) });
       }
     })();
@@ -141,8 +143,11 @@ export function InviteFinish() {
   const connect = async (flow: InviteFlowView, externalId: string) => {
     setState({ step: 'pick', flow, busy: externalId, error: null, help: false });
     try {
-      setState({ step: 'connected', result: await api.finishInviteFlow(flowId, externalId) });
+      const result = await api.finishInviteFlow(flowId, externalId);
+      announceConnectCompletion(flow.provider, 'success');
+      setState({ step: 'connected', result });
     } catch (e) {
+      announceConnectCompletion(flow.provider, 'failure');
       // The flow survives a refused account (400) and a platform failure (502): let them retry.
       if (e instanceof ApiError && (e.status === 400 || e.status === 502)) {
         setState({
@@ -172,13 +177,22 @@ export function InviteFinish() {
 
       {state.step === 'connected' && (
         <>
-          <h1 className="text-xl font-semibold">Connected</h1>
+          <h1 className="text-xl font-semibold">Connected — you can close this tab</h1>
           <p className="mt-2 text-body text-muted">
             <b className="text-ink">{state.result.accountName}</b> (
             {state.result.providerDisplayName}) is now connected. The team that manages social media
             for <b className="text-ink">{state.result.workspaceName}</b> can publish to it and read
             its insights through {PRODUCT_NAME}. You can close this window.
           </p>
+          <button
+            onClick={() => window.close()}
+            className="mt-4 rounded-sm border border-hairline px-4 py-2"
+          >
+            Close this tab
+          </button>
+          <a href="/connections" className="mt-4 block text-sm underline">
+            Back to Connections
+          </a>
         </>
       )}
 

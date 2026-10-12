@@ -313,7 +313,7 @@ describe('GET /connect/done', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toContain('text/html');
     expect(res.headers['cache-control']).toBe('no-store');
-    expect(res.body).toContain('<h1 id="t">Connected</h1>');
+    expect(res.body).toContain('<h1 id="t">Connected — you can close this tab</h1>');
     expect(res.body).toContain(`"connectionId":"${CONN}"`);
     expect(res.body).toContain('window.opener.postMessage');
   });
@@ -337,7 +337,7 @@ describe('GET /connect/done', () => {
   ])('never announces a connection for %s', async (_name, query) => {
     const res = await done(query);
     expect(res.statusCode).toBe(400);
-    expect(res.body).not.toContain('<h1 id="t">Connected</h1>');
+    expect(res.body).not.toContain('<h1 id="t">Connected — you can close this tab</h1>');
     expect(res.body).toContain('Not connected');
     expect(res.body).not.toContain('"status":"connected"');
   });
@@ -400,5 +400,51 @@ describe('GET /v1/providers', () => {
         { identifier: 'fake', displayName: 'Fake', isBetweenSteps: false },
       ],
     });
+  });
+});
+
+describe('session-private openerless callback results', () => {
+  it('requires authentication to read the latest callback reason', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/connections/latest-connect-result',
+    });
+    expect(response.statusCode).toBe(401);
+  });
+  it('returns the real reason only to the session that received the callback', async () => {
+    vi.mocked(core.authenticateSession).mockResolvedValue({
+      workspaceId: WS,
+      userId: 'user-1',
+      sessionId: 'sess-1',
+    } as never);
+    vi.mocked(core.handleCallback).mockRejectedValue(
+      new Error('the platform rejected this approval'),
+    );
+    const callback = await app.inject({
+      method: 'GET',
+      url: `/connect/callback?state=${FLOW}&code=abc`,
+      headers: { cookie: 'mg_sid=result-owner' },
+    });
+    const cookies = callback.headers['set-cookie'];
+    const resultCookie = (Array.isArray(cookies) ? cookies[0] : cookies)?.split(';')[0];
+    expect(resultCookie).toMatch(/^mg_connect_result=/);
+    expect(String(cookies)).toContain('HttpOnly');
+    const mine = await app.inject({
+      method: 'GET',
+      url: '/v1/connections/latest-connect-result',
+      headers: { cookie: `mg_sid=result-owner; ${resultCookie}` },
+    });
+    expect(mine.statusCode).toBe(200);
+    expect(mine.json()).toEqual({
+      outcome: 'failure',
+      reason: 'the platform rejected this approval',
+      time: expect.any(Number),
+    });
+    const other = await app.inject({
+      method: 'GET',
+      url: '/v1/connections/latest-connect-result',
+      headers: { cookie: `mg_sid=other-session; ${resultCookie}` },
+    });
+    expect(other.json()).toBeNull();
   });
 });

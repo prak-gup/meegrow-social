@@ -10,7 +10,7 @@ export interface PublishedPostQuery {
   since: Date;
   /** Newest publish time wanted. Absent = up to now. */
   until?: Date;
-  /** `nextCursor` of the previous page, within one run. Social cursors are never stored; WordPress numeric page/offset may resume a run. */
+  /** `nextCursor` of the previous page, within one run. Ordered social lists resume by time; unordered inventories must preserve traversal position. */
   cursor?: string;
   /** Items per page. Kept modest by the caller; the provider clamps it to the platform's maximum. */
   limit: number;
@@ -59,6 +59,10 @@ export interface ProviderUsage {
 }
 
 export interface PublishedPostPage {
+  /** Raw inventory items examined before filtering or unavailable video removal. */
+  itemsRead?: number;
+  /** False when inventory order does not guarantee descending publication time. */
+  orderedByPublishedAt?: boolean;
   items: PublishedPostItem[];
   /** Null on the last page. */
   nextCursor: string | null;

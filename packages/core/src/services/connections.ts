@@ -311,7 +311,12 @@ export async function handleCallback(
         expiresAt: new Date(Date.now() + ACCOUNT_PICK_TTL_MS),
       })
       .where(eq(schema.oauthFlows.id, flow.id));
-    return { status: 'choose_account', flowId: flow.id, accounts };
+    return {
+      status: 'choose_account',
+      provider: flow.provider as ProviderIdentifier,
+      flowId: flow.id,
+      accounts,
+    };
   }
 
   const connectionId = await createFlowConnection(
@@ -320,7 +325,7 @@ export async function handleCallback(
     tokens.externalId,
     tokens.displayName,
   );
-  return { status: 'connected', connectionId };
+  return { status: 'connected', provider: flow.provider as ProviderIdentifier, connectionId };
 }
 
 /**

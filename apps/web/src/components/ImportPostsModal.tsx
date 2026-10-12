@@ -6,6 +6,7 @@ import { platformMeta } from '../lib/platforms';
 import {
   DEFAULT_IMPORT_WINDOW,
   IMPORT_WINDOWS,
+  emptyImportWindow,
   importBusy,
   importSummary,
   type ImportWindowDays,
@@ -22,20 +23,24 @@ const TONE = {
 /**
  * "Import past posts" for one connected account: pick how far back, read what will happen, see
  * the last import and its result. Starting it only queues the work — the worker reads the platform
- * in the background — so the dialog closes at once and the row shows the progress.
+ * in the background — so the dialog and row show progress as pages arrive.
  * Usage: <ImportPostsModal connection={c} onStarted={reload} onClose={close} />
  */
 export function ImportPostsModal({
   connection,
   onStarted,
   onClose,
+  initialWindowDays,
 }: {
   connection: ConnectionView;
+  initialWindowDays?: ImportWindowDays;
   /** The import was queued; re-read the connections to show it. */
   onStarted: () => void;
   onClose: () => void;
 }) {
-  const [days, setDays] = useState<ImportWindowDays>(DEFAULT_IMPORT_WINDOW);
+  const [days, setDays] = useState<ImportWindowDays>(
+    initialWindowDays ?? (emptyImportWindow(connection.import) ? 365 : DEFAULT_IMPORT_WINDOW),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
@@ -46,15 +51,16 @@ export function ImportPostsModal({
   const summary = importSummary(connection.import);
   const running = importBusy(connection.import);
 
-  const start = async () => {
+  const start = async (windowDays = days) => {
     if (inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setError(null);
     try {
-      await api.importPastPosts(connection.id, days);
+      await api.importPastPosts(connection.id, windowDays);
       onStarted();
-      onClose();
+      inFlight.current = false;
+      setBusy(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not start the import.');
       inFlight.current = false;
@@ -130,6 +136,12 @@ export function ImportPostsModal({
         {summary.detail && <p className="tnum text-muted">{summary.detail}</p>}
         {summary.message && <p className="mt-1 break-words text-body-ink">{summary.message}</p>}
       </div>
+
+      {emptyImportWindow(connection.import) && (connection.import?.windowDays ?? 365) < 365 && (
+        <Button className="mt-3" onClick={() => void start(365)} disabled={busy}>
+          Import a longer period
+        </Button>
+      )}
 
       {error && (
         <p role="alert" className="mt-3 text-sm text-error">

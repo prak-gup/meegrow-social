@@ -104,9 +104,14 @@ export type ProviderView = z.infer<typeof providerView>;
 
 /** Result of the OAuth callback: either the connection is made, or the user must pick an account. */
 export const callbackResult = z.discriminatedUnion('status', [
-  z.object({ status: z.literal('connected'), connectionId: z.string().uuid() }),
+  z.object({
+    status: z.literal('connected'),
+    connectionId: z.string().uuid(),
+    provider: providerIdentifier.optional(),
+  }),
   z.object({
     status: z.literal('choose_account'),
+    provider: providerIdentifier.optional(),
     flowId: z.string().uuid(),
     accounts: z.array(providerAccount),
   }),

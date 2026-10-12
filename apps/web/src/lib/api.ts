@@ -194,6 +194,11 @@ export const api = {
     request<InviteConnectedView>('POST', `/v1/invite/flow/${encodeURIComponent(flowId)}/finish`, {
       externalId,
     }),
+  getLatestConnectResult: () =>
+    request<{ outcome: 'success' | 'failure'; reason?: string; time: number } | null>(
+      'GET',
+      '/v1/connections/latest-connect-result',
+    ),
   finishConnect: (flowId: string, externalId: string) =>
     request<{ connectionId: string }>('POST', '/v1/connections/finish', { flowId, externalId }),
   deleteConnection: (id: string) => request<{ deleted: true }>('DELETE', `/v1/connections/${id}`),

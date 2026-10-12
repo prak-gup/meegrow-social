@@ -57,16 +57,29 @@ export function importRowNote(view: Import, now: Date = new Date()): string | nu
     case 'queued':
       return 'Past posts: import queued';
     case 'running':
-      return 'Importing past posts…';
+      return `Importing past posts… · ${importProgress(view)}`;
     case 'paused': {
       const resume = at(view.resumeAt);
       return resume
         ? `Import paused · continues ${shortDateTime(resume, now)}`
         : 'Import paused · continues by itself';
     }
+    case 'done':
+      return emptyImportWindow(view) ? `No posts in the last ${view.windowDays} days` : null;
     default:
       return null;
   }
+}
+
+/** Only a complete, uncapped inventory with no in-window items proves an empty window. */
+export function emptyImportWindow(view: Import): boolean {
+  return (
+    view?.status === 'done' && !view.capped && view.windowDays !== null && view.postsInWindow === 0
+  );
+}
+
+export function importProgress(view: ConnectionImportView): string {
+  return `${(view.seen ?? 0).toLocaleString()} read · ${view.imported.toLocaleString()} imported · page ${view.pages ?? 0}`;
 }
 
 /** What the last run did, as counts: "42 imported · 3 already here · 1 removed on platform". */
@@ -109,7 +122,7 @@ export function importSummary(view: Import, now: Date = new Date()): ImportSumma
     case 'running':
       return {
         heading: 'Importing now',
-        detail: [window, importCounts(view) + ' so far'].filter(Boolean).join(' · '),
+        detail: [window, importProgress(view) + ' so far'].filter(Boolean).join(' · '),
         message: null,
         tone: 'neutral',
       };
@@ -117,7 +130,7 @@ export function importSummary(view: Import, now: Date = new Date()): ImportSumma
       const resume = at(view.resumeAt);
       return {
         heading: resume ? `Paused · continues ${shortDateTime(resume, now)}` : 'Paused',
-        detail: importCounts(view) + ' so far',
+        detail: importProgress(view) + ' so far',
         message: view.message,
         tone: 'warn',
       };
@@ -137,7 +150,9 @@ export function importSummary(view: Import, now: Date = new Date()): ImportSumma
       const finished = at(view.finishedAt) ?? at(view.lastSyncedAt);
       return {
         heading: finished ? `Last import · ${shortDateTime(finished, now)}` : 'Last import',
-        detail: importCounts(view),
+        detail: emptyImportWindow(view)
+          ? `No posts in the last ${view.windowDays} days`
+          : importCounts(view),
         // A capped run is complete but partial: that has to be seen, not buried in a count.
         message: view.capped ? view.message : null,
         tone: view.capped ? 'warn' : 'neutral',
