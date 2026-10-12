@@ -243,10 +243,10 @@ describe('Escaped article preview', () => {
     '<svg/onload=alert(1)><a href="javascript:alert(1)">Click</a><iframe src="https://example.test"></iframe>',
     '&lt;img src=x onerror=alert(1)&gt; &#60;script&#62;alert(1)&#60;/script&#62;',
     '<script>unterminated<script <img src=x onerror=alert(1)>',
-  ])('renders hostile and malformed HTML as text, including the original source: %s', (body) => {
+  ])('sanitises hostile HTML and escapes the advanced original source: %s', (body) => {
     const markup = renderToStaticMarkup(createElement(ArticlePreview, { body, html: true }));
-    expect(markup).not.toMatch(/<(?:img|script|svg|iframe|a)\b/i);
-    expect(markup).not.toMatch(/<[^>]*\s(?:onerror|onload|onclick|src|href)=/i);
+    expect(markup).not.toMatch(/<(?:script|svg|iframe)\b/i);
+    expect(markup).not.toMatch(/<[^>]*\s(?:onerror|onload|onclick)=/i);
     expect(markup).toContain('<pre');
   });
   it('escapes app-published Markdown without interpreting raw HTML', () => {

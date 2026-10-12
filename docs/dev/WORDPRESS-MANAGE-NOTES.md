@@ -179,3 +179,130 @@ Node API deprecation warning. No tests failed, and no `listen EPERM 127.0.0.1` e
   transport specification remain outstanding. No SEO success is implied by Step 2.
 - No `.env` file was read; no dependency, commit, push or client-system mutation was performed.
   Neither `pnpm test:integration` nor a direct vitest invocation was used.
+
+## Document reading and editing — 2026-10-12
+
+This pass replaces the HTML textarea as the default article experience. Blog detail opens as a
+70ch document with title, featured image, status chip, author, dates, categories, tags and live
+article link. Shared document typography renders headings, paragraphs, lists, quotes, links,
+images, tables and code. WordPress Content cards/table previews use the same renderer in compact
+mode. The existing Composer Article mode and its Markdown contract are unchanged.
+
+`sanitiseArticle` uses parse5's HTML5 parser and emits a strict tag/attribute allowlist. Scripts,
+styles, SVG/MathML, forms and objects are dropped; embeds become neutral labelled cards. Event
+attributes, site classes/inline styles and unsafe URLs never enter the rendered document. Only
+absolute HTTP(S) image/link URLs are accepted (including no data URLs). Links open with
+`target="_blank" rel="noopener noreferrer"`; images are lazy loaded, constrained and omit the
+referrer. Gutenberg comments are hidden in the document, and shortcodes/unsupported Gutenberg
+blocks are labelled placeholders. Original source remains escaped and read-only under an advanced
+control. No original protected HTML is injected into the editor DOM.
+
+**Edit** mounts a lazy TipTap editor. Its labelled, keyboard reachable controls include paragraph /
+H2 / H3 / H4, bold, italic, underline, strike, add/edit/remove link, both list types, quote, inline
+code/code block, rule, image URL, basic table insertion/row/column addition/table deletion and
+undo/redo. StarterKit supplies Markdown typing shortcuts. The toolbar has its own horizontal
+scroll container and 44px controls. No reusable WordPress media picker was found; images use a URL
+field. Actual 390px rendering, focus movement and typing have not been verified in a browser.
+
+### Round-trip rules
+
+- Pure `analyseEditability(html)` classifies safe content, content with protected blocks, or
+  source-only content. Unknown markup, shortcodes, Gutenberg galleries/embeds/columns/buttons/
+  custom HTML, meaningful attributes/classes/styles, relative URLs and iframes are protected.
+  Unknown Gutenberg attributes also protect their containing block. Malformed/unbalanced block
+  structures, parser-repaired overlapping regions, bodies over 100,000 characters and more than
+  400 regions use the source-only path. A source-only article never mounts the rich editor.
+- Each locked atomic editor node stores its original HTML, including surrounding Gutenberg
+  comments. The original-region registry is authoritative at serialization. Missing, reordered
+  or modified regions block saving and instruct the operator to undo. Protected HTML is copied
+  byte-for-byte. Empty editable regions allow text to be added around runs of locked blocks.
+- The editor's initial parsed JSON is its comparison baseline. Unedited regions always serialize
+  to their original bytes, even if TipTap would normalize the HTML. Merely opening the editor
+  therefore does not create a body change; the existing minimal-patch function omits it entirely.
+  Returning a region to its baseline also restores its original HTML. Text-only changes preserve
+  original markup, whitespace and entity spellings when source text maps exactly to editor text;
+  structural/formatting changes serialize only the changed editable region.
+- **Deliberate Classic fallback:** unchanged Gutenberg regions retain their original comments;
+  edited simple regions use Classic HTML without their Gutenberg comments. This avoids emitting
+  block metadata that might disagree with edited markup. Before a rich body save the UI says,
+  “Saved content will open in WordPress as a Classic block”, and explains that unchanged blocks
+  retain comments while edited regions use Classic HTML. Mixed articles retain their locked and
+  untouched Gutenberg blocks alongside edited Classic regions. Full Gutenberg regeneration is
+  not implemented or claimed.
+- Advanced source is read-only by default, then explicitly enabled with **Edit HTML source
+  (advanced)**. That mode warns that block preservation is not guaranteed. It is intentionally
+  an expert escape hatch rather than a rich-editor preservation guarantee.
+- Save first displays **What will change**: changed field names, body yes/no, and protected-block
+  count (or the source-mode limitation). Confirmation submits the exact reviewed patch. No-change
+  confirmation makes no update request. Site-version checks and independent read-back remain in
+  the existing service. Nothing in this pass makes a remote request while reading locally stored
+  content in tests.
+- Truncated stored bodies remain disabled in both editing modes and are always removed from the
+  outgoing patch. Other metadata can still be edited. Refresh resets edits and editor state.
+- Composer reuse would require a separate Markdown input/output adapter, document-to-Markdown
+  serialization and contract compatibility tests, plus a configuration without remote-region
+  locks. That is deliberately deferred; changing new-article storage to HTML is not part of this
+  pass.
+
+### Dependencies and measured bundle effect
+
+Added to `@meegrow-social/web` using registry `latest`: `@tiptap/react`, `@tiptap/starter-kit`,
+`@tiptap/extension-link`, `@tiptap/extension-image`, `@tiptap/extension-underline`,
+`@tiptap/extension-table`, `@tiptap/extension-placeholder`, all resolved to **3.31.4**.
+Also added **parse5 8.0.1** for browser-independent sanitization/source locations and
+**happy-dom 21.0.1** as a dev dependency for offline editor-state tests. Package manifest and
+lockfile changes remain uncommitted, as explicitly requested by the hard rule.
+
+A Vite build of the original HEAD web source in an ignored, local scratch directory, using the
+same installed dependencies, measured the baseline. Final root build output:
+
+| Asset                | Original HEAD                | Final                        | Effect                                                                                |
+| -------------------- | ---------------------------- | ---------------------------- | ------------------------------------------------------------------------------------- |
+| Main JS              | 1,115.50 kB / 321.28 kB gzip | 1,279.69 kB / 368.98 kB gzip | +164.19 kB / +47.70 kB gzip, including the shared HTML parser and reading/analysis UI |
+| RichArticleEditor JS | absent                       | 463.97 kB / 146.64 kB gzip   | Separate lazy chunk; mounted/requested on Edit, not during default reading            |
+| CSS                  | 41.76 kB / 8.71 kB gzip      | 44.34 kB / 9.06 kB gzip      | +2.58 kB / +0.35 kB gzip for document/editor styling                                  |
+
+The editor implementation is excluded from the initial JS chunk; the always-available reading
+renderer/analysis does increase that chunk. Vite's existing larger-than-500-kB warning remains.
+These are emitted asset sizes, not a browser loading/performance measurement.
+
+### Observed gates and evidence limits
+
+The final implementation gates below ran from the repository root. `pnpm install` succeeded;
+registry access was not blocked. Initially the inherited node_modules store location disagreed
+with the sandbox store location; reinstalling resolved that before product dependencies were
+added. Husky's prepare command reported that it could not lock the parent repository's git config
+(`Operation not permitted`), then completed with exit 0. pnpm also warned about the ignored
+`msgpackr-extract@3.0.4` build script. The generated installation cache was moved under ignored
+node_modules so it is excluded from source formatting and the working diff. An intermediate
+format check had inspected that generated cache and failed; the final source check below passed.
+
+| Command                                       | Observed final result                                                                                           |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `pnpm install`                                | Exit 0; lockfile up to date; 981ms; prepare/ignored-script warnings above                                       |
+| `pnpm exec prettier --write` on changed files | Exit 0; changed TS/TSX/JSON/CSS and these notes formatted; lockfile is excluded by the existing Prettier ignore |
+| `pnpm format:check`                           | Exit 0; “All matched files use Prettier code style!”                                                            |
+| `bash scripts/guardrails.sh`                  | Exit 0; “✅ guardrails passed”                                                                                  |
+| `pnpm lint`                                   | Exit 0; no ESLint errors or warnings                                                                            |
+| `pnpm build`                                  | Exit 0; 7 successful / 7 total; 0 cached; 6.995s; Vite built in 3.22s                                           |
+| `pnpm test`                                   | Exit 0; 102 files / 2,786 tests passed; 24.55s; no EPERM exception needed                                       |
+| `git diff --check`                            | Exit 0; no whitespace errors                                                                                    |
+
+Build emitted five Turbo `WARNING IO error: Operation not permitted (os error 1)` warnings and the
+Vite chunk-size warning. Tests emitted Vite's CJS Node API deprecation warning. Synthetic fixtures
+cover classic HTML, Gutenberg paragraphs/headings/lists/images/quotes, gallery, embed, columns,
+buttons, shortcode, custom HTML, tables, Hindi/emoji and entities. Tests exercise strict sanitizing,
+block/shortcode handling, loss analysis, actual TipTap parse/editor-state normalization, unchanged
+minimal patches, protected-byte preservation, text edits and refusal of removed/changed locks.
+Existing preview tests were updated to require sanitization rather than omission of every image.
+
+**What remains unverified:** no browser was opened, and no authenticated Blog/Content interaction,
+390px layout, keyboard focus/toolbar scrolling, real paste behavior or live save was exercised.
+Happy-dom verifies offline editor state, not browser behavior. No WordPress site, database or Redis
+was contacted. Integration tests and direct vitest invocations were not run; no `.env` file was
+read; no git commit or push was performed. WordPress/plugin filtering, real Gutenberg/Classic
+interpretation, custom theme behavior, remote image availability and site-side byte preservation
+remain unverified. The local serializer preserves protected bytes; a site's own normalization can
+still produce the existing verified-read-back mismatch. The prior concurrency/remote-write limits
+in these notes still apply. Documentation-only formatting/whitespace checks were repeated after
+this appendix; implementation build/test results above precede that documentation-only change.

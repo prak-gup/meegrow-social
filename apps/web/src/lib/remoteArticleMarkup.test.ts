@@ -41,9 +41,15 @@ describe('remote article editor markup', () => {
     expect(html).toContain('Save on site');
     expect(html).toContain('Move to trash on site');
   });
+  it('opens in reading mode with a read-only advanced source and does not load the editor', () => {
+    const html = render(post);
+    expect(html).toMatch(/<fieldset[^>]*hidden=""/);
+    expect(html).toMatch(/<textarea[^>]*readonly=""/);
+    expect(html).not.toContain('Article rich text editor');
+  });
   it('disables editing before a site version has been observed', () => {
     const html = render({ ...post, options: { kind: 'wordpress', title: 'Title' } });
-    expect(html).toContain('<fieldset disabled=""');
+    expect(html).toMatch(/<fieldset[^>]*disabled=""/);
     expect(html).toContain('Refresh from site to load');
   });
   it('disables truncated body edits with an explanation', () => {
@@ -61,6 +67,6 @@ describe('remote article editor markup', () => {
     expect(html).toContain('stored copy is truncated');
   });
   it('disables writes for removed articles', () => {
-    expect(render({ ...post, platformRemovedAt: new Date() })).toContain('<fieldset disabled=""');
+    expect(render({ ...post, platformRemovedAt: new Date() })).toMatch(/<fieldset[^>]*disabled=""/);
   });
 });

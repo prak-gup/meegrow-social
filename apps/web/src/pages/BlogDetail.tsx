@@ -18,7 +18,6 @@ import {
 import { safeExternalUrl } from '../lib/postList';
 import { ArticlePreview } from '../components/ArticlePreview';
 import { PageHeader } from '../components/ui/PageHeader';
-import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorState } from '../components/ui/ErrorState';
 import { StatusChip } from '../components/ui/StatusChip';
@@ -82,26 +81,20 @@ export function BlogDetail() {
         />
       ) : (
         <>
-          <PageHeader
-            title={<span className="break-words [overflow-wrap:anywhere]">{blogTitle(post)}</span>}
-            subtitle={site?.displayName ?? 'Disconnected site'}
-            actions={
-              <>
+          <div className="mx-auto w-full max-w-[70ch]">
+            <PageHeader
+              title={
+                <span className="break-words [overflow-wrap:anywhere]">{blogTitle(post)}</span>
+              }
+              subtitle={site?.displayName ?? 'Disconnected site'}
+              actions={
                 <BlogSyncAction
                   connections={site ? [site] : []}
                   onFinished={() => setAttempt((a) => a + 1)}
                 />
-                <StatusChip status={blogChip(post)} label={blogStatusLabel(post)} />
-                {url && (
-                  <Button asChild variant="outline">
-                    <a href={url} target="_blank" rel="noopener noreferrer">
-                      View on site
-                    </a>
-                  </Button>
-                )}
-              </>
-            }
-          />
+              }
+            />
+          </div>
           <PublishWaitingNote posts={[post]} />
           {post.platformRemovedAt && (
             <p className="text-sm text-muted">
@@ -120,59 +113,53 @@ export function BlogDetail() {
               would lose content on the site.
             </p>
           )}
-          <RemoteArticleEditor key={post.id} post={post} onChange={setPost} />
-          <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          <article className="mx-auto w-full max-w-[70ch] space-y-6" aria-label="Article document">
+            {image && (
+              <img
+                src={image}
+                alt={`Featured image for ${blogTitle(post)}`}
+                loading="lazy"
+                className="max-h-96 w-full rounded-md object-contain"
+              />
+            )}
+            <dl className="flex flex-wrap gap-x-5 gap-y-3 border-b border-hairline pb-4 text-sm">
+              {[
+                ['Status', blogStatusLabel(post)],
+                ['Author', remote?.author || '—'],
+                ['Published', blogDateLabel(blogDate(post, 'published'))],
+                ['Modified', blogDateLabel(blogDate(post, 'modified'))],
+                [
+                  'Categories',
+                  remote?.categories.join(', ') || options?.categories?.join(', ') || '—',
+                ],
+                ['Tags', remote?.tags.join(', ') || options?.tags?.join(', ') || '—'],
+                ['Source', blogSource(post)],
+              ].map(([label, value]) => (
+                <div key={label}>
+                  <dt className="text-caption text-muted">{label}</dt>
+                  <dd className="break-words">
+                    {label === 'Status' ? (
+                      <StatusChip status={blogChip(post)} label={blogStatusLabel(post)} />
+                    ) : (
+                      value
+                    )}
+                  </dd>
+                </div>
+              ))}
+              {url && (
+                <div>
+                  <dt className="text-caption text-muted">Live article</dt>
+                  <dd>
+                    <a className="underline" href={url} target="_blank" rel="noopener noreferrer">
+                      View on site
+                    </a>
+                  </dd>
+                </div>
+              )}
+            </dl>
             <ArticlePreview body={post.caption} html={remote?.bodyFormat === 'html'} />
-            <aside className="min-w-0 space-y-4" aria-label="Article settings">
-              <h2 className="text-body font-semibold">Article settings</h2>
-              <dl className="space-y-3 text-sm">
-                {[
-                  ['Site', site?.externalId ?? '—'],
-                  ['Site status', blogStatusLabel(post)],
-                  ['Author', remote?.author || '—'],
-                  [
-                    'Categories',
-                    remote
-                      ? remote.categories.join(', ') || '—'
-                      : options?.categories?.join(', ') || '—',
-                  ],
-                  [
-                    'Tags',
-                    remote ? remote.tags.join(', ') || '—' : options?.tags?.join(', ') || '—',
-                  ],
-                  ['Published date', blogDateLabel(blogDate(post, 'published'))],
-                  ['Modified date', blogDateLabel(blogDate(post, 'modified'))],
-                  ['Source', blogSource(post)],
-                  ['Slug', remote?.slug ?? options?.slug ?? '—'],
-                  ['Excerpt', remote ? remote.excerpt || '—' : options?.excerpt || '—'],
-                  [
-                    'Body format',
-                    remote?.bodyFormat === 'html' ? 'HTML from site' : 'Markdown published here',
-                  ],
-                ].map(([label, value]) => (
-                  <div key={label}>
-                    <dt className="text-caption text-muted">{label}</dt>
-                    <dd className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                      {value}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-              <section aria-label="Featured image" className="space-y-2">
-                <h3 className="text-sm font-semibold">Featured image</h3>
-                {image ? (
-                  <img
-                    src={image}
-                    alt={`Featured image for ${blogTitle(post)}`}
-                    loading="lazy"
-                    className="max-h-80 w-full rounded-md object-contain"
-                  />
-                ) : (
-                  <p className="text-caption text-muted">No featured image stored.</p>
-                )}
-              </section>
-            </aside>
-          </div>
+          </article>
+          <RemoteArticleEditor key={post.id} post={post} onChange={setPost} />
         </>
       )}
     </div>
