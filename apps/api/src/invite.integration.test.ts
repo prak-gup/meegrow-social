@@ -169,7 +169,7 @@ describe('invite connect path', () => {
 
     const back = await callback(flowId, cookiesOf(start));
     expect(back.statusCode).toBe(200);
-    expect(back.body).toContain('<h1 id="t">Connected</h1>');
+    expect(back.body).toContain('<h1 id="t">Connected — you can close this tab</h1>');
     expect(await listConnections(ws)).toHaveLength(1);
     expect(
       (await app.inject({ method: 'GET', url: `/v1/invite/${invite.token}` })).statusCode,
