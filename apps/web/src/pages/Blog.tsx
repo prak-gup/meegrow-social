@@ -1,3 +1,4 @@
+import { BlogSyncAction } from '../components/BlogSyncAction';
 import { PublishWaitingNote } from '../components/PublishWaitingNote';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -159,9 +160,16 @@ export function Blog() {
         title="Blog"
         subtitle="WordPress articles for this client. Refresh to see the latest stored import."
         actions={
-          <Button variant="outline" onClick={() => setAttempt((a) => a + 1)} disabled={loading}>
-            Refresh
-          </Button>
+          <>
+            <BlogSyncAction
+              connections={sites}
+              site={filters.site}
+              onFinished={() => setAttempt((a) => a + 1)}
+            />
+            <Button variant="outline" onClick={() => setAttempt((a) => a + 1)} disabled={loading}>
+              Refresh
+            </Button>
+          </>
         }
       />
       {loading ? (
@@ -178,7 +186,7 @@ export function Blog() {
         <>
           {importing && (
             <p role="status" className="mb-3 text-sm text-muted">
-              {importing} Refresh to see newly imported articles.
+              {importing} The list refreshes when sync finishes.
             </p>
           )}
           {sites.map((site) => {

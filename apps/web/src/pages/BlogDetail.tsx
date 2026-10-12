@@ -1,3 +1,4 @@
+import { BlogSyncAction } from '../components/BlogSyncAction';
 import { PublishWaitingNote } from '../components/PublishWaitingNote';
 import { RemoteArticleEditor } from '../components/RemoteArticleEditor';
 import { useEffect, useState } from 'react';
@@ -86,6 +87,10 @@ export function BlogDetail() {
             subtitle={site?.displayName ?? 'Disconnected site'}
             actions={
               <>
+                <BlogSyncAction
+                  connections={site ? [site] : []}
+                  onFinished={() => setAttempt((a) => a + 1)}
+                />
                 <StatusChip status={blogChip(post)} label={blogStatusLabel(post)} />
                 {url && (
                   <Button asChild variant="outline">
