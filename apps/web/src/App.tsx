@@ -8,6 +8,8 @@ import { Connections } from './pages/Connections';
 import { composerBackground } from './lib/composer';
 import { Calendar } from './pages/Calendar';
 import { Posts } from './pages/Posts';
+import { Blog } from './pages/Blog';
+import { BlogDetail } from './pages/BlogDetail';
 import { ApiKeys } from './pages/ApiKeys';
 import { ChangePassword } from './pages/ChangePassword';
 import { Analytics } from './pages/Analytics';
@@ -47,6 +49,8 @@ export function App() {
         <Route path="/overview" element={<Overview />} />
         <Route path="/calendar" element={<Calendar />} />
         <Route path="/content" element={<Posts />} />
+        <Route path="/blog" element={<Blog />} />
+        <Route path="/blog/:postId" element={<BlogDetail />} />
         {/* Always registered so it can be validated by URL; the nav entry is flag-gated (AppLayout). */}
         <Route path="/analytics" element={<Analytics />} />
         <Route path="/clients" element={<Clients />} />

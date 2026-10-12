@@ -159,6 +159,7 @@ export function attentionLabel(c: Pick<SwitcherClient, 'health' | 'failedThisWee
 const STAY_ON = ['/content', '/calendar', '/analytics', '/connections', '/settings/api-keys'];
 
 export function switchTarget(pathname: string): string {
+  if (pathname === '/blog' || pathname.startsWith('/blog/')) return '/blog';
   return STAY_ON.includes(pathname) ? pathname : '/content';
 }
 
