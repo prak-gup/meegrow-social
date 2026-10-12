@@ -1096,9 +1096,10 @@ describe('registration — env-gated like the Meta providers', () => {
     expect(registry.tryGetProvider('gmb')).toBeUndefined();
   });
 
-  it('registers once both are present', async () => {
+  it('registers once both are present and GBP_ENABLED is true', async () => {
     vi.stubEnv('GOOGLE_CLIENT_ID', 'id');
     vi.stubEnv('GOOGLE_CLIENT_SECRET', 'secret');
+    vi.stubEnv('GBP_ENABLED', 'true');
     vi.resetModules();
     const registry = await import('../registry.js');
 

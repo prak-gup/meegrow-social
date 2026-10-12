@@ -102,7 +102,7 @@ Added 2026-10-11 with `packages/core/src/providers/google/{client,gbp}.ts`.
 
 **Provenance, stated plainly.** The GBP provider was built with **no API access and no credentials**. Nothing in it has been run against Google. Every fixture in `gbp.test.ts` is **hand-built from the documented shapes in A1–A6 above — not recorded from live traffic**, and Google's reference pages were not re-fetched during the build (no network access to Google was permitted), so the shapes are only as good as this note. The 95 tests prove the code agrees with the documentation. They do not prove the documentation agrees with Google. Meta taught us the difference: `post_impressions_unique` passed every fixture and was rejected live.
 
-Registration is env-gated on `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` (`providers/registry.ts`). With either unset, `gmb` is not registered and nothing changes anywhere.
+Registration is env-gated on `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` **and** `GBP_ENABLED=true` (`providers/registry.ts`); the credentials are shared with YouTube, which has its own switch. With either unset, `gmb` is not registered and nothing changes anywhere.
 
 **Decisions taken in the build that differ from BUILD-SPEC-V2 §4 B1** (each is a one-line change if the call is reversed):
 

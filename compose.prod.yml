@@ -22,6 +22,7 @@ services:
       TELEGRAM_ENABLED: ${TELEGRAM_ENABLED:-true}
       DISCORD_ENABLED: ${DISCORD_ENABLED:-true}
       SLACK_ENABLED: ${SLACK_ENABLED:-true}
+      YOUTUBE_ENABLED: ${YOUTUBE_ENABLED:-true}
     ports: ['127.0.0.1:8990:8990']
     volumes: ['media:/app/.data/media']
     depends_on:
@@ -42,6 +43,7 @@ services:
       TELEGRAM_ENABLED: ${TELEGRAM_ENABLED:-true}
       DISCORD_ENABLED: ${DISCORD_ENABLED:-true}
       SLACK_ENABLED: ${SLACK_ENABLED:-true}
+      YOUTUBE_ENABLED: ${YOUTUBE_ENABLED:-true}
     volumes: ['media:/app/.data/media']
     depends_on:
       postgres: { condition: service_healthy }
