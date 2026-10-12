@@ -91,6 +91,7 @@ import {
   ImportNotSupportedError,
   isWorkspaceMember,
   listConnectionHealth,
+  MediaSourceError,
   listConnections,
   overviewForUser,
   listPostGroups,
@@ -1391,7 +1392,15 @@ export async function buildServer(): Promise<FastifyInstance> {
   app.post('/v1/media/register', async (req, reply) => {
     const parsed = registerMediaFromUrlInput.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
-    const media = await registerMediaFromUrl(req.authContext!.workspaceId, parsed.data);
+    let media;
+    try {
+      media = await registerMediaFromUrl(req.authContext!.workspaceId, parsed.data);
+    } catch (err) {
+      // A refused or unreachable address is the caller's to fix, and the message says nothing
+      // about what the address answered.
+      if (err instanceof MediaSourceError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
     return reply
       .code(201)
       .send({ mediaId: media.id, url: media.url, kind: media.kind, meta: media.meta });

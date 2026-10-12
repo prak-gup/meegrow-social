@@ -110,6 +110,9 @@ export interface RegisterMediaFromUrlDeps {
   fetchImpl?: typeof fetch;
 }
 
+/** The address given to register-from-URL was refused or did not answer. Safe to show (→ 400). */
+export class MediaSourceError extends Error {}
+
 /** Largest remote file we will pull in to probe. */
 const REMOTE_MEDIA_MAX_BYTES = 200 * 1024 * 1024;
 
@@ -124,7 +127,7 @@ async function fetchRemoteMedia(
 ): Promise<{ contentType: string; buffer: Buffer }> {
   if (deps.fetchImpl) {
     const res = await deps.fetchImpl(url);
-    if (!res.ok) throw new Error('could not fetch media from that address');
+    if (!res.ok) throw new MediaSourceError('could not fetch media from that address');
     return {
       contentType: res.headers.get('content-type') ?? 'application/octet-stream',
       buffer: Buffer.from(await res.arrayBuffer()),
@@ -139,12 +142,12 @@ async function fetchRemoteMedia(
     });
   } catch (err) {
     if (err instanceof SsrfBlockedError) {
-      throw new Error('that address is not allowed: use a public https address');
+      throw new MediaSourceError('that address is not allowed: use a public https address');
     }
-    throw new Error('could not fetch media from that address');
+    throw new MediaSourceError('could not fetch media from that address');
   }
   if (res.status < 200 || res.status >= 300) {
-    throw new Error('could not fetch media from that address');
+    throw new MediaSourceError('could not fetch media from that address');
   }
   return {
     contentType: res.headers['content-type'] ?? 'application/octet-stream',

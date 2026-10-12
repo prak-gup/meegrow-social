@@ -133,7 +133,9 @@ describe('POST /v1/media/register', () => {
     await new Promise<void>((r) => sourceServer.close(() => r()));
   });
 
-  it('registers an externally-hosted image without re-uploading it', async () => {
+  // The happy path (a public https source) is covered in core with an injected fetch; here the
+  // route must refuse a source on our own network — this endpoint is reachable by any member.
+  it('refuses a source that is not a public https address, without saying what it answered', async () => {
     const ws = await createWorkspace();
     const { secret } = await createApiKeyForWorkspace(ws, 'test-key');
 
@@ -144,16 +146,9 @@ describe('POST /v1/media/register', () => {
       payload: { url: sourceUrl },
     });
 
-    expect(res.statusCode).toBe(201);
-    const created = res.json<{
-      mediaId: string;
-      url: string;
-      kind: string;
-      meta: { width: number };
-    }>();
-    expect(created.url).toBe(sourceUrl); // not re-hosted onto our storage
-    expect(created.kind).toBe('image');
-    expect(created.meta.width).toBe(1);
+    expect(res.statusCode).toBe(400);
+    expect(res.json<{ error: string }>().error).toMatch(/not allowed/);
+    expect(res.body).not.toContain('127.0.0.1');
   });
 });
 
