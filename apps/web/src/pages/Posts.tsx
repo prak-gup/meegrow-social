@@ -1,3 +1,4 @@
+import { YouTubeVideoMeta } from '../components/YouTubeVideoMeta';
 import { ArticlePreview } from '../components/ArticlePreview';
 import { blogOptions } from '../lib/blog';
 import { WordPressArticleMeta } from '../components/WordPressArticleMeta';
@@ -578,6 +579,7 @@ function GroupCard({
             )}
           </div>
           <WordPressArticleMeta posts={group.posts} />
+          <YouTubeVideoMeta posts={group.posts} />
           {failed && <FailureLine group={group} />}
           <PublishWaitingNote posts={group.posts} />
         </div>
@@ -635,6 +637,7 @@ function GroupTable({
               {isImportedGroup(g) && <ImportedMark />}
             </div>
             <WordPressArticleMeta posts={g.posts} />
+            <YouTubeVideoMeta posts={g.posts} />
             <FailureLine group={g} />
             <PublishWaitingNote posts={g.posts} />
           </div>

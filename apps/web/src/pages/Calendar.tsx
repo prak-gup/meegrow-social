@@ -1,3 +1,4 @@
+import { YouTubeVideoMeta } from '../components/YouTubeVideoMeta';
 import { WordPressArticleMeta } from '../components/WordPressArticleMeta';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -93,6 +94,7 @@ function CompactEntry({ entry, accounts, items }: EntryProps) {
       <PostThumb thumb={groupThumb(entry)} size="xs" />
       <PlatformIcons posts={entry.posts} accounts={accounts} size="sm" />
       {isImportedGroup(entry) && <ImportedMark compact />}
+      <YouTubeVideoMeta posts={entry.posts} link={false} compact />
       <span
         className={cn(
           'min-w-0 flex-1 truncate text-micro',
@@ -145,6 +147,7 @@ function RoomyEntry({ entry, accounts, items }: EntryProps) {
           {entry.caption || '(no caption)'}
         </span>
         <WordPressArticleMeta posts={entry.posts} link={false} />
+        <YouTubeVideoMeta posts={entry.posts} link={false} />
       </span>
     </RowMenu>
   );

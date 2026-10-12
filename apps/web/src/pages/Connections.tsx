@@ -505,6 +505,15 @@ export function Connections() {
                     <Button variant="outline" size="sm" onClick={() => void connect(p)}>
                       Connect
                     </Button>
+                    {p.identifier === 'youtube' && (
+                      <p className="w-full text-caption text-muted">
+                        Google asks you to approve uploading videos, reading your channel and
+                        videos, and reading YouTube Analytics reports. Until Google verification is
+                        complete, Google shows an “unverified app” warning and limits access to 100
+                        new users in total. In Testing, only listed test users can connect. Use
+                        Invite client to let the channel owner approve these permissions themselves.
+                      </p>
+                    )}
                     {/* A pasted credential is entered here only; there is no link to send. */}
                     {p.connectInput !== 'credentials' && (
                       <Button variant="ghost" size="sm" onClick={() => void makeInvite(p)}>

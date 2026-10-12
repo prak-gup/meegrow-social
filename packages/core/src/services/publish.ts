@@ -191,6 +191,7 @@ export async function publishPost(
           // The platform's own id — the analytics sweeper (#9) polls insights by it. Without this
           // it was discarded at publish time and unrecoverable except by parsing releaseUrl.
           externalPostId: result.externalPostId ?? null,
+          ...(result.options ? { options: result.options } : {}),
           error: null,
         })
         .where(eq(schema.posts.id, postId));

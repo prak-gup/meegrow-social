@@ -75,6 +75,38 @@ describe('analytics revision 2 markup', () => {
     expect(html).not.toContain('counted 1/1');
     expect(html).not.toContain('About totals');
   });
+  it('renders a documentation-built YouTube-only report with subscribers and a views-based rate', () => {
+    const report = fixture({
+      accounts: [{ ...account, provider: 'youtube' }],
+      posts: [
+        {
+          ...post,
+          provider: 'youtube',
+          native: {
+            viewCount: 1000,
+            likeCount: 20,
+            commentCount: 5,
+            shares: 5,
+            subscribersGained: 2,
+          },
+          format: 'video',
+        },
+      ],
+    });
+    const kpis = render(Kpis as React.FunctionComponent<never>, { report });
+    expect(kpis.match(/<article /g)).toHaveLength(4);
+    expect(kpis).toContain('Engagement rate · views');
+    expect(kpis).toContain('Subscribers');
+    expect(kpis).not.toContain('>Reach<');
+    const table = render(PlatformTable as React.FunctionComponent<never>, {
+      report,
+      concepts: ['views', 'likes', 'comments', 'shares', 'follows'],
+    });
+    expect(table).toContain('YouTube');
+    expect(table).toContain('Subscribers gained');
+    expect(table).toContain('>÷ views<');
+    expect(table).toContain('3.00%');
+  });
   it('keeps missing values as a dash and actual zero as zero', () => {
     expect(formatNumber(null)).toBe('—');
     expect(formatNumber(0)).toBe('0');

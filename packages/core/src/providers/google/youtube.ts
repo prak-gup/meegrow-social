@@ -1,5 +1,11 @@
 import type { MediaRef, PostOptions } from '@meegrow-social/contracts';
 import type {
+  PublishedPostItem,
+  PublishedPostPage,
+  PublishedPostPresence,
+  PublishedPostQuery,
+} from '../published-posts.js';
+import type {
   AuthTokens,
   GenerateAuthUrl,
   MetricPoint,
@@ -152,6 +158,7 @@ interface YouTubeErrorBody {
 interface ChannelResource {
   id?: string;
   snippet?: { title?: string; customUrl?: string };
+  contentDetails?: { relatedPlaylists?: { uploads?: string } };
   statistics?: {
     viewCount?: string;
     subscriberCount?: string;
@@ -162,8 +169,19 @@ interface ChannelResource {
 
 interface VideoResource {
   id?: string;
-  snippet?: { publishedAt?: string; channelId?: string };
+  snippet?: {
+    publishedAt?: string;
+    channelId?: string;
+    title?: string;
+    description?: string;
+    categoryId?: string;
+    tags?: string[];
+    thumbnails?: Record<string, { url?: string }>;
+  };
+  contentDetails?: { duration?: string };
   status?: {
+    selfDeclaredMadeForKids?: boolean;
+    madeForKids?: boolean;
     uploadStatus?: string;
     privacyStatus?: string;
     failureReason?: string;
@@ -390,6 +408,125 @@ export class YouTubeProvider implements SocialProvider {
     return found;
   }
 
+  /** One channel lookup per run, then two one-unit Data API reads per page (at most 50 videos). */
+  async listPublishedPosts(
+    tokens: AuthTokens,
+    query: PublishedPostQuery,
+  ): Promise<PublishedPostPage> {
+    const token = await this.accessToken(tokens);
+    let playlist: string;
+    let pageToken: string | undefined;
+    if (query.cursor) {
+      let cursor: unknown;
+      try {
+        cursor = JSON.parse(query.cursor);
+      } catch {
+        throw new ProviderBadRequestError('Invalid YouTube import cursor');
+      }
+      if (
+        !cursor ||
+        typeof cursor !== 'object' ||
+        !('playlist' in cursor) ||
+        typeof cursor.playlist !== 'string' ||
+        !('pageToken' in cursor) ||
+        typeof cursor.pageToken !== 'string'
+      ) {
+        throw new ProviderBadRequestError('Invalid YouTube import cursor');
+      }
+      playlist = cursor.playlist;
+      pageToken = cursor.pageToken;
+    } else {
+      const channels = await this.client.authed<{ items?: ChannelResource[] }>(
+        `${DATA_HOST}/channels?part=contentDetails&mine=true`,
+        {},
+        token,
+      );
+      const channel = channels.items?.find((item) => item.id === tokens.externalId);
+      const uploads = channel?.contentDetails?.relatedPlaylists?.uploads;
+      if (!uploads)
+        throw new ProviderBadRequestError(
+          'The connected YouTube channel did not return an uploads playlist',
+        );
+      playlist = uploads;
+    }
+    const qs = new URLSearchParams({
+      part: 'contentDetails',
+      playlistId: playlist,
+      maxResults: String(Math.max(1, Math.min(50, Math.floor(query.limit)))),
+    });
+    if (pageToken) qs.set('pageToken', pageToken);
+    const listed = await this.client.authed<{
+      items?: Array<{ contentDetails?: { videoId?: string; videoPublishedAt?: string } }>;
+      nextPageToken?: string;
+    }>(`${DATA_HOST}/playlistItems?${qs}`, {}, token);
+    const ids = [
+      ...new Set(
+        (listed.items ?? []).flatMap((item) =>
+          item.contentDetails?.videoId ? [item.contentDetails.videoId] : [],
+        ),
+      ),
+    ];
+    const videos = ids.length
+      ? await this.client.authed<{ items?: VideoResource[] }>(
+          `${DATA_HOST}/videos?${new URLSearchParams({ part: 'snippet,status,statistics,contentDetails', id: ids.join(',') })}`,
+          {},
+          token,
+        )
+      : { items: [] };
+    const byId = new Map((videos.items ?? []).map((item) => [item.id, item]));
+    const items = ids
+      .flatMap((id) => normalizeImportedVideo(byId.get(id), tokens.externalId) ?? [])
+      .filter(
+        (item) =>
+          item.publishedAt >= query.since && (!query.until || item.publishedAt <= query.until),
+      );
+    // Playlist dates let a normal newest-first run stop without scanning the channel's whole history.
+    const dates = (listed.items ?? []).map((item) =>
+      Date.parse(item.contentDetails?.videoPublishedAt ?? ''),
+    );
+    const older =
+      dates.length > 0 &&
+      dates.every((date) => Number.isFinite(date) && date < query.since.getTime());
+    return {
+      items,
+      nextCursor:
+        listed.nextPageToken && !older
+          ? JSON.stringify({ playlist, pageToken: listed.nextPageToken })
+          : null,
+      usage: null,
+    };
+  }
+
+  /** A missing video is only a deletion when the grant still owns the connected channel. */
+  async publishedPostPresence(
+    tokens: AuthTokens,
+    externalPostId: string,
+  ): Promise<PublishedPostPresence> {
+    try {
+      const token = await this.accessToken(tokens);
+      const video = await this.client.authed<{ items?: VideoResource[] }>(
+        `${DATA_HOST}/videos?${new URLSearchParams({ part: 'snippet', id: externalPostId })}`,
+        {},
+        token,
+      );
+      if (
+        video.items?.some(
+          (item) => item.id === externalPostId && item.snippet?.channelId === tokens.externalId,
+        )
+      )
+        return 'present';
+      if (video.items?.length) return 'unknown';
+      const channels = await this.client.authed<{ items?: ChannelResource[] }>(
+        `${DATA_HOST}/channels?part=id&mine=true`,
+        {},
+        token,
+      );
+      return channels.items?.some((item) => item.id === tokens.externalId) ? 'gone' : 'unknown';
+    } catch {
+      return 'unknown';
+    }
+  }
+
   // No finalizeAccount: the token already belongs to the channel — there is nothing to swap.
 
   /** For the contract and a manual refresh; with no stored expiry the sweeper never calls it. */
@@ -522,6 +659,12 @@ export class YouTubeProvider implements SocialProvider {
 
     return {
       externalPostId: videoId,
+      options: {
+        ...options,
+        ...(['public', 'unlisted', 'private'].includes(status?.privacyStatus ?? '')
+          ? { remote: { privacyStatus: status!.privacyStatus as YoutubeOptions['privacyStatus'] } }
+          : { remote: undefined }),
+      },
       releaseUrl: hasShortsTag(detail)
         ? `https://www.youtube.com/shorts/${videoId}`
         : `https://www.youtube.com/watch?v=${videoId}`,
@@ -677,6 +820,15 @@ export class YouTubeProvider implements SocialProvider {
   ): Promise<VideoResource> {
     const first = await this.readRange(mediaUrl, 0, this.chunkBytes);
     const total = first.total;
+    if (total > 256 * 1024 ** 3) {
+      throw new ProviderBadRequestError('YouTube videos must be no larger than 256 GiB');
+    }
+    if (
+      !first.contentType.startsWith('video/') &&
+      !['application/octet-stream', 'binary/octet-stream'].includes(first.contentType)
+    ) {
+      throw new ProviderBadRequestError('YouTube requires a video file with a video MIME type');
+    }
     const contentType = first.contentType.startsWith('video/') ? first.contentType : 'video/*';
 
     // Counted before the call: Google charges for failed calls too.
@@ -965,4 +1117,58 @@ function requireUrl(media: MediaRef): string {
     );
   }
   return media.url;
+}
+
+/** Data API has no Shorts flag or dimensions: #Shorts is an editorial hint, never a classification. */
+function normalizeImportedVideo(
+  video: VideoResource | undefined,
+  channelId: string,
+): PublishedPostItem | null {
+  const snippet = video?.snippet;
+  const publishedAt = new Date(snippet?.publishedAt ?? '');
+  const privacy = video?.status?.privacyStatus;
+  if (
+    !video?.id ||
+    snippet?.channelId !== channelId ||
+    !snippet.title ||
+    !Number.isFinite(publishedAt.getTime()) ||
+    !['public', 'unlisted', 'private'].includes(privacy ?? '')
+  )
+    return null;
+  const duration = /^(?:P(?:(\d+)D)?T)(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?$/.exec(
+    video.contentDetails?.duration ?? '',
+  );
+  const durationSeconds = duration
+    ? Number(duration[1] ?? 0) * 86400 +
+      Number(duration[2] ?? 0) * 3600 +
+      Number(duration[3] ?? 0) * 60 +
+      Number(duration[4] ?? 0)
+    : undefined;
+  const description = snippet.description ?? '';
+  return {
+    externalPostId: video.id,
+    alternateIds: [],
+    knownUrls: [],
+    caption: description,
+    options: {
+      kind: 'youtube',
+      title: snippet.title,
+      description,
+      privacyStatus: privacy as YoutubeOptions['privacyStatus'],
+      remote: { privacyStatus: privacy as YoutubeOptions['privacyStatus'] },
+      madeForKids: video.status?.selfDeclaredMadeForKids ?? video.status?.madeForKids ?? false,
+      ...(snippet.categoryId ? { categoryId: snippet.categoryId } : {}),
+      ...(snippet.tags ? { tags: snippet.tags } : {}),
+      ...(durationSeconds !== undefined ? { durationSeconds } : {}),
+      shortsHint: /(^|\s)#shorts\b/i.test(`${snippet.title} ${description}`),
+    },
+    publishedAt,
+    permalink: `https://www.youtube.com/watch?v=${encodeURIComponent(video.id)}`,
+    mediaKind: 'video',
+    mediaCount: 1,
+    thumbnailUrl:
+      ['maxres', 'standard', 'high', 'medium', 'default']
+        .map((size) => snippet.thumbnails?.[size]?.url)
+        .find(Boolean) ?? null,
+  };
 }

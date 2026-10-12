@@ -1,3 +1,12 @@
+import {
+  emptyYouTube,
+  youtubeFileError,
+  youtubeVisibilitySummary,
+  utf8Bytes,
+  youtubeTagLength,
+  YOUTUBE_CATEGORIES,
+  type YouTubeForm,
+} from '../lib/youtube';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type {
@@ -319,12 +328,14 @@ function Preview({
   caption,
   media,
   article,
+  youtube,
   when,
 }: {
   accounts: ConnectionView[];
   caption: string;
   media: MediaItem[];
   article: ArticleForm;
+  youtube: YouTubeForm;
   when: string;
 }) {
   const [pickedId, setPickedId] = useState('');
@@ -439,6 +450,21 @@ function Preview({
             body={caption}
             image={media.find((m) => m.ref.mediaId === featuredId)}
           />
+        ) : current?.provider === 'youtube' ? (
+          <article>
+            {picture}
+            <div className="space-y-1 p-3">
+              <h3 className="break-words text-lg font-semibold text-ink">
+                {youtube.title || 'Video title'}
+              </h3>
+              <p className="text-caption text-muted">
+                {current.displayName} · {youtube.privacyStatus}
+              </p>
+              <p className="line-clamp-3 whitespace-pre-wrap break-words text-sm text-body-ink">
+                {youtube.description ?? caption}
+              </p>
+            </div>
+          </article>
         ) : asMessage ? (
           // A message in a channel, not a post on a profile: one bubble, text then attachment.
           <div className="bg-surface-soft p-3">
@@ -503,6 +529,7 @@ export function Composer({
   });
 
   const [caption, setCaption] = useState('');
+  const [youtube, setYoutube] = useState<YouTubeForm>(emptyYouTube);
   const [article, setArticle] = useState<ArticleForm>(emptyArticle);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [media, setMedia] = useState<MediaItem[]>([]);
@@ -540,6 +567,7 @@ export function Composer({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const [pendingOutcomeIds, setPendingOutcomeIds] = useState<string[]>([]);
   const outcomeHeading = useRef<HTMLHeadingElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const captionField = useRef<HTMLTextAreaElement>(null);
@@ -629,6 +657,7 @@ export function Composer({
   // before asking about the rest. A failed dry run leaves submission to the server's checks.
   const mediaKey = media.map((m) => m.ref.mediaId).join(',');
   const articleKey = JSON.stringify(article);
+  const youtubeKey = JSON.stringify(youtube);
   useEffect(() => {
     const checked = selectedConnections(available, connectionIds);
     setIssues([]);
@@ -636,7 +665,7 @@ export function Composer({
     let stale = false;
     const timer = window.setTimeout(() => {
       void (async () => {
-        const draft = { caption, media: media.map((m) => m.ref), article };
+        const draft = { caption, media: media.map((m) => m.ref), article, youtube };
         try {
           let found = (await api.validatePost(buildValidationInput(draft, checked))).issues;
           const rejected = new Set(contractRejected(found));
@@ -657,11 +686,48 @@ export function Composer({
     };
     // `mediaKey` stands for `media`, and `articleKey` for `article`: the values matter, not the
     // objects' identity.
-  }, [caption, mediaKey, articleKey, available, connectionIds]);
+  }, [caption, mediaKey, articleKey, youtubeKey, available, connectionIds]);
 
+  const hasOutcome = outcome !== null;
   useEffect(() => {
-    if (outcome) outcomeHeading.current?.focus();
-  }, [outcome]);
+    if (hasOutcome) outcomeHeading.current?.focus();
+  }, [hasOutcome]);
+
+  // Publish-now is queued. Read our API until the worker has returned YouTube's real status.
+  useEffect(() => {
+    if (!pendingOutcomeIds.length) return;
+    let stale = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let attempts = 0;
+    const refresh = async () => {
+      try {
+        const posts = await Promise.all(
+          pendingOutcomeIds.map(async (id) => (await api.getPost(id)).post),
+        );
+        if (stale) return;
+        setOutcome((previous) =>
+          previous
+            ? {
+                ...previous,
+                statuses: [postStatusSummary(posts), ...youtubeVisibilitySummary(posts)].join(
+                  ' · ',
+                ),
+                failed: previous.failed || posts.some((p) => p.status === 'failed'),
+              }
+            : previous,
+        );
+        if (posts.every((p) => ['published', 'failed', 'cancelled'].includes(p.status))) return;
+      } catch {
+        // A refresh failure must not turn an accepted upload into a second submission.
+      }
+      if (!stale && ++attempts < 40) timer = setTimeout(() => void refresh(), 3000);
+    };
+    timer = setTimeout(() => void refresh(), 3000);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [pendingOutcomeIds]);
 
   const form: ComposerForm = {
     caption,
@@ -671,11 +737,15 @@ export function Composer({
     at,
     queueId,
     article,
+    youtube,
   };
   const errors = validateForm(form, queues, new Date(), conns);
   const targets = selectedConnections(conns, connectionIds);
   const role = captionRole([{ provider: contentMode === 'article' ? 'wordpress' : 'facebook' }]);
   const writingArticle = contentMode === 'article';
+  const writingYouTube = !writingArticle && targets.some((c) => c.provider === 'youtube');
+  const setYouTubeField = <K extends keyof YouTubeForm>(field: K, value: YouTubeForm[K]) =>
+    setYoutube((prev) => ({ ...prev, [field]: value }));
   const counts = platformCounts(targets, caption, media.length);
   const setArticleField = <K extends keyof ArticleForm>(field: K, value: ArticleForm[K]) =>
     setArticle((prev) => ({ ...prev, [field]: value }));
@@ -683,7 +753,11 @@ export function Composer({
     available,
     issues,
     connectionIds,
-    isDirty({ ...form, article: writingArticle ? article : undefined }),
+    isDirty({
+      ...form,
+      article: writingArticle ? article : undefined,
+      youtube: writingYouTube ? youtube : undefined,
+    }),
     attempted,
   );
   const flagged = targets.filter((c) => warnings.has(c.id)).length;
@@ -708,6 +782,8 @@ export function Composer({
     setUploading((n) => n + accepted.length);
     for (const f of accepted) {
       try {
+        const youtubeError = writingYouTube ? youtubeFileError(f) : null;
+        if (youtubeError) throw new Error(youtubeError);
         const m = await api.uploadMedia(f);
         setMedia((prev) => [
           ...prev,
@@ -736,9 +812,11 @@ export function Composer({
       const posts: PostView[] = res.posts;
       setOutcome({
         message: outcomeMessage(mode, targets.length, { at, queueName }),
-        statuses: postStatusSummary(posts),
+        statuses: [postStatusSummary(posts), ...youtubeVisibilitySummary(posts)].join(' · '),
         failed: posts.some((p) => p.status === 'failed'),
       });
+      if (mode === 'now' && posts.some((p) => p.provider === 'youtube' && p.status !== 'published'))
+        setPendingOutcomeIds(posts.map((p) => p.id));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'create failed');
     } finally {
@@ -800,6 +878,8 @@ export function Composer({
 
   const reset = () => {
     setCaption('');
+    setYoutube(emptyYouTube());
+    setPendingOutcomeIds([]);
     setArticle(emptyArticle());
     setMedia([]);
     setConnectionIds(available[0] ? [available[0].id] : []);
@@ -1073,6 +1153,145 @@ export function Composer({
             </Section>
           )}
 
+          {writingYouTube && (
+            <Section title="YouTube" hint="One video per channel">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1 sm:col-span-2">
+                  <Label htmlFor="youtube-title">Title (required)</Label>
+                  <Input
+                    id="youtube-title"
+                    value={youtube.title}
+                    onChange={(e) => setYouTubeField('title', e.target.value)}
+                    aria-describedby="youtube-title-count"
+                  />
+                  <p
+                    id="youtube-title-count"
+                    className={cn(
+                      'text-caption tnum',
+                      youtube.title.length > 100 ? 'text-error' : 'text-muted',
+                    )}
+                  >
+                    {youtube.title.length} / 100 characters
+                  </p>
+                </div>
+                <div className="space-y-1 sm:col-span-2">
+                  <Label htmlFor="youtube-description">Description</Label>
+                  <Textarea
+                    id="youtube-description"
+                    rows={3}
+                    value={youtube.description ?? caption}
+                    onChange={(e) => setYouTubeField('description', e.target.value)}
+                    aria-describedby="youtube-description-count"
+                  />
+                  <p
+                    id="youtube-description-count"
+                    className={cn(
+                      'text-caption tnum',
+                      utf8Bytes(youtube.description ?? caption) > 5000
+                        ? 'text-error'
+                        : 'text-muted',
+                    )}
+                  >
+                    {utf8Bytes(youtube.description ?? caption)} / 5000 UTF-8 bytes · follows caption
+                    until edited
+                  </p>
+                  {youtube.description !== undefined && (
+                    <button
+                      type="button"
+                      className="text-caption underline"
+                      onClick={() => setYouTubeField('description', undefined)}
+                    >
+                      Use caption
+                    </button>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="youtube-visibility">Visibility</Label>
+                  <Select
+                    id="youtube-visibility"
+                    value={youtube.privacyStatus}
+                    onChange={(e) =>
+                      setYouTubeField(
+                        'privacyStatus',
+                        e.target.value as YouTubeForm['privacyStatus'],
+                      )
+                    }
+                  >
+                    {['public', 'unlisted', 'private'].map((value) => (
+                      <option key={value} value={value}>
+                        {value[0]?.toUpperCase()}
+                        {value.slice(1)}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="youtube-category">Category</Label>
+                  <Select
+                    id="youtube-category"
+                    value={youtube.categoryId}
+                    onChange={(e) => setYouTubeField('categoryId', e.target.value)}
+                  >
+                    {YOUTUBE_CATEGORIES.map(([id, name]) => (
+                      <option key={id} value={id}>
+                        {name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="space-y-1 sm:col-span-2">
+                  <Label htmlFor="youtube-tags">Tags (comma separated)</Label>
+                  <Input
+                    id="youtube-tags"
+                    value={youtube.tags}
+                    onChange={(e) => setYouTubeField('tags', e.target.value)}
+                    aria-describedby="youtube-tags-count"
+                  />
+                  <p
+                    id="youtube-tags-count"
+                    className={cn(
+                      'text-caption',
+                      youtubeTagLength(youtube.tags) > 500 ? 'text-error' : 'text-muted',
+                    )}
+                  >
+                    {youtubeTagLength(youtube.tags)} / 500 characters, including commas and quotes
+                    around tags with spaces.
+                  </p>
+                </div>
+                <div className="space-y-1 sm:col-span-2">
+                  <Label htmlFor="youtube-kids">Made for kids (required)</Label>
+                  <Select
+                    id="youtube-kids"
+                    value={youtube.madeForKids}
+                    onChange={(e) =>
+                      setYouTubeField('madeForKids', e.target.value as YouTubeForm['madeForKids'])
+                    }
+                  >
+                    <option value="">Choose audience</option>
+                    <option value="yes">Yes, made for kids</option>
+                    <option value="no">No, not made for kids</option>
+                  </Select>
+                  <p className="text-caption text-muted">
+                    YouTube requires you to identify content directed at children; this affects
+                    comments and other features.
+                  </p>
+                  {attempted && errors.youtube && (
+                    <FieldError id="youtube-kids-error">{errors.youtube}</FieldError>
+                  )}
+                </div>
+              </div>
+              <p className="mt-3 text-caption text-muted">
+                Before the API audit, plan for Private uploads; YouTube’s returned visibility is
+                shown after publishing. Google’s current upload documentation conflicts with older
+                private-lock guidance, so confirm visibility on your first upload.
+              </p>
+              <p className="text-caption text-muted">
+                Attach exactly one video (up to 1200 MiB). Square or vertical videos up to three
+                minutes may be classified as Shorts by YouTube.
+              </p>
+            </Section>
+          )}
+
           <Section
             title={role.label}
             hint={
@@ -1187,7 +1406,9 @@ export function Composer({
                 }}
               />
             </div>
-            {mediaError && <FieldError id={mediaErrorId}>{mediaError}</FieldError>}
+            {(mediaError || (attempted && errors.media)) && (
+              <FieldError id={mediaErrorId}>{mediaError || errors.media}</FieldError>
+            )}
           </Section>
 
           <Section title="When to post" fieldset>
@@ -1271,6 +1492,7 @@ export function Composer({
               caption={caption}
               media={media}
               article={article}
+              youtube={youtube}
               when={when}
             />
           </div>
@@ -1340,6 +1562,8 @@ export function Composer({
                       : (errors.accounts ??
                         errors.caption ??
                         errors.article?.title ??
+                        errors.youtube ??
+                        errors.media ??
                         errors.at ??
                         errors.queue ??
                         warnings.values().next().value?.reason ??

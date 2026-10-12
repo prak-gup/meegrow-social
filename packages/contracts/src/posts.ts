@@ -82,16 +82,26 @@ const youtubeOptions = z.object({
    * channel. Better to reject at create time.
    */
   title: z.string().min(1).max(100),
-  description: z.string().max(5000).optional(),
+  description: z
+    .string()
+    .refine(
+      (text) => new TextEncoder().encode(text).length <= 5000,
+      'YouTube description must be at most 5000 UTF-8 bytes',
+    )
+    .optional(),
   /**
-   * NB: until the YouTube compliance audit clears, `videos.insert` from this project locks every
-   * upload to private regardless of what is requested here. The provider reads the status back
-   * after upload rather than trusting this value.
+   * Requested visibility. Current upload docs differ from older private-lock audit guidance;
+   * the provider reads YouTube’s actual visibility back into remote.privacyStatus.
    */
   privacyStatus: z.enum(['public', 'unlisted', 'private']).default('public'),
   categoryId: z.string().optional(),
   tags: z.array(z.string()).optional(),
   madeForKids: z.boolean().default(false),
+  remote: z
+    .object({ privacyStatus: z.enum(['public', 'unlisted', 'private']).optional() })
+    .optional(),
+  durationSeconds: z.number().nonnegative().optional(),
+  shortsHint: z.boolean().optional(),
 });
 
 /** A category or tag: its WordPress term id, or its name as the site shows it. */

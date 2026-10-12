@@ -170,6 +170,16 @@ export function validateMedia(
   meta: MediaMeta,
   provider: ProviderIdentifier,
 ): MediaValidationResult {
+  if (provider === 'youtube' && kind === 'video') {
+    // Documentation-built limits: videos.insert accepts video/*; no aspect or codec restriction.
+    if (meta.bytes != null && (meta.bytes <= 0 || meta.bytes > 256 * GB)) {
+      return fail('YouTube needs a non-empty video of at most 256 GiB');
+    }
+    if (meta.durationSeconds != null && meta.durationSeconds > 12 * 60 * 60) {
+      return fail('YouTube videos must be at most 12 hours');
+    }
+    return ok;
+  }
   const specs = PLATFORM_MEDIA_SPECS[provider];
   if (!specs) return ok;
   if (kind === 'image') return specs.image ? validateImage(meta, specs.image, provider) : ok;

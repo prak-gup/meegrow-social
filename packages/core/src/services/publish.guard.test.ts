@@ -2,7 +2,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { schema } from '@meegrow-social/db';
 import type * as DbModule from '@meegrow-social/db';
 import { registerProvider } from '../providers/registry.js';
-import type { SocialProvider } from '../providers/types.js';
+import type { PostResult, SocialProvider } from '../providers/types.js';
 import { EARLY_PUBLISH_TOLERANCE_MS, publishPost, publishRefusal } from './publish.js';
 
 /**
@@ -76,7 +76,10 @@ vi.mock('@meegrow-social/db', async (importOriginal) => ({
   },
 }));
 
-const post = vi.fn(async () => ({ externalPostId: 'x-1', releaseUrl: 'https://x.test/p/1' }));
+const post = vi.fn(async (): Promise<PostResult> => ({
+  externalPostId: 'x-1',
+  releaseUrl: 'https://x.test/p/1',
+}));
 
 beforeAll(() => {
   registerProvider({
@@ -172,6 +175,20 @@ describe('an imported post can never be published', () => {
 });
 
 describe('publishPost status guard', () => {
+  it('persists provider read-back visibility rather than losing it after publish', async () => {
+    // Documentation-built YouTube status fixture; no live Google request.
+    const options = {
+      kind: 'youtube' as const,
+      title: 'Fixture video',
+      privacyStatus: 'public' as const,
+      remote: { privacyStatus: 'private' as const },
+    };
+    post.mockResolvedValueOnce({ externalPostId: 'fixture-video', options });
+    await publishPost('ws-1', 'post-1', NOW);
+    expect(
+      committedTo(schema.posts).find((w) => w.values.status === 'published')?.values.options,
+    ).toEqual(options);
+  });
   it('publishes a scheduled post, reading it under a row lock', async () => {
     expect(await publishPost('ws-1', 'post-1', NOW)).toMatchObject({ status: 'published' });
     expect(post).toHaveBeenCalledTimes(1);

@@ -1,3 +1,4 @@
+import { emptyYouTube, youtubeOptions, youtubeDirty, type YouTubeForm } from './youtube';
 import type {
   ConnectionView,
   CreatePostInput,
@@ -91,6 +92,7 @@ export interface ComposerForm {
   queueId: string;
   /** The article fields, used only when a WordPress account is selected (lib/wordpress). */
   article?: ArticleForm;
+  youtube?: YouTubeForm;
 }
 
 export interface FormErrors {
@@ -100,6 +102,8 @@ export interface FormErrors {
   queue?: string;
   /** Present only when an article account is selected and a field of the article is wrong. */
   article?: ArticleErrors;
+  youtube?: string;
+  media?: string;
 }
 
 /**
@@ -215,14 +219,21 @@ type Variant = CreatePostInput['variants'][number];
  */
 function variantFor(
   c: Pick<ConnectionView, 'id' | 'provider'>,
-  form: Pick<ComposerForm, 'caption' | 'media' | 'article'>,
+  form: Pick<ComposerForm, 'caption' | 'media' | 'article' | 'youtube'>,
   article: ArticleForm,
 ): Variant {
   const long = form.caption.length > CAPTION_MAX;
   if (!isArticleProvider(c.provider)) {
     // With a body too long to share, each variant states its own text (and a social one is then
     // refused for it, per account, rather than the whole request for its group caption).
-    return { connectionId: c.id, provider: c.provider, ...(long ? { caption: form.caption } : {}) };
+    return {
+      connectionId: c.id,
+      provider: c.provider,
+      ...(c.provider === 'youtube'
+        ? { options: youtubeOptions(form.youtube ?? emptyYouTube()) }
+        : {}),
+      ...(long ? { caption: form.caption } : {}),
+    };
   }
   const featured = featuredImage(form.media);
   const sameMedia =
@@ -302,6 +313,13 @@ export function validateForm(
     const article = validateArticle(form.article ?? emptyArticle());
     if (Object.keys(article).length > 0) errors.article = article;
   }
+  if (targets.some((c) => c.provider === 'youtube') && !form.youtube?.madeForKids)
+    errors.youtube = 'Choose whether the video is made for kids.';
+  if (
+    targets.some((c) => c.provider === 'youtube') &&
+    form.media.filter((m) => m.kind === 'video').length !== 1
+  )
+    errors.media = 'YouTube needs exactly one video file.';
   if (form.mode === 'at') {
     const at = validateScheduleAt(form.at, now);
     if (at) errors.at = at;
@@ -512,7 +530,7 @@ export function setGroupSelected(
  * Always a draft: content checks must not depend on a time or a queue.
  */
 export function buildValidationInput(
-  form: Pick<ComposerForm, 'caption' | 'media' | 'article'>,
+  form: Pick<ComposerForm, 'caption' | 'media' | 'article' | 'youtube'>,
   connections: readonly ConnectionView[],
 ): CreatePostInput {
   // A missing title is the form's own error, shown on the field once a WordPress account is
@@ -574,8 +592,15 @@ export function contractRejected(issues: readonly PostValidationIssue[]): string
 }
 
 /** Has the operator put anything in that closing would throw away? */
-export function isDirty(form: Pick<ComposerForm, 'caption' | 'media' | 'article'>): boolean {
-  return form.caption.trim() !== '' || form.media.length > 0 || articleDirty(form.article);
+export function isDirty(
+  form: Pick<ComposerForm, 'caption' | 'media' | 'article' | 'youtube'>,
+): boolean {
+  return (
+    form.caption.trim() !== '' ||
+    form.media.length > 0 ||
+    articleDirty(form.article) ||
+    youtubeDirty(form.youtube)
+  );
 }
 
 /**

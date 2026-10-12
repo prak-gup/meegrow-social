@@ -32,6 +32,7 @@ function Rate({ rate, basis }: { rate: number | null; basis: string | null }) {
   return (
     <span className="inline-flex items-baseline gap-1" title={basis ?? undefined}>
       <span className="font-semibold">{formatRate(rate)}</span>
+      {basis === '÷ views' && <span className="text-micro text-muted">÷ views</span>}
     </span>
   );
 }

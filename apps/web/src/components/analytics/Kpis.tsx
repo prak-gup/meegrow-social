@@ -16,14 +16,15 @@ export function Delta({ value }: { value: number | null }) {
 }
 export function Kpis({ report }: { report: Report }) {
   const { summary: s } = report;
+  const youtubeOnly = report.mapping.length === 1 && report.mapping[0]?.provider === 'youtube';
   const cells = [
     {
       key: 'rate',
-      label: 'Engagement rate',
+      label: youtubeOnly ? 'Engagement rate · views' : 'Engagement rate',
       value: formatRate(s.engagementRate.rate),
       delta: s.engagementRateDeltaPct,
       color: '#7c3aed',
-      help: `Reported likes + comments + shares + saves ÷ reach × 100; views are the fallback. Basis: ${s.engagementRate.basis ?? 'none'}. Counted ${s.engagementRate.postsCounted}/${s.engagementRate.posts} posts. Relative change vs prior publication period.`,
+      help: `Reported likes + comments + shares + saves ÷ ${youtubeOnly ? 'views × 100. YouTube reports no reach.' : 'reach × 100; views are the fallback.'} Basis: ${s.engagementRate.basis ?? 'none'}. Counted ${s.engagementRate.postsCounted}/${s.engagementRate.posts} posts. Relative change vs prior publication period.`,
     },
     {
       key: 'reach',
@@ -43,7 +44,7 @@ export function Kpis({ report }: { report: Report }) {
     },
     {
       key: 'followers',
-      label: 'Followers',
+      label: youtubeOnly ? 'Subscribers' : 'Followers',
       value: compact(s.followers.value),
       delta: s.followers.deltaPct,
       color: '#db2777',
@@ -57,11 +58,11 @@ export function Kpis({ report }: { report: Report }) {
       color: '#475569',
       help: 'Posts published in the selected window compared with the previous equally long window. Undated posts are excluded.',
     },
-  ];
+  ].filter((cell) => !youtubeOnly || cell.key !== 'reach');
   return (
     <section
       aria-label="Reported totals"
-      className="grid grid-cols-1 gap-3 min-[390px]:grid-cols-2 xl:grid-cols-5"
+      className={`grid grid-cols-1 gap-3 min-[390px]:grid-cols-2 ${youtubeOnly ? 'xl:grid-cols-4' : 'xl:grid-cols-5'}`}
     >
       {cells.map((c) => {
         const rows =

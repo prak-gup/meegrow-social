@@ -166,6 +166,7 @@ export function articleDirty(article: ArticleForm | undefined): boolean {
  */
 export function postHeadline(post: Pick<PostView, 'caption' | 'options'> | undefined): string {
   if (!post) return '';
+  if (post.options?.kind === 'youtube') return post.options.title;
   return post.options?.kind === 'wordpress'
     ? post.options.remote?.title || post.options.title
     : post.caption;
