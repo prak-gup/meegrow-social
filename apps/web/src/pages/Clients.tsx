@@ -1,3 +1,6 @@
+import { clientSortOptions, sortClients, type ClientSort } from '../lib/listSort';
+import { SortSelect } from '../components/ui/SortSelect';
+import { useUrlSort } from '../lib/useUrlSort';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { OverviewView, ClientOverview, ProviderView } from '@meegrow-social/contracts';
@@ -139,6 +142,7 @@ function HealthChip({ c, className }: { c: ClientOverview; className?: string })
 export function Clients() {
   const { me, switchWorkspace } = useAuth();
   const navigate = useNavigate();
+  const [sort, setSort] = useUrlSort('sort', clientSortOptions, 'name');
   const [ov, setOv] = useState<OverviewView | null>(null);
   const [peopleClient, setPeopleClient] = useState<ClientOverview | null>(null);
   const canCreate = me?.user.memberships.some((m) => m.role === 'owner');
@@ -180,7 +184,7 @@ export function Clients() {
   const [q, setQ] = useState('');
   const [health, setHealth] = useState<ChipStatus | ''>('');
   const clients = ov?.clients ?? [];
-  const shown = filterClients(clients, { q, status: health });
+  const shown = sortClients(filterClients(clients, { q, status: health }), sort);
   const filtering = q.trim() !== '' || health !== '';
 
   return (
@@ -221,10 +225,17 @@ export function Clients() {
             />
           }
           actions={
-            <span aria-live="polite" className="tnum text-caption text-muted">
-              {filtering ? `${shown.length} of ${clients.length}` : clients.length}{' '}
-              {clients.length === 1 ? 'client' : 'clients'}
-            </span>
+            <>
+              <SortSelect
+                value={sort}
+                onChange={(v) => setSort(v as ClientSort)}
+                options={[...clientSortOptions]}
+              />
+              <span aria-live="polite" className="tnum text-caption text-muted">
+                {filtering ? `${shown.length} of ${clients.length}` : clients.length}{' '}
+                {clients.length === 1 ? 'client' : 'clients'}
+              </span>
+            </>
           }
         />
       )}
@@ -236,6 +247,8 @@ export function Clients() {
           caption="Clients"
           dense
           rows={shown}
+          sort={{ key: sort, dir: sort === 'name' ? 'asc' : 'desc' }}
+          onSort={(key) => setSort(key as ClientSort)}
           rowKey={(c) => c.workspaceId}
           empty={
             clients.length === 0
@@ -276,6 +289,7 @@ export function Clients() {
             {
               key: 'client',
               header: 'Client',
+              sortKey: 'name',
               cell: (c) => (
                 <span className="flex items-center gap-2.5 font-medium text-ink">
                   <span
@@ -299,6 +313,7 @@ export function Clients() {
             {
               key: 'accounts',
               header: 'Accounts',
+              sortKey: 'accounts',
               align: 'right',
               className: 'hidden sm:table-cell',
               cell: (c) => c.connectionCount,
@@ -306,9 +321,18 @@ export function Clients() {
             {
               key: 'published',
               header: 'Published this week',
+              sortKey: 'published',
               align: 'right',
               className: 'hidden whitespace-nowrap md:table-cell',
               cell: (c) => c.publishedThisWeek,
+            },
+            {
+              key: 'followers',
+              header: 'Followers',
+              sortKey: 'followers',
+              align: 'right',
+              className: 'hidden lg:table-cell',
+              cell: (c) => c.followers?.toLocaleString() ?? '—',
             },
             {
               key: 'next',

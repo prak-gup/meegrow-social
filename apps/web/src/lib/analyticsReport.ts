@@ -291,8 +291,11 @@ const sortValue = (post: ReportPost, key: PostSortKey): number | null => {
 
 /**
  * Posts ordered by one column. A post with no value for it goes last in BOTH directions: "—" is
- * not the smallest number, it is no number. Ties keep the incoming (most-engagements-first) order.
+ * not the smallest number, it is no number. Ties use newest publication date, then id.
  */
+const newestPostTie = (a: ReportPost, b: ReportPost) =>
+  new Date(b.publishAt).getTime() - new Date(a.publishAt).getTime() || a.id.localeCompare(b.id);
+
 export function sortPosts(
   posts: readonly ReportPost[],
   key: PostSortKey,
@@ -302,9 +305,11 @@ export function sortPosts(
     .map((post, index) => ({ post, index, value: sortValue(post, key) }))
     .sort((a, b) => {
       if (a.value === null || b.value === null) {
-        return a.value === b.value ? a.index - b.index : a.value === null ? 1 : -1;
+        return a.value === b.value ? newestPostTie(a.post, b.post) : a.value === null ? 1 : -1;
       }
-      return (dir === 'asc' ? a.value - b.value : b.value - a.value) || a.index - b.index;
+      return (
+        (dir === 'asc' ? a.value - b.value : b.value - a.value) || newestPostTie(a.post, b.post)
+      );
     })
     .map((entry) => entry.post);
 }
@@ -361,4 +366,49 @@ export function postsCsv(
     p.basis ?? '',
   ]);
   return [header, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n') + '\r\n';
+}
+
+/** Sorting full in-memory aggregate tables; missing values stay last. */
+export function sortReportRows<T>(
+  rows: readonly T[],
+  value: (row: T) => number | string | null,
+  dir: 'asc' | 'desc',
+  identity: (row: T) => string,
+): T[] {
+  return [...rows].sort((a, b) => {
+    const av = value(a),
+      bv = value(b);
+    const primary =
+      av === null || bv === null
+        ? av === bv
+          ? 0
+          : av === null
+            ? 1
+            : -1
+        : typeof av === 'number' && typeof bv === 'number'
+          ? av - bv
+          : String(av).localeCompare(String(bv));
+    return (
+      (av === null || bv === null ? primary : dir === 'asc' ? primary : -primary) ||
+      identity(a).localeCompare(identity(b))
+    );
+  });
+}
+
+/** Unknown sort columns invalidate the direction too, so stale links use the full default. */
+export function readReportTableSort(
+  params: URLSearchParams,
+  prefix: string,
+  options: readonly { value: string }[],
+  defaultKey: string,
+  defaultDir: 'asc' | 'desc' = 'desc',
+): { key: string; dir: 'asc' | 'desc' } {
+  const requested = params.get(`${prefix}Sort`);
+  if (requested !== null && !options.some((option) => option.value === requested))
+    return { key: defaultKey, dir: defaultDir };
+  const direction = params.get(`${prefix}Dir`);
+  return {
+    key: requested ?? defaultKey,
+    dir: direction === 'asc' || direction === 'desc' ? direction : defaultDir,
+  };
 }

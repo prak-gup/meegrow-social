@@ -550,7 +550,9 @@ describe('connection health', () => {
     const res = await app.inject({ method: 'GET', url: '/v1/connections/health', headers: auth });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ connections: [report] });
-    expect(core.listConnectionHealth).toHaveBeenCalledWith(WS);
+    expect(core.listConnectionHealth).toHaveBeenCalledWith(WS, undefined, {
+      googleOAuthTesting: false,
+    });
     expect(core.getConnectionHealth).not.toHaveBeenCalled();
   });
 
@@ -560,7 +562,7 @@ describe('connection health', () => {
     const found = await app.inject({ method: 'GET', url, headers: auth });
     expect(found.statusCode).toBe(200);
     expect(found.json()).toEqual({ health: report });
-    expect(core.getConnectionHealth).toHaveBeenCalledWith(WS, CONN);
+    expect(core.getConnectionHealth).toHaveBeenCalledWith(WS, CONN, { googleOAuthTesting: false });
 
     vi.mocked(core.getConnectionHealth).mockResolvedValueOnce(null);
     const missing = await app.inject({ method: 'GET', url, headers: auth });

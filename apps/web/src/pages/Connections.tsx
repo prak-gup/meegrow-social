@@ -1,3 +1,6 @@
+import { connectionSortOptions, sortConnections, type ConnectionSort } from '../lib/listSort';
+import { SortSelect } from '../components/ui/SortSelect';
+import { useUrlSort } from '../lib/useUrlSort';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   CallbackResult,
@@ -93,6 +96,7 @@ function NoAccounts({
 }
 
 export function Connections() {
+  const [sort, setSort] = useUrlSort('sort', connectionSortOptions, 'recent');
   const { me } = useAuth();
   const [conns, setConns] = useState<ConnectionView[]>([]);
   const [providers, setProviders] = useState<ProviderView[]>([]);
@@ -388,11 +392,14 @@ export function Connections() {
   const connectable = providers.filter((p) => providerVisible(p.identifier));
   const visibleConns = conns.filter((c) => providerVisible(c.provider));
 
-  const shown = filterConnections(visibleConns, {
-    q,
-    status: statusFilter,
-    provider: platformFilter,
-  });
+  const shown = sortConnections(
+    filterConnections(visibleConns, {
+      q,
+      status: statusFilter,
+      provider: platformFilter,
+    }),
+    sort,
+  );
   const platformOptions = [
     { value: '', label: 'All platforms' },
     ...Array.from(new Set(visibleConns.map((c) => c.provider))).map((id) => ({
@@ -487,16 +494,25 @@ export function Connections() {
                 </>
               }
               actions={
-                <span aria-live="polite" className="tnum text-caption text-muted">
-                  {filtering ? `${shown.length} of ${visibleConns.length}` : visibleConns.length}{' '}
-                  {visibleConns.length === 1 ? 'account' : 'accounts'}
-                </span>
+                <>
+                  <SortSelect
+                    value={sort}
+                    onChange={(v) => setSort(v as ConnectionSort)}
+                    options={[...connectionSortOptions]}
+                  />
+                  <span aria-live="polite" className="tnum text-caption text-muted">
+                    {filtering ? `${shown.length} of ${visibleConns.length}` : visibleConns.length}{' '}
+                    {visibleConns.length === 1 ? 'account' : 'accounts'}
+                  </span>
+                </>
               }
             />
             <Table
               caption="Connected accounts"
               dense
               rows={shown}
+              sort={{ key: sort, dir: sort === 'recent' ? 'desc' : 'asc' }}
+              onSort={(key) => setSort(key as ConnectionSort)}
               rowKey={(c) => c.id}
               empty={{
                 title: 'No accounts match these filters',
@@ -519,6 +535,7 @@ export function Connections() {
                 {
                   key: 'account',
                   header: 'Account',
+                  sortKey: 'name',
                   cell: (c) => {
                     const m = platformMeta({ identifier: c.provider, displayName: c.provider });
                     return (
@@ -571,6 +588,11 @@ export function Connections() {
                               Import a longer period
                             </button>
                           )}
+                          {c.expiryReason === 'google_testing' && (
+                            <div className="mt-1 whitespace-normal text-caption text-status-warn sm:hidden">
+                              Reconnect by {shortDate(c.expiresAt)} — Google app in testing
+                            </div>
+                          )}
                           {/* the Status column is hidden on a phone, so the chip rides here */}
                           <StatusChip
                             status={connectionChip(c.health, c.expiresInDays)}
@@ -580,6 +602,14 @@ export function Connections() {
                       </div>
                     );
                   },
+                },
+                {
+                  key: 'platform',
+                  header: 'Platform',
+                  sortKey: 'platform',
+                  className: 'hidden md:table-cell',
+                  cell: (c) =>
+                    platformMeta({ identifier: c.provider, displayName: c.provider }).label,
                 },
                 {
                   key: 'client',
@@ -599,6 +629,7 @@ export function Connections() {
                 {
                   key: 'status',
                   header: 'Status',
+                  sortKey: 'status',
                   className: 'hidden sm:table-cell',
                   cell: (c) => <StatusChip status={connectionChip(c.health, c.expiresInDays)} />,
                 },
@@ -619,7 +650,9 @@ export function Connections() {
                               : 'text-muted')
                         }
                       >
-                        {expiryLabel(c.expiresInDays)}
+                        {c.expiryReason === 'google_testing'
+                          ? `Reconnect by ${shortDate(c.expiresAt)} — Google app in testing`
+                          : expiryLabel(c.expiresInDays)}
                       </span>
                     );
                   },
@@ -627,6 +660,7 @@ export function Connections() {
                 {
                   key: 'connected',
                   header: 'Connected',
+                  sortKey: 'recent',
                   className: 'hidden whitespace-nowrap md:table-cell',
                   cell: (c) => <span className="tnum text-muted">{shortDate(c.createdAt)}</span>,
                 },

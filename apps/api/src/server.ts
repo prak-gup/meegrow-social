@@ -1267,17 +1267,23 @@ export async function buildServer(): Promise<FastifyInstance> {
   }));
 
   app.get('/v1/connections', async (req) => ({
-    connections: await listConnections(req.authContext!.workspaceId),
+    connections: await listConnections(req.authContext!.workspaceId, {
+      googleOAuthTesting: process.env.GOOGLE_OAUTH_TESTING === 'true',
+    }),
   }));
 
   // Account health, from stored state only — no live platform call (see `listConnectionHealth`).
   // Static path: registered alongside the parametric routes below, and wins over them.
   app.get('/v1/connections/health', async (req) => ({
-    connections: await listConnectionHealth(req.authContext!.workspaceId),
+    connections: await listConnectionHealth(req.authContext!.workspaceId, undefined, {
+      googleOAuthTesting: process.env.GOOGLE_OAUTH_TESTING === 'true',
+    }),
   }));
 
   app.get<{ Params: { id: string } }>('/v1/connections/:id/health', async (req, reply) => {
-    const health = await getConnectionHealth(req.authContext!.workspaceId, req.params.id);
+    const health = await getConnectionHealth(req.authContext!.workspaceId, req.params.id, {
+      googleOAuthTesting: process.env.GOOGLE_OAUTH_TESTING === 'true',
+    });
     if (!health) return reply.code(404).send({ error: 'not found' });
     return { health };
   });
@@ -1313,7 +1319,9 @@ export async function buildServer(): Promise<FastifyInstance> {
 
   // Follower trend for one connection (#9), newest first.
   app.get<{ Params: { id: string } }>('/v1/connections/:id/followers', async (req, reply) => {
-    const conns = await listConnections(req.authContext!.workspaceId);
+    const conns = await listConnections(req.authContext!.workspaceId, {
+      googleOAuthTesting: process.env.GOOGLE_OAUTH_TESTING === 'true',
+    });
     if (!conns.some((c) => c.id === req.params.id)) {
       return reply.code(404).send({ error: 'not found' });
     }

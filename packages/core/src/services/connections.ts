@@ -1,3 +1,4 @@
+import { testingConnectionState, type ConnectionExpiryOptions } from './google-oauth-testing.js';
 import { AccessDeniedError } from './access.js';
 import { db, schema, withWorkspace } from '@meegrow-social/db';
 import { and, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
@@ -786,7 +787,10 @@ export async function finishInviteConnect(
   }
 }
 
-export async function listConnections(workspaceId: string): Promise<ConnectionView[]> {
+export async function listConnections(
+  workspaceId: string,
+  options: ConnectionExpiryOptions = {},
+): Promise<ConnectionView[]> {
   return withWorkspace(workspaceId, async (tx) => {
     const rows = await tx.select().from(schema.connections);
     return rows.map((r) => ({
@@ -799,6 +803,7 @@ export async function listConnections(workspaceId: string): Promise<ConnectionVi
       expiresInDays: expiresInDaysFrom(r.expiresAt),
       health: computeHealth(r.tokenModel as TokenModel, r.needsReconnect, r.expiresAt),
       createdAt: r.createdAt,
+      ...testingConnectionState({ ...r, tokenModel: r.tokenModel as TokenModel }, options),
       ...connectionMethod(r.meta),
       import: connectionImportView(r),
     }));
@@ -820,6 +825,7 @@ export function connectionMethod(meta: unknown): Pick<ConnectionView, 'method'> 
 export async function listConnectionHealth(
   workspaceId: string,
   connectionIds?: readonly string[],
+  options: ConnectionExpiryOptions = {},
 ): Promise<ConnectionHealthView[]> {
   const checkedAt = new Date();
   return withWorkspace(workspaceId, async (tx) => {
@@ -853,6 +859,10 @@ export async function listConnectionHealth(
 
     return rows.map((r) => {
       const lastFailed = failedByConnection.get(r.id);
+      const testing = testingConnectionState(
+        { ...r, tokenModel: r.tokenModel as TokenModel },
+        options,
+      );
       return {
         connectionId: r.id,
         provider: r.provider as ConnectionHealthView['provider'],
@@ -867,6 +877,17 @@ export async function listConnectionHealth(
         tokenModel: r.tokenModel as TokenModel,
         expiresAt: r.expiresAt,
         expiresInDays: expiresInDaysFrom(r.expiresAt),
+        ...(testing
+          ? {
+              expiresAt: testing.expiresAt,
+              expiresInDays: testing.expiresInDays,
+              status: testing.health,
+              reason:
+                'Google app in testing: consent is expected to expire seven days after connection.',
+              recommendedAction: `Reconnect by ${testing.expiresAt.toISOString().slice(0, 10)} — Google app in testing`,
+              autoRefresh: false,
+            }
+          : {}),
         lastAnalyticsAt: r.lastAnalyticsAt,
         lastFailedPost: lastFailed
           ? { postId: lastFailed.postId, error: lastFailed.error, publishAt: lastFailed.publishAt }
@@ -882,8 +903,9 @@ export async function listConnectionHealth(
 export async function getConnectionHealth(
   workspaceId: string,
   connectionId: string,
+  options: ConnectionExpiryOptions = {},
 ): Promise<ConnectionHealthView | null> {
-  const [health] = await listConnectionHealth(workspaceId, [connectionId]);
+  const [health] = await listConnectionHealth(workspaceId, [connectionId], options);
   return health ?? null;
 }
 

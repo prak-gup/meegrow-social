@@ -29,6 +29,8 @@ import {
   signedPercent,
   slotLabel,
   sortPosts,
+  sortReportRows,
+  readReportTableSort,
   type ReportFilters,
 } from './analyticsReport';
 
@@ -317,7 +319,7 @@ describe('top posts', () => {
     expect(ids('asc')).toEqual([d.id, a.id, b.id, c.id]);
   });
 
-  it('sorts by rate, engagements and publish time, keeping the given order on a tie', () => {
+  it('sorts by rate, engagements and publish time, breaking ties by newest publication', () => {
     const a = post({ engagementRate: 2, engagements: 9 });
     const b = post({ engagementRate: 7, engagements: 9 });
     const c = post({ engagementRate: null, engagements: 20 });
@@ -328,8 +330,8 @@ describe('top posts', () => {
     ]);
     expect(sortPosts([a, b, c], 'engagements', 'desc').map((p) => p.id)).toEqual([
       c.id,
-      a.id,
       b.id,
+      a.id,
     ]);
     expect(sortPosts([a, b, c], 'publishAt', 'desc').map((p) => p.id)).toEqual([c.id, b.id, a.id]);
     expect(sortPosts([a, b, c], 'publishAt', 'asc').map((p) => p.id)).toEqual([a.id, b.id, c.id]);
@@ -370,5 +372,72 @@ describe('top posts', () => {
       '2026-10-02T03:30:00.000Z,Instagram,blossom,Imported,video,"Two lines, one ""quote""",https://www.instagram.com/p/1/,0,12,,12,3.46,reach',
       '',
     ]);
+  });
+});
+
+describe('aggregate table sorting', () => {
+  it('sorts counts and labels, missing last, deterministic identities', () => {
+    const rows = [
+      { id: 'b', value: 2 },
+      { id: 'a', value: 2 },
+      { id: 'c', value: null },
+    ];
+    for (const dir of ['asc', 'desc'] as const)
+      expect(
+        sortReportRows(
+          rows,
+          (r) => r.value,
+          dir,
+          (r) => r.id,
+        ).map((r) => r.id),
+      ).toEqual(['a', 'b', 'c']);
+    expect(
+      sortReportRows(
+        rows,
+        (r) => r.id,
+        'desc',
+        (r) => r.id,
+      ).map((r) => r.id),
+    ).toEqual(['c', 'b', 'a']);
+  });
+});
+
+describe('report table URL sorting', () => {
+  const options = [{ value: 'publishAt' }, { value: 'views' }];
+  it('uses the complete default for unknown or unavailable columns', () => {
+    expect(
+      readReportTableSort(
+        new URLSearchParams('postsSort=invalid&postsDir=asc'),
+        'posts',
+        options,
+        'publishAt',
+      ),
+    ).toEqual({ key: 'publishAt', dir: 'desc' });
+    expect(
+      readReportTableSort(
+        new URLSearchParams('postsSort=reach&postsDir=asc'),
+        'posts',
+        options,
+        'publishAt',
+      ),
+    ).toEqual({ key: 'publishAt', dir: 'desc' });
+  });
+  it('preserves valid columns and directions and defaults invalid directions', () => {
+    expect(
+      readReportTableSort(
+        new URLSearchParams('postsSort=views&postsDir=asc'),
+        'posts',
+        options,
+        'publishAt',
+      ),
+    ).toEqual({ key: 'views', dir: 'asc' });
+    expect(
+      readReportTableSort(
+        new URLSearchParams('postsSort=views&postsDir=invalid'),
+        'posts',
+        options,
+        'publishAt',
+      ),
+    ).toEqual({ key: 'views', dir: 'desc' });
   });
 });

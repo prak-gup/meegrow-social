@@ -96,25 +96,57 @@ export function filterBlog(posts: readonly PostView[], filters: BlogFilters): Po
       (!filters.site || p.connectionId === filters.site) &&
       (!filters.category || blogTerms(p, 'categories').includes(filters.category)),
   );
-  return rows.sort((a, b) => {
-    let cmp: number;
-    if (filters.sort === 'title') cmp = blogTitle(a).localeCompare(blogTitle(b));
-    else {
-      const date = (p: PostView) => {
-        const value = blogDate(p, filters.sort as 'published' | 'modified');
-        const n = value ? new Date(value).getTime() : NaN;
-        return Number.isFinite(n) ? n : null;
-      };
-      const left = date(a),
-        right = date(b);
-      // Missing dates stay last in either direction.
-      if (left === null || right === null) {
-        if (left !== right) return left === null ? 1 : -1;
-        cmp = 0;
-      } else cmp = left - right;
-    }
-    return (filters.dir === 'asc' ? cmp : -cmp) || a.id.localeCompare(b.id);
-  });
+  return rows.sort((a, b) => compareBlog(a, b, filters));
+}
+
+export const BLOG_SORT_OPTIONS = [
+  { value: 'published:desc', label: 'Newest first' },
+  { value: 'published:asc', label: 'Oldest first' },
+  { value: 'modified:desc', label: 'Recently modified' },
+  { value: 'modified:asc', label: 'Oldest modified' },
+  { value: 'title:asc', label: 'Title A–Z' },
+  { value: 'title:desc', label: 'Title Z–A' },
+];
+
+export function readBlogSort(value: string | null): Pick<BlogFilters, 'sort' | 'dir'> {
+  if (!BLOG_SORT_OPTIONS.some((option) => option.value === value))
+    return { sort: 'published', dir: 'desc' };
+  const [sort, dir] = value!.split(':');
+  return { sort: sort as BlogFilters['sort'], dir: dir as BlogFilters['dir'] };
+}
+
+/** Publication order uses the site's modification time for drafts, never import time. */
+export function blogSortDate(post: PostView, field: 'published' | 'modified'): number | null {
+  const draft = ['draft', 'pending'].includes(blogStatus(post));
+  const value = field === 'published' && draft ? blogDate(post, 'modified') : blogDate(post, field);
+  const fallback =
+    field === 'published' && !draft && post.source !== 'imported'
+      ? post.publishAt
+        ? new Date(post.publishAt).getTime()
+        : null
+      : null;
+  const date = value ? Date.parse(value) : (fallback ?? NaN);
+  return Number.isFinite(date) ? date : null;
+}
+
+export function compareBlog(
+  a: PostView,
+  b: PostView,
+  filters: Pick<BlogFilters, 'sort' | 'dir'>,
+): number {
+  const compareDates = (left: number | null, right: number | null, dir: 'asc' | 'desc') => {
+    if (left === null || right === null) return left === right ? 0 : left === null ? 1 : -1;
+    return dir === 'asc' ? left - right : right - left;
+  };
+  const primary =
+    filters.sort === 'title'
+      ? (filters.dir === 'asc' ? 1 : -1) * blogTitle(a).localeCompare(blogTitle(b))
+      : compareDates(blogSortDate(a, filters.sort), blogSortDate(b, filters.sort), filters.dir);
+  return (
+    primary ||
+    compareDates(blogSortDate(a, 'published'), blogSortDate(b, 'published'), 'desc') ||
+    a.id.localeCompare(b.id)
+  );
 }
 
 /** Reads only our API, serially; no WordPress traffic. Stop before another page after navigation. */

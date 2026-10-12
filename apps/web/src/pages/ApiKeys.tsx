@@ -1,3 +1,6 @@
+import { keySortOptions, sortApiKeys, type KeySort } from '../lib/listSort';
+import { SortSelect } from '../components/ui/SortSelect';
+import { useUrlSort } from '../lib/useUrlSort';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type { ApiKeyView, CreatedApiKeyView } from '@meegrow-social/contracts';
 import { ApiError, api } from '../lib/api';
@@ -47,6 +50,7 @@ function useCopy() {
 }
 
 export function ApiKeys() {
+  const [sort, setSort] = useUrlSort('sort', keySortOptions, 'newest');
   const { me } = useAuth();
   const [keys, setKeys] = useState<ApiKeyView[]>([]);
   const [loading, setLoading] = useState(true);
@@ -94,7 +98,14 @@ export function ApiKeys() {
       />
 
       <section>
-        <h2 className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">Keys</h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-xs font-bold uppercase tracking-wide text-muted">Keys</h2>
+          <SortSelect
+            value={sort}
+            onChange={(v) => setSort(v as KeySort)}
+            options={[...keySortOptions]}
+          />
+        </div>
         {loadErr ? (
           <ErrorState
             title="Could not load API keys"
@@ -112,7 +123,7 @@ export function ApiKeys() {
           />
         ) : (
           <ul className="divide-y divide-hairline-soft rounded-md border border-hairline bg-canvas">
-            {keys.map((k) => (
+            {sortApiKeys(keys, sort).map((k) => (
               <KeyRow key={k.id} apiKey={k} onRevoke={() => setRevoking(k)} />
             ))}
           </ul>

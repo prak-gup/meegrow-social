@@ -2,7 +2,6 @@ import { and, asc, count, desc, eq, gt, inArray, isNull, lte } from 'drizzle-orm
 import { DateTime, IANAZone } from 'luxon';
 import { db, schema, withWorkspace } from '@meegrow-social/db';
 import {
-  ANALYTICS_REPORT_MAX_POSTS,
   METRIC_CONCEPTS,
   type AnalyticsReportQuery,
   type AnalyticsReportView,
@@ -122,6 +121,8 @@ export interface ReportInput {
   /** Capture history of the engagement metrics of `accumulationCandidates`. */
   snapshots: RawSnapshot[];
   undatedPosts: number;
+  sort?: AnalyticsReportQuery['sort'];
+  sortDir?: 'asc' | 'desc';
 }
 
 // --- time buckets --------------------------------------------------------------------------------
@@ -259,13 +260,37 @@ function toReportPost(post: Measured): ReportPost {
   };
 }
 
-/** Most engagements first; a post without the number sorts after every post that has it. */
-function byEngagement(a: Measured, b: Measured): number {
-  return (
-    (b.engagements ?? -1) - (a.engagements ?? -1) ||
-    (b.values.views ?? -1) - (a.values.views ?? -1) ||
-    b.publishAt.getTime() - a.publishAt.getTime()
-  );
+/** Nulls last in either direction; publication date and id make ties deterministic. */
+export function sortReportPosts(
+  posts: readonly ReportPost[],
+  key: NonNullable<AnalyticsReportQuery['sort']> = 'publishAt',
+  dir: 'asc' | 'desc' = 'desc',
+): ReportPost[] {
+  const value = (p: ReportPost): number | null =>
+    key === 'publishAt'
+      ? new Date(p.publishAt).getTime()
+      : key === 'engagements' || key === 'engagementRate'
+        ? p[key]
+        : p.metrics[key];
+  return [...posts].sort((a, b) => {
+    const av = value(a),
+      bv = value(b);
+    const primary =
+      av === null || bv === null
+        ? av === bv
+          ? 0
+          : av === null
+            ? 1
+            : -1
+        : dir === 'asc'
+          ? av - bv
+          : bv - av;
+    return (
+      primary ||
+      new Date(b.publishAt).getTime() - new Date(a.publishAt).getTime() ||
+      a.id.localeCompare(b.id)
+    );
+  });
 }
 
 /** Descriptive intensity; null is missing and zero occupies the palest observed cell. */
@@ -687,7 +712,7 @@ export function buildAnalyticsReport(input: ReportInput): AnalyticsReportView {
   const overTime = publicationSeries(unit);
   const weeklySeries = publicationSeries('week');
 
-  const top = [...current].sort(byEngagement);
+  const top = sortReportPosts(current.map(toReportPost), input.sort, input.sortDir);
   const accumulation = accumulationSection(
     accumulationCandidates(current, period),
     input.snapshots,
@@ -729,8 +754,8 @@ export function buildAnalyticsReport(input: ReportInput): AnalyticsReportView {
     },
     followerSeries: followers.followerSeries,
     formats: formatSection(current),
-    topPosts: top.slice(0, ANALYTICS_REPORT_MAX_POSTS).map(toReportPost),
-    postsOmitted: Math.max(0, top.length - ANALYTICS_REPORT_MAX_POSTS),
+    topPosts: top,
+    postsOmitted: 0,
     rawMetrics: rawMetricRows(current),
     frequency: frequencySection(current, period, zone),
     accumulation: {
@@ -952,6 +977,8 @@ async function reportFor(
     now,
     period,
     timezone: query.timezone,
+    sort: query.sort,
+    sortDir: query.sortDir,
     accounts: [],
     posts: [],
     followerPoints: [],

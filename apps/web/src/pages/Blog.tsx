@@ -1,12 +1,14 @@
 import { BlogSyncAction } from '../components/BlogSyncAction';
 import { PublishWaitingNote } from '../components/PublishWaitingNote';
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import type { ConnectionView, PostView } from '@meegrow-social/contracts';
 import { api } from '../lib/api';
 import { Article } from '../lib/icons';
 import {
   BLOG_PAGE_SIZE,
+  BLOG_SORT_OPTIONS,
+  readBlogSort,
   BLOG_STATUSES,
   EMPTY_BLOG_FILTERS,
   blogChip,
@@ -28,11 +30,14 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorState } from '../components/ui/ErrorState';
 import { FilterBar, FilterSelect } from '../components/ui/FilterBar';
 import { PageHeader } from '../components/ui/PageHeader';
+import { SortSelect } from '../components/ui/SortSelect';
 import { StatusChip } from '../components/ui/StatusChip';
 import { Table, type TableColumn } from '../components/ui/Table';
 
 export function Blog() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedSort = readBlogSort(searchParams.get('sort'));
   const [posts, setPosts] = useState<PostView[]>([]);
   const [sites, setSites] = useState<ConnectionView[]>([]);
   const [filters, setFilters] = useState<BlogFilters>(EMPTY_BLOG_FILTERS);
@@ -61,7 +66,10 @@ export function Blog() {
       stale = true;
     };
   }, [attempt]);
-  const rows = useMemo(() => filterBlog(posts, filters), [posts, filters]);
+  const rows = useMemo(
+    () => filterBlog(posts, { ...filters, ...selectedSort }),
+    [posts, filters, selectedSort.sort, selectedSort.dir],
+  );
   const categories = useMemo(
     () => [...new Set(posts.flatMap((p) => blogTerms(p, 'categories')))].sort(),
     [posts],
@@ -69,6 +77,16 @@ export function Blog() {
   const accounts = useMemo(() => new Map(sites.map((s) => [s.id, s.displayName])), [sites]);
   const importing = importingNote(sites);
   const set = (patch: Partial<BlogFilters>) => {
+    if (patch.sort || patch.dir) {
+      const next = { ...selectedSort, ...patch };
+      setSearchParams(
+        (params) => {
+          params.set('sort', `${next.sort}:${next.dir}`);
+          return params;
+        },
+        { replace: true },
+      );
+    }
     setFilters((f) => ({ ...f, ...patch }));
     setShown(BLOG_PAGE_SIZE);
   };
@@ -259,26 +277,17 @@ export function Blog() {
                         ]}
                       />
                     )}
-                    <FilterSelect
-                      label="Sort"
-                      value={`${filters.sort}:${filters.dir}`}
-                      onChange={(value) => {
-                        const [sort, dir] = value.split(':');
-                        set({ sort: sort as BlogFilters['sort'], dir: dir as BlogFilters['dir'] });
-                      }}
-                      options={[
-                        { value: 'published:desc', label: 'Newest published' },
-                        { value: 'published:asc', label: 'Oldest published' },
-                        { value: 'modified:desc', label: 'Recently modified' },
-                        { value: 'modified:asc', label: 'Oldest modified' },
-                        { value: 'title:asc', label: 'Title A–Z' },
-                        { value: 'title:desc', label: 'Title Z–A' },
-                      ]}
-                    />
                     <Button variant="ghost" size="sm" onClick={() => set(EMPTY_BLOG_FILTERS)}>
                       Clear filters
                     </Button>
                   </>
+                }
+                actions={
+                  <SortSelect
+                    value={`${selectedSort.sort}:${selectedSort.dir}`}
+                    onChange={(value) => set(readBlogSort(value))}
+                    options={BLOG_SORT_OPTIONS}
+                  />
                 }
               />
               <p role="status" className="mb-2 text-caption text-muted">
@@ -297,11 +306,11 @@ export function Blog() {
                 rows={rows.slice(0, shown)}
                 rowKey={(p) => p.id}
                 onRowClick={(p) => navigate(`/blog/${p.id}`)}
-                sort={{ key: filters.sort, dir: filters.dir }}
+                sort={{ key: selectedSort.sort, dir: selectedSort.dir }}
                 onSort={(key) =>
                   set({
                     sort: key as BlogFilters['sort'],
-                    dir: filters.sort === key && filters.dir === 'asc' ? 'desc' : 'asc',
+                    dir: selectedSort.sort === key && selectedSort.dir === 'asc' ? 'desc' : 'asc',
                   })
                 }
                 empty={{

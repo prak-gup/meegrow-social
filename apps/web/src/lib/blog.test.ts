@@ -8,8 +8,10 @@ import {
   EMPTY_BLOG_FILTERS,
   articlePreviewText,
   blogChip,
+  readBlogSort,
   blogDate,
   blogDateLabel,
+  blogSortDate,
   blogSource,
   blogStatus,
   blogStatusLabel,
@@ -142,6 +144,9 @@ describe('Blog inventory and presentation', () => {
       b.options.remote.publishedAt = '2026-10-11T00:00:00Z';
     if (c.options?.kind === 'wordpress' && c.options.remote)
       c.options.remote.publishedAt = '2026-10-12T00:00:00Z';
+    for (const post of [a, b, c])
+      if (post.options?.kind === 'wordpress' && post.options.remote)
+        post.options.remote.status = 'publish';
     const input = [a, b, c];
     expect(filterBlog(input, EMPTY_BLOG_FILTERS).map((p) => p.id)).toEqual([c.id, b.id, a.id]);
     expect(filterBlog(input, { ...EMPTY_BLOG_FILTERS, dir: 'asc' }).map((p) => p.id)).toEqual([
@@ -151,9 +156,43 @@ describe('Blog inventory and presentation', () => {
     ]);
     expect(input).toEqual([a, b, c]);
     expect(filterBlog([b, a], { ...EMPTY_BLOG_FILTERS, sort: 'title' }).map((p) => p.id)).toEqual([
-      a.id,
       b.id,
+      a.id,
     ]);
+  });
+  it('uses draft modification date for newest/oldest and validates URL sorts', () => {
+    const draft = article();
+    const older = article({ id: '00000000-0000-4000-8000-000000000004' });
+    if (older.options?.kind === 'wordpress' && older.options.remote) {
+      older.options.remote.status = 'publish';
+      older.options.remote.publishedAt = '2026-10-09T00:00:00Z';
+    }
+    expect(filterBlog([older, draft], EMPTY_BLOG_FILTERS)).toEqual([draft, older]);
+    expect(filterBlog([older, draft], { ...EMPTY_BLOG_FILTERS, dir: 'asc' })).toEqual([
+      older,
+      draft,
+    ]);
+    expect(readBlogSort('invalid')).toEqual({ sort: 'published', dir: 'desc' });
+    expect(readBlogSort('title:asc')).toEqual({ sort: 'title', dir: 'asc' });
+  });
+  it('sorts legacy app publications by real publishAt without inventing site metadata', () => {
+    const app = article({
+      source: 'app',
+      publishAt: new Date('2026-10-12T00:00:00Z'),
+      options: { kind: 'wordpress', title: 'Legacy article', status: 'publish' },
+    });
+    expect(blogDate(app, 'published')).toBeNull();
+    expect(blogSortDate(app, 'published')).toBe(app.publishAt!.getTime());
+    expect(filterBlog([article(), app], EMPTY_BLOG_FILTERS)).toEqual([app, article()]);
+    const imported = article({
+      options: { kind: 'wordpress', title: 'Undated', status: 'publish' },
+    });
+    expect(blogSortDate(imported, 'published')).toBeNull();
+    const draft = article({
+      source: 'app',
+      options: { kind: 'wordpress', title: 'Draft', status: 'draft' },
+    });
+    expect(blogSortDate(draft, 'published')).toBeNull();
   });
   it('sorts titles and modification dates independently of publication dates', () => {
     const a = article(),

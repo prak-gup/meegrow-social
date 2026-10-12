@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { MetricConcept, ReportPost } from '@meegrow-social/contracts';
 import {
   CONCEPT_LABEL,
@@ -6,6 +7,8 @@ import {
   formatRate,
   postsCsv,
   sortPosts,
+  sortReportRows,
+  readReportTableSort,
   type PostSortKey,
   type Report,
 } from '../../lib/analyticsReport';
@@ -14,10 +17,55 @@ import { compactNumber } from '../../lib/postGroups';
 import { captionSnippet, safeExternalUrl } from '../../lib/postList';
 import { platformMeta } from '../../lib/platforms';
 import { PostThumb } from '../PostThumb';
+import { SortSelect } from '../ui/SortSelect';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Table, type TableColumn, type TableSort } from '../ui/Table';
 import { NoValue, PlatformName, Section, platformLabel } from './parts';
+
+function useTableSort(
+  prefix: string,
+  options: { value: string; label: string }[],
+  defaultKey: string,
+  defaultDir: 'asc' | 'desc' = 'desc',
+) {
+  const [params, setParams] = useSearchParams();
+  const { key, dir } = readReportTableSort(params, prefix, options, defaultKey, defaultDir);
+  const set = (key: string, dir: 'asc' | 'desc') =>
+    setParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.set(`${prefix}Sort`, key);
+        next.set(`${prefix}Dir`, dir);
+        return next;
+      },
+      { replace: true },
+    );
+  const onSort = (key: string) =>
+    set(key, key === sort.key && sort.dir === 'desc' ? 'asc' : 'desc');
+  const sort: TableSort = { key, dir };
+  return {
+    sort,
+    onSort,
+    control: (
+      <SortSelect
+        label="Sort"
+        value={`${key}:${dir}`}
+        onChange={(v) => {
+          const [k, d] = v.split(':');
+          set(k!, d as 'asc' | 'desc');
+        }}
+        options={options.flatMap((o) => [
+          { value: `${o.value}:desc`, label: o.value === 'publishAt' ? 'Newest first' : o.label },
+          {
+            value: `${o.value}:asc`,
+            label: o.value === 'publishAt' ? 'Oldest first' : `${o.label} (ascending)`,
+          },
+        ])}
+      />
+    ),
+  };
+}
 
 const number = (value: number | null, why: string) =>
   value === null ? (
@@ -49,21 +97,47 @@ export function PlatformTable({
   concepts: readonly MetricConcept[];
   absent?: readonly MetricConcept[];
 }) {
+  const { sort, onSort, control } = useTableSort(
+    'platform',
+    [
+      { value: 'posts', label: 'Most posts' },
+      { value: 'platform', label: 'Platform Z–A' },
+      ...concepts.map((c) => ({ value: c, label: `Most ${CONCEPT_LABEL[c].toLowerCase()}` })),
+      { value: 'rate', label: 'Highest engagement rate' },
+    ],
+    'posts',
+  );
+  const rows = sortReportRows(
+    report.byPlatform,
+    (p) =>
+      sort.key === 'platform'
+        ? platformLabel(p.provider)
+        : sort.key === 'posts'
+          ? p.posts
+          : sort.key === 'rate'
+            ? p.engagementRate.rate
+            : p.totals[sort.key as MetricConcept],
+    sort.dir,
+    (p) => p.provider,
+  );
   const columns: TableColumn<PlatformRow>[] = [
     {
       key: 'platform',
+      sortKey: 'platform',
       header: 'Platform',
       className: 'sticky left-0 bg-canvas whitespace-nowrap',
       cell: (p) => <PlatformName provider={p.provider} className="font-semibold" />,
     },
     {
       key: 'posts',
+      sortKey: 'posts',
       header: 'Posts',
       align: 'right',
       cell: (p) => p.posts.toLocaleString(),
     },
     ...concepts.map((concept): TableColumn<PlatformRow> => ({
       key: concept,
+      sortKey: concept,
       help: `Latest reported ${CONCEPT_LABEL[concept].toLowerCase()}; — means unreported. Hover a count for its exact value.`,
       header:
         concept === 'follows' &&
@@ -80,6 +154,7 @@ export function PlatformTable({
     })),
     {
       key: 'rate',
+      sortKey: 'rate',
       header: 'Eng. rate',
       help: 'Reported likes + comments + shares + saves ÷ reach × 100, with views as fallback. Hover a rate for its basis.',
       align: 'right',
@@ -88,11 +163,17 @@ export function PlatformTable({
     },
   ];
   return (
-    <Section title="Platform breakdown" subtitle="Latest reported totals by platform">
+    <Section
+      title="Platform breakdown"
+      subtitle="Latest reported totals by platform"
+      actions={control}
+    >
       <Table
         caption="Totals per platform for the period"
         dense
-        rows={report.byPlatform}
+        rows={rows}
+        sort={sort}
+        onSort={onSort}
         rowKey={(p) => p.provider}
         columns={columns}
         empty={{ title: 'No platform in view' }}
@@ -124,7 +205,24 @@ export function TopPosts({
   concepts: readonly MetricConcept[];
   absent?: readonly MetricConcept[];
 }) {
-  const [sort, setSort] = useState<TableSort>({ key: 'engagements', dir: 'desc' });
+  const metricOptions = concepts.map((c) => ({
+    value: c,
+    label: `Most ${CONCEPT_LABEL[c].toLowerCase()}`,
+  }));
+  const hasEngagement = concepts.some((c) => ['likes', 'comments', 'shares', 'saves'].includes(c));
+  const { sort, onSort, control } = useTableSort(
+    'posts',
+    [
+      { value: 'publishAt', label: 'Newest first' },
+      ...metricOptions,
+      ...(hasEngagement ? [{ value: 'engagements', label: 'Most engagements' }] : []),
+      ...(hasEngagement && concepts.some((c) => c === 'views' || c === 'reach')
+        ? [{ value: 'engagementRate', label: 'Highest engagement rate' }]
+        : []),
+    ],
+    'publishAt',
+  );
+  const hasRate = hasEngagement && concepts.some((c) => c === 'views' || c === 'reach');
   const [shown, setShown] = useState(PAGE);
   const sorted = useMemo(
     () => sortPosts(report.topPosts, sort.key as PostSortKey, sort.dir),
@@ -133,14 +231,11 @@ export function TopPosts({
   const rows = sorted.slice(0, shown);
   const accounts = new Map(report.accounts.map((a) => [a.id, a]));
   const manyClients = new Set(report.accounts.map((a) => a.workspaceId)).size > 1;
-  const onSort = (key: string) =>
-    setSort((prev) => ({ key, dir: prev.key === key && prev.dir === 'desc' ? 'asc' : 'desc' }));
 
   const columns: TableColumn<ReportPost>[] = [
     {
       key: 'post',
       header: 'Post',
-      sortKey: 'publishAt',
       className: 'sticky left-0 z-10 w-full min-w-48 max-w-64 bg-canvas',
       cell: (post) => {
         const url = safeExternalUrl(post.releaseUrl);
@@ -199,6 +294,22 @@ export function TopPosts({
         );
       },
     },
+    {
+      key: 'date',
+      header: 'Date',
+      sortKey: 'publishAt',
+      className: 'whitespace-nowrap',
+      cell: (post) => (
+        <time dateTime={new Date(post.publishAt).toISOString()}>
+          {new Date(post.publishAt).toLocaleDateString('en-GB', {
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric',
+            timeZone: report.timezone,
+          })}
+        </time>
+      ),
+    },
     ...concepts.map((concept): TableColumn<ReportPost> => ({
       key: concept,
       help: `Latest reported ${CONCEPT_LABEL[concept].toLowerCase()}; — means unreported. Hover a count for its exact value.`,
@@ -220,7 +331,7 @@ export function TopPosts({
       header: (
         <span title="Likes + comments + shares + saves, over the ones reported">Engagements</span>
       ),
-      sortKey: 'engagements',
+      sortKey: hasEngagement ? 'engagements' : undefined,
       align: 'right',
       className: 'whitespace-nowrap',
       cell: (post) => number(post.engagements, 'No engagement count reported'),
@@ -229,7 +340,7 @@ export function TopPosts({
       key: 'rate',
       header: 'Eng. rate',
       help: 'Reported likes + comments + shares + saves ÷ reach × 100, with views as fallback. Hover a rate for its basis.',
-      sortKey: 'engagementRate',
+      sortKey: hasRate ? 'engagementRate' : undefined,
       align: 'right',
       className: 'whitespace-nowrap',
       cell: (post) => (
@@ -246,15 +357,18 @@ export function TopPosts({
 
   return (
     <Section
-      title="Top posts"
+      title={sort.key === 'publishAt' ? 'Posts' : 'Top posts'}
       subtitle={`Sorted by ${sort.key === 'publishAt' ? 'publication date' : sort.key === 'engagementRate' ? 'engagement rate' : sort.key} · ${sort.dir === 'desc' ? 'descending' : 'ascending'}`}
       actions={
-        report.topPosts.length > 0 && (
-          <Button variant="outline" size="sm" onClick={exportCsv}>
-            <DownloadSimple size={14} aria-hidden="true" />
-            Export CSV
-          </Button>
-        )
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {control}
+          {report.topPosts.length > 0 && (
+            <Button variant="outline" size="sm" onClick={exportCsv}>
+              <DownloadSimple size={14} aria-hidden="true" />
+              Export CSV
+            </Button>
+          )}
+        </div>
       }
     >
       <Table
@@ -305,30 +419,60 @@ type RawRow = Report['rawMetrics'][number];
  */
 export function RawMetrics({ report }: { report: Report }) {
   const { rawMetrics, mapping } = report;
+  const { sort, onSort, control } = useTableSort(
+    'raw',
+    [
+      { value: 'posts', label: 'Most posts' },
+      { value: 'platform', label: 'Platform Z–A' },
+      { value: 'metric', label: 'Metric Z–A' },
+      { value: 'concept', label: 'Shown as Z–A' },
+      { value: 'total', label: 'Highest total' },
+    ],
+    'posts',
+  );
+  const rows = sortReportRows(
+    rawMetrics,
+    (r) =>
+      sort.key === 'platform'
+        ? platformLabel(r.provider)
+        : r[sort.key as 'metric' | 'concept' | 'posts' | 'total'],
+    sort.dir,
+    (r) => `${r.provider}:${r.metric}`,
+  );
   const unmapped = rawMetrics.filter((r) => r.concept === null).length;
   const columns: TableColumn<RawRow>[] = [
     {
       key: 'platform',
+      sortKey: 'platform',
       header: 'Platform',
       className: 'whitespace-nowrap',
       cell: (r) => <PlatformName provider={r.provider} />,
     },
     {
       key: 'metric',
+      sortKey: 'metric',
       header: 'Metric, as the platform names it',
       className: 'w-full',
       cell: (r) => <code className="break-all text-caption">{r.metric}</code>,
     },
     {
       key: 'concept',
+      sortKey: 'concept',
       header: 'Shown as',
       className: 'whitespace-nowrap',
       cell: (r) =>
         r.concept ? CONCEPT_LABEL[r.concept] : <Badge variant="neutral">only here</Badge>,
     },
-    { key: 'posts', header: 'Posts', align: 'right', cell: (r) => r.posts.toLocaleString() },
+    {
+      key: 'posts',
+      sortKey: 'posts',
+      header: 'Posts',
+      align: 'right',
+      cell: (r) => r.posts.toLocaleString(),
+    },
     {
       key: 'total',
+      sortKey: 'total',
       header: 'Sum of latest values',
       align: 'right',
       className: 'whitespace-nowrap',
@@ -338,13 +482,16 @@ export function RawMetrics({ report }: { report: Report }) {
   return (
     <Section
       title="Platform metrics, as collected"
+      actions={control}
       subtitle={`${rawMetrics.length.toLocaleString()} metric ${rawMetrics.length === 1 ? 'name' : 'names'} across the posts of the period${unmapped > 0 ? `, ${unmapped} of them shown only here` : ''}`}
       note="Numbers are stored under each platform’s own metric name and only read as the columns above. A name that feeds no column is still collected and listed here; a sum of a metric that is itself an average or a rate is not meaningful and is shown only as collected."
     >
       <Table
         caption="Every native metric of the period’s posts"
         dense
-        rows={rawMetrics}
+        rows={rows}
+        sort={sort}
+        onSort={onSort}
         rowKey={(r) => `${r.provider}:${r.metric}`}
         columns={columns}
         empty={{ title: 'No metrics collected for posts published in this period' }}

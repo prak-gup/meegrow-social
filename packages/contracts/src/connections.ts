@@ -19,6 +19,8 @@ export const connectionView = z.object({
   expiresInDays: z.number().int().nullable(),
   health: connectionHealth,
   createdAt: z.coerce.date(),
+  /** Expected consent expiry while the Google OAuth app is in Testing mode. */
+  expiryReason: z.literal('google_testing').optional(),
   /**
    * How the account was connected, where a provider has more than one way (WordPress). `password`
    * means a login password is stored for it. Absent for every OAuth platform and for connections

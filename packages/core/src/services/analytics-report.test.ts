@@ -8,6 +8,7 @@ import {
   bucketKey,
   bucketUnit,
   buildAnalyticsReport,
+  sortReportPosts,
   engagementHistory,
   followerSection,
   followerCalendar,
@@ -651,7 +652,7 @@ describe('buildAnalyticsReport', () => {
       { likes: 40, saved: 5, reach: 9000 },
       { thumbnailUrl: 'https://x/y.jpg' },
     );
-    const report = buildAnalyticsReport(input({ posts: [quiet, mid, loud] }));
+    const report = buildAnalyticsReport(input({ posts: [quiet, mid, loud], sort: 'engagements' }));
     expect(report.topPosts.map((p) => p.id)).toEqual([loud.id, mid.id, quiet.id]);
     expect(report.topPosts[0]).toMatchObject({
       engagements: 45,
@@ -834,5 +835,44 @@ describe('revision 2 optional report facts', () => {
       }),
     );
     expect(missing.followerSeries[0]!.change).toBeNull();
+  });
+});
+
+describe('report publication sorting', () => {
+  const igPost = (daysAgo: number, native: Record<string, number>) =>
+    post({ publishAt: ago(daysAgo * DAY), native });
+  it('defaults to newest first and returns every post before display paging', () => {
+    const old = igPost(5, {}),
+      recent = igPost(1, {});
+    const report = buildAnalyticsReport(input({ posts: [old, recent] }));
+    expect(report.topPosts.map((p) => p.id)).toEqual([recent.id, old.id]);
+    expect(report.postsOmitted).toBe(0);
+  });
+  it.each([
+    'views',
+    'reach',
+    'likes',
+    'comments',
+    'shares',
+    'saves',
+    'clicks',
+    'follows',
+    'engagements',
+    'engagementRate',
+  ] as const)('puts missing %s last and breaks ties by publication', (key) => {
+    const rows = buildAnalyticsReport(
+      input({ posts: [igPost(4, {}), igPost(2, {}), igPost(1, {})] }),
+    ).topPosts;
+    const [recent, mid, old] = rows;
+    const measured = (p: typeof recent, value: number | null) => ({
+      ...p!,
+      metrics: { ...p!.metrics, [key]: value },
+      [key]: value,
+    });
+    const a = measured(recent, 5),
+      b = measured(mid, 5),
+      c = measured(old, null);
+    for (const dir of ['asc', 'desc'] as const)
+      expect(sortReportPosts([c, b, a], key, dir).map((p) => p.id)).toEqual([a.id, b.id, c.id]);
   });
 });
