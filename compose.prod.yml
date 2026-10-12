@@ -18,6 +18,10 @@ services:
     # A value in the server's .env still wins.
     environment:
       WORDPRESS_ENABLED: ${WORDPRESS_ENABLED:-true}
+      BLUESKY_ENABLED: ${BLUESKY_ENABLED:-true}
+      TELEGRAM_ENABLED: ${TELEGRAM_ENABLED:-true}
+      DISCORD_ENABLED: ${DISCORD_ENABLED:-true}
+      SLACK_ENABLED: ${SLACK_ENABLED:-true}
     ports: ['127.0.0.1:8990:8990']
     volumes: ['media:/app/.data/media']
     depends_on:
@@ -34,6 +38,10 @@ services:
     # A value in the server's .env still wins.
     environment:
       WORDPRESS_ENABLED: ${WORDPRESS_ENABLED:-true}
+      BLUESKY_ENABLED: ${BLUESKY_ENABLED:-true}
+      TELEGRAM_ENABLED: ${TELEGRAM_ENABLED:-true}
+      DISCORD_ENABLED: ${DISCORD_ENABLED:-true}
+      SLACK_ENABLED: ${SLACK_ENABLED:-true}
     volumes: ['media:/app/.data/media']
     depends_on:
       postgres: { condition: service_healthy }
