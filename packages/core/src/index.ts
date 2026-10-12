@@ -52,3 +52,4 @@ export * from './services/overview.js';
 export * from './services/invites.js';
 
 export * from './services/publish-rate-limit.js';
+export * from './services/remote-posts.js';

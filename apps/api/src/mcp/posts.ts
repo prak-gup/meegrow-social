@@ -1,3 +1,5 @@
+import { updateRemotePostInput, trashRemotePostInput } from '@meegrow-social/contracts';
+import { updateRemotePost, trashRemotePost, refreshRemotePost } from '@meegrow-social/core';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
@@ -220,6 +222,52 @@ export function registerPostTools(server: McpServer, ctx: AuthContext): void {
         const group = await getPostGroup(ctx.workspaceId, args.groupId);
         if (!group) throw notFound('post group');
         return group;
+      }),
+  );
+
+  server.registerTool(
+    'refresh_remote_post',
+    {
+      description:
+        'Read the current site article and store its HTML and modification date before editing. Discards unsaved edits.',
+      inputSchema: { postId },
+      annotations: { ...WRITE, openWorldHint: true },
+    },
+    ({ postId: id }) =>
+      respond(async () => {
+        const post = await refreshRemotePost(ctx, id);
+        if (!post) throw notFound('post');
+        return post;
+      }),
+  );
+  server.registerTool(
+    'update_remote_post',
+    {
+      description:
+        'Edit an existing site article. Requires the observed modification date. HTML from the site stays HTML. Refuses conflicts and truncated body edits; independently verifies stored fields.',
+      inputSchema: { postId, ...updateRemotePostInput.shape },
+      annotations: { ...PUBLISH, destructiveHint: true },
+    },
+    ({ postId: id, ...input }) =>
+      respond(async () => {
+        const post = await updateRemotePost(ctx, id, input);
+        if (!post) throw notFound('post');
+        return post;
+      }),
+  );
+  server.registerTool(
+    'trash_remote_post',
+    {
+      description:
+        'Move ONE article to WordPress trash, restorable there. Only call after explicit human confirmation. Requires confirm=true and the observed modification date. Never permanently deletes.',
+      inputSchema: { postId, ...trashRemotePostInput.shape },
+      annotations: { ...PUBLISH, destructiveHint: true },
+    },
+    ({ postId: id, ...input }) =>
+      respond(async () => {
+        const post = await trashRemotePost(ctx, id, input);
+        if (!post) throw notFound('post');
+        return post;
       }),
   );
 

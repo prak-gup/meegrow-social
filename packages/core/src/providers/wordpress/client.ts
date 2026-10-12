@@ -317,7 +317,7 @@ export function mapWordPressError(status: number, parsed: unknown): WordPressFai
 export interface WordPressRequest {
   /** Inventory pages may contain multiple long HTML articles, still bounded. */
   maxResponseBytes?: number;
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'DELETE';
   query?: Record<string, string>;
   /** JSON body. */
   json?: unknown;
@@ -765,7 +765,15 @@ export class WordPressClient {
       );
     }
     const parsed = parseJson(response);
-    if (response.status >= 400) return { failure: mapWordPressError(response.status, parsed) };
+    if (response.status >= 400) {
+      const failure = mapWordPressError(response.status, parsed);
+      failure.error.message = failure.error.message
+        .split(credentials.password)
+        .join('[redacted]')
+        .split(basicAuth(credentials))
+        .join('[redacted]');
+      return { failure };
+    }
     if (parsed === undefined) {
       throw new ProviderBadRequestError(
         'The site answered, but not with the JSON WordPress sends (a plugin or the server is ' +

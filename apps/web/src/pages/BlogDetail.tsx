@@ -1,4 +1,5 @@
 import { PublishWaitingNote } from '../components/PublishWaitingNote';
+import { RemoteArticleEditor } from '../components/RemoteArticleEditor';
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { ConnectionView, PostView } from '@meegrow-social/contracts';
@@ -114,6 +115,7 @@ export function BlogDetail() {
               would lose content on the site.
             </p>
           )}
+          <RemoteArticleEditor key={post.id} post={post} onChange={setPost} />
           <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
             <ArticlePreview body={post.caption} html={remote?.bodyFormat === 'html'} />
             <aside className="min-w-0 space-y-4" aria-label="Article settings">

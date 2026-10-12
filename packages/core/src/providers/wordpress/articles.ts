@@ -29,7 +29,7 @@ export function articleDate(value: unknown): Date {
   return date;
 }
 
-function item(
+export function articleItem(
   id: unknown,
   body: string,
   link: unknown,
@@ -103,7 +103,7 @@ export async function listArticles(
       }
       const terms = (asArray(post.terms) ?? []).map(asStruct);
       items.push(
-        item(
+        articleItem(
           post.post_id,
           text(post.post_content),
           post.link,
@@ -120,6 +120,11 @@ export async function listArticles(
               .map((t) => plainText(t?.name)),
             tags: terms.filter((t) => t?.taxonomy === 'post_tag').map((t) => plainText(t?.name)),
             author: authors.get(authorId) ?? '',
+            categoryIds: terms
+              .filter((t) => t?.taxonomy === 'category')
+              .map((t) => Number(t?.term_id)),
+            tagIds: terms.filter((t) => t?.taxonomy === 'post_tag').map((t) => Number(t?.term_id)),
+            featuredMediaId: Number(asStruct(post.post_thumbnail)?.attachment_id ?? 0),
           },
         ),
       );
@@ -184,7 +189,7 @@ export async function listArticles(
       return found;
     };
     items.push(
-      item(post.id, raw(post.content), post.link, image, {
+      articleItem(post.id, raw(post.content), post.link, image, {
         title: plainText(raw(post.title)),
         excerpt: raw(post.excerpt),
         slug: text(post.slug),
@@ -194,6 +199,9 @@ export async function listArticles(
         categories: await names('category', 'categories'),
         tags: await names('post_tag', 'tags'),
         author: plainText(author.name),
+        categoryIds: Array.isArray(post.categories) ? post.categories.map(Number) : [],
+        tagIds: Array.isArray(post.tags) ? post.tags.map(Number) : [],
+        featuredMediaId: Number(post.featured_media ?? 0),
       }),
     );
   }

@@ -6,6 +6,8 @@ import {
   ImportNotSupportedError,
   PostStateError,
   ProviderBadRequestError,
+  ProviderConflictError,
+  ProviderAuthError,
   QueueInactiveError,
   QueueNotFoundError,
 } from '@meegrow-social/core';
@@ -40,8 +42,10 @@ function failFrom(err: unknown): CallToolResult {
   if (err instanceof ToolError) return fail(err.code, err.message);
   if (err instanceof QueueNotFoundError) return fail('not_found', err.message);
   if (err instanceof ConnectionNotFoundError) return fail('not_found', err.message);
+  if (err instanceof ProviderConflictError) return fail('invalid_state', err.message);
   if (err instanceof PostStateError) return fail('invalid_state', err.message);
   if (err instanceof QueueInactiveError) return fail('invalid_request', err.message);
+  if (err instanceof ProviderAuthError) return fail('invalid_request', err.message);
   if (err instanceof ProviderBadRequestError) return fail('invalid_request', err.message);
   if (err instanceof ImportNotSupportedError) return fail('invalid_request', err.message);
   if (err instanceof AnalyticsQueryError) return fail('invalid_request', err.message);

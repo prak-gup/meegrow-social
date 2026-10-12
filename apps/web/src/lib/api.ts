@@ -1,4 +1,6 @@
 import type {
+  UpdateRemotePostInput,
+  TrashRemotePostInput,
   ApiKeyView,
   AuthMeView,
   CalendarView,
@@ -219,6 +221,12 @@ export const api = {
     } = {},
   ) => request<{ posts: PostView[] }>('GET', '/v1/posts', undefined, query),
   getPost: (id: string) => request<{ post: PostView }>('GET', `/v1/posts/${id}`),
+  refreshRemotePost: (id: string) =>
+    request<{ post: PostView }>('POST', `/v1/posts/${id}/remote/refresh`, {}),
+  updateRemotePost: (id: string, input: UpdateRemotePostInput) =>
+    request<{ post: PostView }>('POST', `/v1/posts/${id}/remote/update`, input),
+  trashRemotePost: (id: string, input: TrashRemotePostInput) =>
+    request<{ post: PostView }>('POST', `/v1/posts/${id}/remote/trash`, input),
   updatePost: (id: string, patch: UpdatePostInput) =>
     request<{ post: PostView }>('PATCH', `/v1/posts/${id}`, patch),
   cancelPost: (id: string) => request<{ cancelled: true }>('DELETE', `/v1/posts/${id}`),

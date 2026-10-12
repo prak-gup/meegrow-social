@@ -10,6 +10,8 @@ export class ProviderAuthError extends Error {
 export class ProviderBadRequestError extends Error {
   readonly kind = 'bad_request' as const;
 }
+/** An observed remote version changed; callers must refresh, never automatically retry. */
+export class ProviderConflictError extends ProviderBadRequestError {}
 export class ProviderTransientError extends Error {
   readonly kind = 'transient' as const;
 }
