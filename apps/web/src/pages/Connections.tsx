@@ -9,13 +9,26 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { providerVisible } from '../lib/devProviders';
 import { groupProviders, platformMeta } from '../lib/platforms';
+import {
+  addedAccount,
+  connectPendingExpired,
+  CONNECT_POLL_MS,
+  type PendingConnect,
+} from '../lib/connectPending';
+import { subscribeConnectCompletion } from '../lib/connectCompletion';
 import { missingAccountHelp } from '../lib/connectHelp';
 import { InviteLinkRow, useInviteLinks } from '../components/InviteLinks';
 import { ConnectSiteDialog } from '../components/ConnectSiteDialog';
 import { ConnectCredentialDialog } from '../components/ConnectCredentialDialog';
 import { credentialGuide, type CredentialGuide } from '../lib/credentialConnect';
 import { ImportPostsModal } from '../components/ImportPostsModal';
-import { IMPORT_POLL_MS, canImport, importMoving, importRowNote } from '../lib/postImport';
+import {
+  IMPORT_POLL_MS,
+  canImport,
+  importMoving,
+  importRowNote,
+  emptyImportWindow,
+} from '../lib/postImport';
 import { connectionChip, type ChipStatus } from '../lib/statusChip';
 import { canReconnect, expiryLabel, filterConnections, shortDate } from '../lib/connectionRows';
 import { connectionSubline } from '../lib/wordpress';
@@ -100,6 +113,78 @@ export function Connections() {
   } | null>(null);
   // The connection whose "Import past posts" dialog is open.
   const [importing, setImporting] = useState<string | null>(null);
+  const [longImport, setLongImport] = useState(false);
+  const [googleConfirm, setGoogleConfirm] = useState<{
+    provider: ProviderView;
+    reconnecting?: ConnectionView;
+  } | null>(null);
+  const [highlight, setHighlight] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingConnect | null>(null);
+  const pendingRef = useRef<PendingConnect | null>(null);
+  const accountsRef = useRef<ConnectionView[]>([]);
+  const refreshing = useRef(false);
+  const accountsVersion = useRef(0);
+  const completionQueued = useRef(false);
+  const beginPending = (provider: string, reconnectId?: string) => {
+    const next = {
+      provider,
+      reconnectId,
+      startedAt: Date.now(),
+      before: accountsRef.current.map((c) => c.id),
+    };
+    pendingRef.current = next;
+    setPending(next);
+  };
+  const endPending = useCallback(() => {
+    pendingRef.current = null;
+    setPending(null);
+  }, []);
+  const confirmAccount = useCallback(
+    (c: ConnectionView) => {
+      setMsg(`${c.displayName} connected.`);
+      setQ('');
+      setStatusFilter('');
+      setPlatformFilter('');
+      setHighlight(c.id);
+      endPending();
+    },
+    [endPending],
+  );
+  const refreshAccounts = useCallback(
+    async (completed = false) => {
+      if (refreshing.current) {
+        completionQueued.current ||= completed;
+        return;
+      }
+      refreshing.current = true;
+      try {
+        const { connections } = await api.listConnections();
+        const current = pendingRef.current;
+        const added = addedAccount(
+          current?.before ?? accountsRef.current.map((c) => c.id),
+          connections,
+          current?.provider,
+        );
+        accountsVersion.current += 1;
+        accountsRef.current = connections;
+        setConns(connections);
+        if (added) confirmAccount(added);
+        else if (completed && current?.reconnectId) {
+          const reconnected = connections.find((c) => c.id === current.reconnectId);
+          if (reconnected && !reconnected.needsReconnect) confirmAccount(reconnected);
+        }
+      } catch (e) {
+        if (completed) setMsg(e instanceof Error ? e.message : 'Could not refresh connections.');
+      } finally {
+        refreshing.current = false;
+        if (completionQueued.current) {
+          completionQueued.current = false;
+          void refreshAccounts(true);
+        }
+      }
+    },
+    [confirmAccount, endPending],
+  );
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState<ChipStatus | ''>('');
   const [platformFilter, setPlatformFilter] = useState('');
@@ -113,9 +198,13 @@ export function Connections() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    const version = accountsVersion.current;
     try {
       const [c, p] = await Promise.all([api.listConnections(), api.listProviders()]);
-      setConns(c.connections);
+      if (accountsVersion.current === version) {
+        accountsRef.current = c.connections;
+        setConns(c.connections);
+      }
       setProviders(p.providers);
     } finally {
       setLoading(false);
@@ -125,19 +214,82 @@ export function Connections() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const onFocus = () => {
+      void refreshAccounts();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') onFocus();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    const unsubscribe = subscribeConnectCompletion((signal) => {
+      if (signal.outcome === 'success')
+        void refreshAccounts(
+          !pendingRef.current ||
+            signal.provider === pendingRef.current.provider ||
+            signal.provider === 'unknown',
+        );
+      else if (
+        !pendingRef.current ||
+        signal.provider === pendingRef.current.provider ||
+        signal.provider === 'unknown'
+      ) {
+        endPending();
+        setMsg(
+          'Connect failed. The result tab shows the platform’s reason; return there to retry.',
+        );
+        void api
+          .getLatestConnectResult()
+          .then((result) => {
+            if (
+              result?.outcome === 'failure' &&
+              result.reason &&
+              Math.abs(result.time - signal.time) < 10_000
+            )
+              setMsg(`Connect failed: ${result.reason}`);
+          })
+          .catch(() => undefined);
+        void refreshAccounts();
+      }
+    });
+    return () => {
+      unsubscribe();
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [refreshAccounts, endPending]);
+  useEffect(() => {
+    if (!pending) return;
+    const timer = window.setInterval(() => {
+      if (connectPendingExpired(pending, Date.now())) {
+        endPending();
+        setMsg(
+          'Still waiting for approval. Return to the connect tab to finish, then this page will refresh when focused.',
+        );
+      } else void refreshAccounts();
+    }, CONNECT_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [pending, refreshAccounts, endPending]);
+  useEffect(() => {
+    if (!highlight) return;
+    document
+      .getElementById(`connection-${highlight}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const timer = window.setTimeout(() => setHighlight(null), 8_000);
+    return () => window.clearTimeout(timer);
+  }, [highlight, loading]);
+
   // While an import is queued or reading, re-read the accounts quietly (no skeleton) so the row
   // shows it start and finish. Stops by itself once nothing is moving.
   const importsMoving = conns.some((c) => importMoving(c.import));
   useEffect(() => {
     if (!importsMoving) return;
     const t = window.setInterval(() => {
-      void api
-        .listConnections()
-        .then((c) => setConns(c.connections))
-        .catch(() => undefined);
+      void refreshAccounts();
     }, IMPORT_POLL_MS);
     return () => window.clearInterval(t);
-  }, [importsMoving]);
+  }, [importsMoving, refreshAccounts]);
 
   useEffect(() => {
     const onMessage = (e: MessageEvent): void => {
@@ -145,23 +297,33 @@ export function Connections() {
       const data = e.data as { source?: string; payload?: ConnectMessage } | null;
       if (data?.source !== 'meegrow-social-connect' || !data.payload) return;
       const payload = data.payload;
-      if (payload.status === 'error') setMsg(`Connect failed: ${payload.error}`);
-      else if (payload.status === 'choose_account')
+      if (payload.status === 'error') {
+        endPending();
+        setMsg(`Connect failed: ${payload.error}`);
+      } else if (payload.status === 'choose_account')
         setPick({
           flowId: payload.flowId,
           accounts: payload.accounts,
           provider: connecting.current,
         });
       else {
-        setMsg('Account connected.');
-        void load();
+        void refreshAccounts(true);
       }
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [load]);
+  }, [load, refreshAccounts, endPending]);
 
-  const connect = async (p: ProviderView, address?: string, reconnecting?: ConnectionView) => {
+  const connect = async (
+    p: ProviderView,
+    address?: string,
+    reconnecting?: ConnectionView,
+    confirmed = false,
+  ) => {
+    if (p.identifier === 'youtube' && !confirmed) {
+      setGoogleConfirm({ provider: p, reconnecting });
+      return;
+    }
     setMsg(null);
     connecting.current = p;
     if (p.connectInput === 'credentials') {
@@ -178,8 +340,19 @@ export function Connections() {
       return;
     }
     try {
-      const { url } = await api.authUrl(p.identifier);
-      window.open(url, '_blank', 'width=600,height=700');
+      const popup = window.open('about:blank', '_blank', 'width=600,height=700');
+      if (!popup) {
+        setMsg('Your browser blocked the connect window. Allow popups and try again.');
+        return;
+      }
+      try {
+        const { url } = await api.authUrl(p.identifier);
+        beginPending(p.identifier, reconnecting?.id);
+        popup.location.href = url;
+      } catch (e) {
+        popup.close();
+        throw e;
+      }
       setMsg('Approve in the popup…');
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'Could not start the connection.');
@@ -200,8 +373,7 @@ export function Connections() {
     try {
       await api.finishConnect(pick.flowId, externalId);
       setPick(null);
-      setMsg('Account connected.');
-      void load();
+      void refreshAccounts(true);
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'Could not finish connecting.');
     }
@@ -350,7 +522,10 @@ export function Connections() {
                   cell: (c) => {
                     const m = platformMeta({ identifier: c.provider, displayName: c.provider });
                     return (
-                      <div className="flex min-w-0 items-center gap-2.5">
+                      <div
+                        id={`connection-${c.id}`}
+                        className={`flex min-w-0 items-center gap-2.5 rounded-sm ${highlight === c.id ? 'bg-status-good/10 ring-2 ring-status-good' : ''}`}
+                      >
                         <PlatformBadge provider={c.provider} name={c.displayName} />
                         <div className="min-w-0 max-w-[15rem]">
                           <div className="truncate font-medium leading-4 text-ink">
@@ -373,6 +548,28 @@ export function Connections() {
                             >
                               {importRowNote(c.import)}
                             </div>
+                          )}
+                          {emptyImportWindow(c.import) && (c.import?.windowDays ?? 365) < 365 && (
+                            <button
+                              type="button"
+                              className="mt-1 text-caption text-ink underline"
+                              onClick={() => {
+                                setLongImport(true);
+                                setImporting(c.id);
+                                void api
+                                  .importPastPosts(c.id, 365)
+                                  .then(() => refreshAccounts())
+                                  .catch((e: unknown) =>
+                                    setMsg(
+                                      e instanceof Error
+                                        ? e.message
+                                        : 'Could not start the import.',
+                                    ),
+                                  );
+                              }}
+                            >
+                              Import a longer period
+                            </button>
                           )}
                           {/* the Status column is hidden on a phone, so the chip rides here */}
                           <StatusChip
@@ -455,7 +652,10 @@ export function Connections() {
                             {
                               label: 'Import past posts',
                               icon: <DownloadSimple size={14} />,
-                              onSelect: () => setImporting(c.id),
+                              onSelect: () => {
+                                setLongImport(false);
+                                setImporting(c.id);
+                              },
                             },
                           ]
                         : []),
@@ -484,7 +684,7 @@ export function Connections() {
             {providerGroups.length > 1 && (
               <h3 className="mb-1.5 text-caption font-medium text-muted">{group.label}</h3>
             )}
-            <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            <ul className="grid items-start gap-2 sm:grid-cols-2 xl:grid-cols-3">
               {group.providers.map((p) => {
                 const m = platformMeta(p);
                 return (
@@ -505,21 +705,25 @@ export function Connections() {
                     <Button variant="outline" size="sm" onClick={() => void connect(p)}>
                       Connect
                     </Button>
-                    {p.identifier === 'youtube' && (
-                      <p className="w-full text-caption text-muted">
-                        Google asks you to approve uploading videos, reading your channel and
-                        videos, and reading YouTube Analytics reports. Until Google verification is
-                        complete, Google shows an “unverified app” warning and limits access to 100
-                        new users in total. In Testing, only listed test users can connect. Use
-                        Invite client to let the channel owner approve these permissions themselves.
-                      </p>
-                    )}
                     {/* A pasted credential is entered here only; there is no link to send. */}
                     {p.connectInput !== 'credentials' && (
                       <Button variant="ghost" size="sm" onClick={() => void makeInvite(p)}>
                         <LinkSimple size={14} />
                         Invite client
                       </Button>
+                    )}
+                    {p.identifier === 'youtube' && (
+                      <details className="w-full text-caption text-muted">
+                        <summary className="cursor-pointer">What to expect</summary>
+                        <p className="mt-2">
+                          Google asks to approve uploading videos, reading your channel and videos,
+                          and reading YouTube Analytics. Google will show an unverified-app warning:
+                          choose Advanced, then Go to Meegrow Social. Until verification is
+                          complete, access is limited to 100 new users in total. In Testing, only
+                          listed test users can connect; Production allows other users within that
+                          limit. Invite client lets the channel owner approve.
+                        </p>
+                      </details>
                     )}
                   </li>
                 );
@@ -560,6 +764,32 @@ export function Connections() {
         </section>
       )}
 
+      {googleConfirm && (
+        <Modal title="Connect YouTube" onClose={() => setGoogleConfirm(null)}>
+          <p className="text-sm text-body-ink">
+            Google will show an unverified-app warning: choose Advanced, then Go to Meegrow Social.
+          </p>
+          <p className="mt-2 text-caption text-muted">
+            Approve uploading videos, reading your channel and videos, and YouTube Analytics
+            reports. Before verification, Google limits access to 100 new users in total. Testing
+            allows only listed test users; Production allows other users within that limit.
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setGoogleConfirm(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                const p = googleConfirm;
+                setGoogleConfirm(null);
+                void connect(p.provider, undefined, p.reconnecting, true);
+              }}
+            >
+              Continue to Google
+            </Button>
+          </div>
+        </Modal>
+      )}
       {/* invite link panel */}
       {invite && (
         <Modal title={`Invite link — ${invite.label}`} onClose={() => setInvite(null)}>
@@ -596,10 +826,9 @@ export function Connections() {
           clientName={activeName}
           initialAddress={asking.address}
           onStarted={() => {
+            beginPending(asking.provider.identifier);
             setAsking(null);
-            setMsg(
-              'Approve in the new window. This page updates when you are done — if it does not, press Refresh.',
-            );
+            setMsg('Approve in the new window. This page updates when you are done.');
           }}
           onConnected={(connection) => {
             setAsking(null);
@@ -637,6 +866,7 @@ export function Connections() {
           return target ? (
             <ImportPostsModal
               connection={target}
+              initialWindowDays={longImport ? 365 : undefined}
               onStarted={() => {
                 setMsg(
                   `Importing past posts from ${target.displayName}. This runs in the background — you can leave this page.`,

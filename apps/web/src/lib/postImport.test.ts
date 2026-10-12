@@ -75,7 +75,9 @@ describe('importBusy / importMoving', () => {
 describe('importRowNote', () => {
   it('says what is happening while an import is under way', () => {
     expect(importRowNote(view({ status: 'queued' }), NOW)).toBe('Past posts: import queued');
-    expect(importRowNote(view({ status: 'running' }), NOW)).toBe('Importing past posts…');
+    expect(importRowNote(view({ status: 'running' }), NOW)).toBe(
+      'Importing past posts… · 0 read · 0 imported · page 0',
+    );
     expect(
       importRowNote(view({ status: 'paused', resumeAt: new Date('2026-10-11T12:30:00Z') }), NOW),
     ).toMatch(/^Import paused · continues /);
@@ -155,7 +157,10 @@ describe('importSummary', () => {
     });
     expect(
       importSummary(view({ status: 'running', windowDays: 90, imported: 25 }), NOW),
-    ).toMatchObject({ heading: 'Importing now', detail: 'last 90 days · 25 imported so far' });
+    ).toMatchObject({
+      heading: 'Importing now',
+      detail: 'last 90 days · 0 read · 25 imported · page 0 so far',
+    });
   });
 
   it('explains a pause and when it continues', () => {
@@ -169,7 +174,7 @@ describe('importSummary', () => {
       NOW,
     );
     expect(summary.heading).toMatch(/^Paused · continues /);
-    expect(summary.detail).toBe('50 imported so far');
+    expect(summary.detail).toBe('0 read · 50 imported · page 0 so far');
     expect(summary.tone).toBe('warn');
     expect(summary.message).toMatch(/62%/);
   });
@@ -226,4 +231,19 @@ describe('importingNote — what an empty screen says for a newly connected acco
     );
     expect(importingAnalyticsNote([account('City Hospital', 'done')])).toBeNull();
   });
+});
+
+it('shows page progress and an honest empty window without confusing deduplication with emptiness', () => {
+  expect(importRowNote(view({ status: 'running', seen: 75, pages: 3, imported: 50 }))).toContain(
+    '75 read · 50 imported · page 3',
+  );
+  expect(importRowNote(view({ status: 'done', windowDays: 90, postsInWindow: 0 }))).toBe(
+    'No posts in the last 90 days',
+  );
+  expect(importSummary(view({ status: 'done', windowDays: 90, postsInWindow: 0 })).detail).toBe(
+    'No posts in the last 90 days',
+  );
+  expect(importSummary(view({ status: 'done', windowDays: 90, postsInWindow: 25 })).detail).toBe(
+    '0 imported',
+  );
 });

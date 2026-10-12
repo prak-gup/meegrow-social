@@ -302,6 +302,13 @@ export async function runConnectionImport(
     {
       list: (query) => provider.listPublishedPosts!(tokens, query),
       apply: (items) => applyImportPage(workspaceId, conn, items, deps),
+      progress: (importState) =>
+        withWorkspace(workspaceId, async (tx) => {
+          await tx
+            .update(schema.connections)
+            .set({ importState })
+            .where(eq(schema.connections.id, conn.id));
+        }),
       sleep,
       now: () => clock.now(),
       wholeHistory: provider.importsWholeHistory,

@@ -723,7 +723,7 @@ describe('invite connect path (public)', () => {
       vi.mocked(core.handleCallback).mockResolvedValue({ status: 'connected', connectionId: CONN });
       const res = await callback({ cookie });
       expect(res.statusCode).toBe(200);
-      expect(res.body).toContain('<h1 id="t">Connected</h1>');
+      expect(res.body).toContain('<h1 id="t">Connected — you can close this tab</h1>');
     });
 
     it('reports a failed exchange as not connected, with the reason', async () => {

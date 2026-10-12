@@ -72,17 +72,25 @@ export interface StoredImportState {
   since: string;
   /**
    * Set once a run has stopped part-way: the oldest publish time read so far, where it continues
-   * from. A cursor is never kept — the platform expires them.
+   * from for publication-ordered lists. Unordered lists keep the original ceiling and
+   * their traversal cursor instead, so later pages with newer publications are not dropped.
    */
   until: string | null;
   /** Stable numeric page/offset for whole-blog transports only (not expiring social cursors). */
   inventoryCursor?: string;
+  /** Unordered upload inventories cannot resume by publication time. Rejected cursors fail
+   * visibly and the normal failed-run retry starts a fresh complete-window traversal. */
+  unorderedCursor?: string;
+  unordered?: boolean;
   requestedAt: string;
   startedAt: string | null;
   finishedAt: string | null;
   resumeAt: string | null;
   /** Posts read from the platform so far in this run, across its pauses. */
   seen: number;
+  /** Raw inventory entries read, including outside the chosen window. */
+  itemsRead?: number;
+  pages?: number;
   imported: number;
   matched: number;
   removed: number;
@@ -115,11 +123,17 @@ export function parseImportState(value: unknown): StoredImportState | null {
     ...(typeof v.inventoryCursor === 'string' && /^\d+$/.test(v.inventoryCursor)
       ? { inventoryCursor: v.inventoryCursor }
       : {}),
+    ...(typeof v.unorderedCursor === 'string' && v.unorderedCursor
+      ? { unorderedCursor: v.unorderedCursor }
+      : {}),
+    ...(v.unordered === true ? { unordered: true } : {}),
     requestedAt,
     startedAt: text(v.startedAt),
     finishedAt: text(v.finishedAt),
     resumeAt: text(v.resumeAt),
     seen: count(v.seen),
+    itemsRead: count(v.itemsRead ?? v.seen),
+    pages: count(v.pages),
     imported: count(v.imported),
     matched: count(v.matched),
     removed: count(v.removed),
@@ -146,6 +160,8 @@ export function queuedImportState(
     finishedAt: null,
     resumeAt: null,
     seen: 0,
+    itemsRead: 0,
+    pages: 0,
     imported: 0,
     matched: 0,
     removed: 0,
@@ -172,6 +188,9 @@ export function toImportView(
     finishedAt: date(state?.finishedAt ?? null),
     resumeAt: state?.status === 'paused' ? date(state.resumeAt) : null,
     lastSyncedAt: lastImportAt,
+    postsInWindow: state?.seen ?? 0,
+    seen: state?.itemsRead ?? state?.seen ?? 0,
+    pages: state?.pages ?? 0,
     imported: state?.imported ?? 0,
     matched: state?.matched ?? 0,
     removed: state?.removed ?? 0,
@@ -258,6 +277,8 @@ export interface ReadWindowDeps {
   apply(
     items: PublishedPostItem[],
   ): Promise<{ imported: number; matched: number; recognised: string[] }>;
+  /** Persist a fresh progress snapshot once each page has been applied. */
+  progress?(state: StoredImportState): Promise<void>;
   sleep(ms: number): Promise<void>;
   now(): Date;
   wholeHistory?: boolean;
@@ -300,7 +321,7 @@ export async function readImportWindow(
       status: 'paused',
       resumeAt: resumeAt.toISOString(),
       // Continue from the oldest post read; with nothing read, from where this run started.
-      until: (oldest ?? ceiling).toISOString(),
+      until: (state.unordered ? ceiling : (oldest ?? ceiling)).toISOString(),
       // What a later run reads is no longer the whole window in one piece.
       resumed: true,
       message,
@@ -312,7 +333,9 @@ export async function readImportWindow(
   const later = () => new Date(deps.now().getTime() + IMPORT_PAUSE_MS);
 
   try {
-    let cursor: string | undefined = deps.wholeHistory ? state.inventoryCursor : undefined;
+    let cursor: string | undefined = deps.wholeHistory
+      ? state.inventoryCursor
+      : state.unorderedCursor;
     for (let page = 0; ; page++) {
       if (page >= IMPORT_MAX_PAGES_PER_RUN) {
         return paused(later(), 'Paused after a long read; it continues by itself.');
@@ -335,14 +358,26 @@ export async function readImportWindow(
       state = {
         ...state,
         seen: state.seen + taken.length,
+        itemsRead: (state.itemsRead ?? state.seen) + (listed.itemsRead ?? listed.items.length),
+        pages: (state.pages ?? 0) + 1,
         imported: state.imported + applied.imported,
         matched: state.matched + applied.matched,
+        ...(listed.orderedByPublishedAt === false
+          ? {
+              unordered: true,
+              unorderedCursor: listed.nextCursor ?? undefined,
+              until: ceiling.toISOString(),
+            }
+          : {}),
         ...(deps.wholeHistory ? { inventoryCursor: listed.nextCursor ?? undefined } : {}),
       };
+
+      await deps.progress?.({ ...state });
 
       // The provider may not honour `since`; a page wholly older than the window ends the read.
       const pastWindow =
         !deps.wholeHistory &&
+        listed.orderedByPublishedAt !== false &&
         listed.items.length > 0 &&
         listed.items.every((i) => i.publishedAt < since);
       const more = Boolean(listed.nextCursor) && !pastWindow;

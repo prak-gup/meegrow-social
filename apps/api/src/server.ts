@@ -2,6 +2,7 @@ import { ProviderConflictError } from '@meegrow-social/core';
 import { updateRemotePostInput, trashRemotePostInput } from '@meegrow-social/contracts';
 import { updateRemotePost, trashRemotePost, refreshRemotePost } from '@meegrow-social/core';
 import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
@@ -51,6 +52,8 @@ import {
   aggregateEventLogs,
   authenticateApiKey,
   authenticateSession,
+  encryptToken,
+  decryptToken,
   buildUserView,
   createClientWorkspace,
   CONNECT_FLOW_MAX_AGE_MS,
@@ -155,8 +158,8 @@ export function connectOutcome(payload: unknown): ConnectOutcome {
   if (p.status === 'connected') {
     return {
       connected: true,
-      title: 'Connected',
-      detail: 'The account is connected. You can close this window.',
+      title: 'Connected — you can close this tab',
+      detail: 'The account is connected. You can close this tab.',
     };
   }
   if (p.status === 'choose_account') {
@@ -208,10 +211,26 @@ function escapeHtml(text: string): string {
  * escaped — that closes the `</script>` breakout — and the visible text is HTML-escaped. The
  * message is posted to our own origin, never `*`, so nothing else can read it.
  */
-export function connectPopupHtml(payload: unknown): string {
+export function connectPopupHtml(payload: unknown, provider = 'unknown'): string {
   const json = JSON.stringify(payload).replace(/</g, '\\u003c');
   const origin = JSON.stringify(appUrl().replace(/\/$/, ''));
   const outcome = connectOutcome(payload);
+  const p = (payload ?? {}) as { provider?: unknown; status?: unknown; accounts?: unknown };
+  const signalProvider =
+    typeof p.provider === 'string' && /^[a-z][a-z0-9_-]{0,63}$/.test(p.provider)
+      ? p.provider
+      : provider;
+  const picker =
+    p.status === 'choose_account' && Array.isArray(p.accounts)
+      ? p.accounts
+          .map((account) => {
+            const a = account as { externalId?: unknown; displayName?: unknown };
+            return typeof a.externalId === 'string' && typeof a.displayName === 'string'
+              ? `<button type="button" data-account="${escapeHtml(a.externalId)}">${escapeHtml(a.displayName)}</button>`
+              : '';
+          })
+          .join('')
+      : '';
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -225,6 +244,7 @@ main{box-sizing:border-box;width:calc(100% - 32px);max-width:28rem;padding:32px;
 .logo span{color:#222}
 h1{margin:0;font-size:20px;font-weight:600;line-height:1.25}
 p{margin:8px 0 0;color:#6a6a6a}
+button,a{display:inline-block;margin:16px 8px 0 0;font:inherit}button{padding:8px 12px;cursor:pointer}#accounts button{display:block;width:100%;text-align:left}
 </style>
 </head>
 <body>
@@ -232,14 +252,49 @@ p{margin:8px 0 0;color:#6a6a6a}
 <div class="logo"><svg width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect x=".5" y=".5" width="31" height="31" rx="9" fill="#fff" stroke="#ddd"/><path d="M8 21 L14 14 L18 17 L24 9" stroke="#ff385c" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="24" cy="9" r="2.6" fill="#222"/></svg>meegrow<span>·social</span></div>
 <h1 id="t">${escapeHtml(outcome.title)}</h1>
 <p id="m">${escapeHtml(outcome.detail)}</p>
+<div id="accounts">${picker}</div>
+<button type="button" id="close">Close this tab</button>
+<a href="/connections">Back to Connections</a>
 </main>
 <script>
 (function () {
   var payload = ${json};
+  var provider = ${JSON.stringify(signalProvider)};
+  function announce(outcome) {
+    var signal = { provider: provider, outcome: outcome, time: Date.now() };
+    try { var channel = new BroadcastChannel('meegrow-social-connect-completion'); channel.postMessage(signal); channel.close(); } catch (_) {}
+    try { window.localStorage.setItem('mg_connect_completion', JSON.stringify(signal)); } catch (_) {}
+  }
+  if (payload.status === 'connected') announce('success');
+  else if (payload.status === 'error' || (payload.status === 'choose_account' && !payload.accounts.length)) announce('failure');
+  document.getElementById('close').onclick = function () { window.close(); };
+  if (payload.status === 'choose_account' && payload.accounts.length && !window.opener) {
+    document.getElementById('t').textContent = 'Choose the account to connect';
+    document.getElementById('m').textContent = 'Access was approved. Choose an account below to finish connecting.';
+    document.querySelectorAll('[data-account]').forEach(function (button) {
+      button.onclick = async function () {
+        button.disabled = true;
+        try {
+          var response = await fetch('/v1/connections/finish', { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ flowId: payload.flowId, externalId: button.getAttribute('data-account') }) });
+          var result = await response.json();
+          if (!response.ok) throw new Error(typeof result.error === 'string' ? result.error : 'Could not connect this account. Return to Connections and try again.');
+          document.getElementById('t').textContent = 'Connected — you can close this tab';
+          document.getElementById('m').textContent = button.textContent + ' is now connected.';
+          document.getElementById('accounts').hidden = true;
+          announce('success');
+        } catch (error) {
+          document.getElementById('m').textContent = error.message;
+          button.disabled = false;
+          announce('failure');
+        }
+      };
+    });
+  }
   if (window.opener) {
     window.opener.postMessage({ source: 'meegrow-social-connect', payload: payload }, ${origin});
-    document.getElementById('t').textContent = 'Finishing up';
-    document.getElementById('m').textContent = 'Continue in the window you started from. You can close this one.';
+    if (payload.status === 'choose_account' && payload.accounts.length) {
+      document.getElementById('m').textContent = 'Continue choosing an account in Connections. Nothing is connected yet.';
+    }
     window.close();
   }
 })();
@@ -418,9 +473,52 @@ const PASSWORD_CONNECT_STATUS: Record<string, number> = {
 
 export async function buildServer(): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, trustProxy: trustProxySetting() });
-  app.setErrorHandler((error, _req, reply) => {
+  // Authenticated, session-bound result cookie survives callback routing across API instances.
+  const resultCookie = 'mg_connect_result';
+  const resultPath = '/v1/connections/latest-connect-result';
+  const resultKey = (req: FastifyRequest): string | null => {
+    const token = req.cookies[SESSION_COOKIE];
+    return token ? createHash('sha256').update(token).digest('hex') : null;
+  };
+  const recordConnectResult = (req: FastifyRequest, reply: FastifyReply, payload: unknown) => {
+    const p = (payload ?? {}) as { status?: unknown; error?: unknown; accounts?: unknown };
+    const empty =
+      p.status === 'choose_account' && Array.isArray(p.accounts) && p.accounts.length === 0;
+    if (p.status !== 'connected' && p.status !== 'error' && !empty) return;
+    const session = resultKey(req);
+    if (!session) return;
+    const result = {
+      session,
+      outcome: p.status === 'connected' ? 'success' : 'failure',
+      time: Date.now(),
+      ...(typeof p.error === 'string'
+        ? { reason: p.error.slice(0, 1000) }
+        : empty
+          ? { reason: connectOutcome(payload).detail }
+          : {}),
+    };
+    reply.setCookie(resultCookie, encryptToken(JSON.stringify(result)), {
+      httpOnly: true,
+      secure: process.env.COOKIE_SECURE === 'true',
+      sameSite: 'lax',
+      path: resultPath,
+      maxAge: 300,
+    });
+  };
+  app.setErrorHandler((error, req, reply) => {
     if (error instanceof AccessDeniedError) return reply.code(403).send({ error: error.message });
     if (error instanceof PersonExistsError) return reply.code(409).send({ error: error.message });
+    const path = req.url.split('?')[0] ?? '';
+    if (
+      req.method === 'POST' &&
+      req.cookies[SESSION_COOKIE] &&
+      (path === '/v1/connections/finish' || /^\/v1\/invite\/flow\/[^/]+\/finish$/.test(path))
+    ) {
+      recordConnectResult(req, reply, {
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Could not finish connecting this account.',
+      });
+    }
     return reply.send(error);
   });
   await app.register(cors, { origin: true });
@@ -479,6 +577,37 @@ export async function buildServer(): Promise<FastifyInstance> {
       return reply.code(403).send({ error: 'viewer access is read-only' });
     if (ctx.sessionId && req.method !== 'GET' && req.method !== 'HEAD' && !originAllowed(req)) {
       return reply.code(403).send({ error: 'cross-origin request blocked' });
+    }
+  });
+
+  app.get('/v1/connections/latest-connect-result', async (req, reply) => {
+    reply.header('cache-control', 'no-store');
+    const session = resultKey(req);
+    const sealed = req.cookies[resultCookie];
+    if (!session || !sealed) return reply.send(null);
+    try {
+      const result = JSON.parse(decryptToken(sealed)) as {
+        session?: unknown;
+        outcome?: unknown;
+        reason?: unknown;
+        time?: unknown;
+      };
+      if (
+        result.session !== session ||
+        (result.outcome !== 'success' && result.outcome !== 'failure') ||
+        typeof result.time !== 'number' ||
+        !Number.isFinite(result.time) ||
+        result.time > Date.now() ||
+        Date.now() - result.time > 300_000
+      )
+        return reply.send(null);
+      return reply.send({
+        outcome: result.outcome,
+        time: result.time,
+        ...(typeof result.reason === 'string' ? { reason: result.reason } : {}),
+      });
+    } catch {
+      return reply.send(null);
     }
   });
 
@@ -983,7 +1112,23 @@ export async function buildServer(): Promise<FastifyInstance> {
       req.cookies[inviteFlowCookie(flowId)],
       parsed.data.externalId,
     );
-    if (result.status !== 'connected') return inviteFlowRefusal(reply, result);
+    if (result.status !== 'connected') {
+      recordConnectResult(req, reply, {
+        status: 'error',
+        error:
+          result.status === 'failed'
+            ? result.error
+            : result.status === 'expired'
+              ? 'this connection step expired before it was finished'
+              : result.status === 'used'
+                ? 'this connection step was already completed'
+                : result.status === 'invalid_account'
+                  ? 'that account is not one of the accounts offered'
+                  : 'this connection step is not available in this browser',
+      });
+      return inviteFlowRefusal(reply, result);
+    }
+    recordConnectResult(req, reply, { status: 'connected' });
     reply.clearCookie(inviteFlowCookie(flowId), { path: '/' });
     return reply.code(201).send({
       connectionId: result.connectionId,
@@ -1029,6 +1174,7 @@ export async function buildServer(): Promise<FastifyInstance> {
           .redirect(`${appUrl().replace(/\/$/, '')}/connect/done?${sealed}`, 303);
       }
       const send = (payload: unknown, status: number): void => {
+        recordConnectResult(req, reply, payload);
         void reply.code(status).type('text/html; charset=utf-8').send(connectPopupHtml(payload));
       };
       if (!state || !code) {
@@ -1064,11 +1210,12 @@ export async function buildServer(): Promise<FastifyInstance> {
   // happened when there is none), but the result is read from a seal only this server can make.
   app.get<{ Querystring: Record<string, unknown> }>('/connect/done', async (req, reply) => {
     const payload = openCallbackOutcome(req.query);
+    recordConnectResult(req, reply, payload);
     return reply
       .code(payload.status === 'connected' ? 200 : 400)
       .header('cache-control', 'no-store')
       .type('text/html; charset=utf-8')
-      .send(connectPopupHtml(payload));
+      .send(connectPopupHtml(payload, 'wordpress'));
   });
 
   app.post('/v1/connections/finish', async (req, reply) => {
@@ -1079,6 +1226,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       parsed.data.flowId,
       parsed.data.externalId,
     );
+    recordConnectResult(req, reply, { status: 'connected' });
     return reply.code(201).send({ connectionId });
   });
 

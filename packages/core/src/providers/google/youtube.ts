@@ -480,19 +480,16 @@ export class YouTubeProvider implements SocialProvider {
         (item) =>
           item.publishedAt >= query.since && (!query.until || item.publishedAt <= query.until),
       );
-    // Playlist dates let a normal newest-first run stop without scanning the channel's whole history.
-    const dates = (listed.items ?? []).map((item) =>
-      Date.parse(item.contentDetails?.videoPublishedAt ?? ''),
-    );
-    const older =
-      dates.length > 0 &&
-      dates.every((date) => Number.isFinite(date) && date < query.since.getTime());
+    // Upload order is not publication order (private videos and premieres can publish later).
+    // Never end the scan on an old page: later pages may still contain in-window videos.
+    // Window filtering above uses videos.snippet.publishedAt, never playlistItem.snippet.publishedAt.
     return {
       items,
-      nextCursor:
-        listed.nextPageToken && !older
-          ? JSON.stringify({ playlist, pageToken: listed.nextPageToken })
-          : null,
+      itemsRead: listed.items?.length ?? 0,
+      orderedByPublishedAt: false,
+      nextCursor: listed.nextPageToken
+        ? JSON.stringify({ playlist, pageToken: listed.nextPageToken })
+        : null,
       usage: null,
     };
   }

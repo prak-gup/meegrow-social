@@ -433,6 +433,63 @@ describe('readImportWindow — paging, the post limit and the rate limit', () =>
     return { applied, sleep, apply, deps: { list, apply, sleep, now: () => NOW } };
   }
 
+  it('persists progress after every page and continues unordered old pages', async () => {
+    const list = vi.fn(async ({ cursor }: { cursor?: string }) =>
+      cursor
+        ? {
+            items: [item('recent')],
+            itemsRead: 25,
+            orderedByPublishedAt: false,
+            nextCursor: null,
+            usage: null,
+          }
+        : {
+            items: [item('old', { publishedAt: ago(100 * DAY) })],
+            itemsRead: 25,
+            orderedByPublishedAt: false,
+            nextCursor: 'next',
+            usage: null,
+          },
+    );
+    const h = harness(list);
+    const progress = vi.fn(async (_state: StoredImportState) => {});
+    const read = await readImportWindow(start(), ceiling, { ...h.deps, progress });
+    expect(h.applied).toEqual(['recent']);
+    expect(
+      progress.mock.calls.map(([state]) => [state.itemsRead, state.pages, state.imported]),
+    ).toEqual([
+      [25, 1, 0],
+      [50, 2, 1],
+    ]);
+    expect(read.state).toMatchObject({ itemsRead: 50, pages: 2, imported: 1 });
+  });
+
+  it('resumes unordered inventory by cursor with its original ceiling, not its oldest publication', async () => {
+    const h = harness(async () => ({
+      items: [item('oldest', { publishedAt: ago(80 * DAY) })],
+      orderedByPublishedAt: false,
+      nextCursor: 'opaque-next',
+      usage: { percent: 60, regainAccessMinutes: null },
+    }));
+    const first = await readImportWindow(start(), ceiling, h.deps);
+    expect(first.state).toMatchObject({
+      status: 'paused',
+      unorderedCursor: 'opaque-next',
+      until: ceiling.toISOString(),
+    });
+    const list = vi.fn(async (_query: { cursor?: string; until?: Date }) => ({
+      items: [item('newer', { publishedAt: ago(DAY) })],
+      orderedByPublishedAt: false,
+      nextCursor: null,
+      usage: null,
+    }));
+    const second = harness(list);
+    const read = await readImportWindow(first.state, new Date(first.state.until!), second.deps);
+    expect(list.mock.calls[0]?.[0]).toMatchObject({ cursor: 'opaque-next', until: ceiling });
+    expect(second.applied).toEqual(['newer']);
+    expect(read.state).toMatchObject({ pages: 2, imported: 2, unorderedCursor: undefined });
+  });
+
   it('reads a window to its end in modest pages, pausing between them', async () => {
     const { list } = platform(60);
     const h = harness(list);

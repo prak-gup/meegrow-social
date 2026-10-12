@@ -1608,7 +1608,7 @@ describe('YouTube upload inventory', () => {
     expect(calls.filter((call) => call.url.includes('/channels?'))).toHaveLength(1);
     expect(calls.at(-2)?.url).toContain('pageToken=fixture-page');
   });
-  it('stops at the date boundary and skips missing, foreign and malformed resources', async () => {
+  it('keeps scanning old inventory pages and skips missing, foreign and malformed resources', async () => {
     const { yt } = build([
       TOKEN_ROUTE,
       { match: '/channels?', replies: [{ body: channelReply }] },
@@ -1648,10 +1648,76 @@ describe('YouTube upload inventory', () => {
     ]);
     expect(
       await yt.listPublishedPosts(tokens, { since: new Date('2026-10-01'), limit: 25 }),
-    ).toEqual({ items: [], nextCursor: null, usage: null });
+    ).toEqual({
+      items: [],
+      itemsRead: 1,
+      orderedByPublishedAt: false,
+      nextCursor: JSON.stringify({ playlist: 'fixture-uploads', pageToken: 'old-page' }),
+      usage: null,
+    });
     await expect(
       yt.listPublishedPosts(tokens, { since: NOW, limit: 25, cursor: 'bad' }),
     ).rejects.toThrow('Invalid YouTube import cursor');
+  });
+  it('finds recent publish times after old uploads and compares UTC instants inclusively', async () => {
+    const since = new Date('2026-10-01T00:00:00Z');
+    const until = new Date('2026-10-11T00:00:00Z');
+    const video = (id: string, publishedAt: string) => ({
+      ...videoReply.items[0],
+      id,
+      snippet: { ...videoReply.items[0]!.snippet, publishedAt },
+    });
+    const { yt } = build([
+      TOKEN_ROUTE,
+      { match: '/channels?', replies: [{ body: channelReply }] },
+      {
+        match: '/playlistItems?',
+        replies: [
+          {
+            body: {
+              items: [
+                { contentDetails: { videoId: 'old', videoPublishedAt: '2020-01-01T00:00:00Z' } },
+              ],
+              nextPageToken: 'mixed',
+            },
+          },
+          {
+            body: {
+              items: ['boundary', 'future', 'recent'].map((videoId) => ({
+                contentDetails: { videoId, videoPublishedAt: '2020-01-01T00:00:00Z' },
+              })),
+            },
+          },
+        ],
+      },
+      {
+        match: '/videos?',
+        replies: [
+          { body: { items: [video('old', '2020-01-01T00:00:00Z')] } },
+          {
+            body: {
+              items: [
+                video('recent', '2026-10-10T10:00:00Z'),
+                video('future', '2026-10-12T00:00:00Z'),
+                video('boundary', '2026-10-01T05:30:00+05:30'),
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+    const first = await yt.listPublishedPosts(tokens, { since, until, limit: 25 });
+    expect(first.items).toEqual([]);
+    expect(first.nextCursor).not.toBeNull();
+    const second = await yt.listPublishedPosts(tokens, {
+      since,
+      until,
+      limit: 25,
+      cursor: first.nextCursor!,
+    });
+    expect(second.items.map((item) => item.externalPostId)).toEqual(['boundary', 'recent']);
+    expect(second.items[0]!.publishedAt).toEqual(since);
+    expect(second.nextCursor).toBeNull();
   });
   it.each([
     { video: videoReply, channel: channelReply, expected: 'present' },
