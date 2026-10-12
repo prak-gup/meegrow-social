@@ -1,3 +1,5 @@
+import { DateTime, IANAZone } from 'luxon';
+import { AnalyticsQueryError } from './analytics-report.js';
 import { and, desc, eq, isNotNull, like } from 'drizzle-orm';
 import { db, schema, withWorkspace } from '@meegrow-social/db';
 import type { OverviewView, ClientHealth, ProviderIdentifier } from '@meegrow-social/contracts';
@@ -25,8 +27,11 @@ const AUTOMATION_LIVE_MS = 10 * 60 * 1000; // an API key used in the last 10 min
 export async function overviewForUser(
   userId: string,
   clock: Clock = systemClock,
+  timezone = 'UTC',
 ): Promise<OverviewView> {
   const now = clock.now();
+  if (!IANAZone.isValidZone(timezone)) throw new AnalyticsQueryError('Invalid timezone');
+  const weekStart = DateTime.fromJSDate(now, { zone: timezone }).startOf('week').toJSDate();
   const weekAgo = new Date(now.getTime() - WEEK_MS);
   const expiringThreshold = new Date(now.getTime() + EXPIRING_WINDOW_MS);
 
@@ -44,6 +49,7 @@ export async function overviewForUser(
 
   const clients: OverviewView['clients'] = [];
   const upcoming: OverviewView['upcoming'] = [];
+  const upcomingGroups: OverviewView['upcomingGroups'] = [];
   let failedPublishes = 0;
   let needsReconnect = 0;
   let tokensExpiring = 0;
@@ -58,6 +64,9 @@ export async function overviewForUser(
       const posts = (await tx.select().from(schema.posts)).filter((p) =>
         providerVisible(p.provider),
       );
+
+      const groups = await tx.select().from(schema.postGroups);
+      const captions = new Map(groups.map((g) => [g.id, g.caption]));
 
       // connection health
       let anyBad = false;
@@ -97,16 +106,48 @@ export async function overviewForUser(
       }
 
       // posts this week + failures + next scheduled
-      let published = 0;
+      const publishedGroups = new Set<string>();
+      const scheduledGroups = new Map<string, OverviewView['upcomingGroups'][number]>();
       let failed = 0;
       let nextPublishAt: Date | null = null;
       let hasUpcoming = false;
       for (const p of posts) {
-        if (p.status === 'published' && p.createdAt >= weekAgo) published += 1;
+        if (
+          p.status === 'published' &&
+          !p.platformRemovedAt &&
+          p.publishAt &&
+          p.publishAt >= weekStart &&
+          p.publishAt <= now
+        )
+          publishedGroups.add(p.groupId);
         if (p.status === 'failed' && p.createdAt >= weekAgo) failed += 1;
-        if (p.status === 'scheduled' && p.publishAt && p.publishAt > now) {
+        if (p.status === 'scheduled' && !p.platformRemovedAt && p.publishAt && p.publishAt > now) {
           hasUpcoming = true;
           if (!nextPublishAt || p.publishAt < nextPublishAt) nextPublishAt = p.publishAt;
+          const options = p.options as { kind?: string; title?: string } | null;
+          const caption =
+            options?.kind === 'wordpress'
+              ? (options.title ?? p.caption)
+              : (captions.get(p.groupId) ?? p.caption);
+          const group = scheduledGroups.get(p.groupId) ?? {
+            groupId: p.groupId,
+            workspaceId: ws.workspaceId,
+            workspaceName: ws.name,
+            caption,
+            publishAt: p.publishAt,
+            laterCount: 0,
+            accounts: [],
+          };
+          if (p.publishAt < group.publishAt) {
+            group.publishAt = p.publishAt;
+            group.caption = caption;
+          }
+          group.accounts.push({
+            connectionId: p.connectionId,
+            provider: p.provider as ProviderIdentifier,
+            name: conns.find((c) => c.id === p.connectionId)?.displayName ?? p.provider,
+          });
+          scheduledGroups.set(p.groupId, group);
           upcoming.push({
             workspaceId: ws.workspaceId,
             workspaceName: ws.name,
@@ -115,6 +156,18 @@ export async function overviewForUser(
             publishAt: p.publishAt,
           });
         }
+      }
+
+      for (const group of scheduledGroups.values()) {
+        group.laterCount = posts.filter(
+          (p) =>
+            p.groupId === group.groupId &&
+            p.status === 'scheduled' &&
+            !p.platformRemovedAt &&
+            p.publishAt &&
+            p.publishAt > group.publishAt,
+        ).length;
+        upcomingGroups.push(group);
       }
 
       // automation-live: an API key used very recently
@@ -131,7 +184,7 @@ export async function overviewForUser(
         anyBad,
         anyExpiring,
         followers,
-        published,
+        published: publishedGroups.size,
         failed,
         nextPublishAt,
         hasUpcoming,
@@ -172,6 +225,12 @@ export async function overviewForUser(
     weekTotals: { publishedThisWeek },
     clients,
     upcoming: upcoming.slice(0, 12),
+    upcomingGroups: upcomingGroups
+      .sort(
+        (a, b) =>
+          a.publishAt.getTime() - b.publishAt.getTime() || a.groupId.localeCompare(b.groupId),
+      )
+      .slice(0, 12),
   };
 }
 

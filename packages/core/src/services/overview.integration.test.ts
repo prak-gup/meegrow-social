@@ -48,7 +48,9 @@ async function publishedPost(
       provider: 'fake',
       status: opts.status ?? 'published',
       caption: 'hi',
-      publishAt: opts.publishAt ?? null,
+      publishAt:
+        opts.publishAt ??
+        ((opts.status ?? 'published') === 'published' ? new Date(now.getTime() - HOUR) : null),
       externalPostId: 'x',
     });
   });

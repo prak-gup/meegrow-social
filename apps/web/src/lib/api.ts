@@ -94,7 +94,8 @@ export const api = {
     request<{ ok: true }>('POST', '/v1/auth/password', { currentPassword, newPassword }),
 
   // --- Overview + workspaces (redesign) ---
-  overview: () => request<OverviewView>('GET', '/v1/overview'),
+  overview: (timezone = 'UTC') =>
+    request<OverviewView>('GET', '/v1/overview', undefined, { timezone }),
   createWorkspace: (name: string) =>
     request<CreatedWorkspaceView>('POST', '/v1/workspaces', { name }),
 

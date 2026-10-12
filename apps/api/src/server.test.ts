@@ -42,6 +42,7 @@ vi.mock('@meegrow-social/core', async (importOriginal) => ({
   getPostGroup: vi.fn(),
   getPostMetrics: vi.fn(),
   listPostGroups: vi.fn(),
+  overviewForUser: vi.fn(),
 }));
 
 const WS = '11111111-1111-4111-8111-111111111111';
@@ -1115,5 +1116,55 @@ describe('remote article REST delegation', () => {
       payload: {},
     });
     expect(response.json()).toEqual({ post: { id: POST } });
+  });
+});
+
+describe('GET /v1/overview', () => {
+  beforeEach(() => {
+    vi.mocked(core.authenticateSession).mockResolvedValue({
+      workspaceId: WS,
+      userId: 'user-1',
+      sessionId: 'session-1',
+    });
+    vi.mocked(core.overviewForUser).mockResolvedValue({
+      generatedAt: new Date(),
+      attention: { failedPublishes: 0, needsReconnect: 0, tokensExpiring: 0, emptyQueues: 0 },
+      weekTotals: { publishedThisWeek: 0 },
+      clients: [],
+      upcoming: [],
+      upcomingGroups: [],
+    });
+  });
+
+  it('passes the viewer timezone to core and returns both upcoming shapes', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/overview?timezone=Asia%2FKolkata',
+      headers: { cookie: 'mg_sid=good' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(core.overviewForUser).toHaveBeenCalledWith('user-1', undefined, 'Asia/Kolkata');
+    expect(res.json()).toMatchObject({ upcoming: [], upcomingGroups: [] });
+  });
+
+  it('defaults to UTC and reports invalid zones from core as 400', async () => {
+    await app.inject({ method: 'GET', url: '/v1/overview', headers: { cookie: 'mg_sid=good' } });
+    expect(core.overviewForUser).toHaveBeenCalledWith('user-1', undefined, 'UTC');
+    vi.mocked(core.overviewForUser).mockRejectedValue(
+      new core.AnalyticsQueryError('Invalid timezone'),
+    );
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/overview?timezone=invalid',
+      headers: { cookie: 'mg_sid=good' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: 'Invalid timezone' });
+  });
+
+  it('remains session-only for API keys and MCP clients', async () => {
+    const res = await app.inject({ method: 'GET', url: '/v1/overview', headers: auth });
+    expect(res.statusCode).toBe(401);
+    expect(core.overviewForUser).not.toHaveBeenCalled();
   });
 });

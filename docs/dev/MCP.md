@@ -309,3 +309,16 @@ as HTML; it is never converted through Markdown. A truncated stored body cannot 
 other fields can. Independent read-back must match requested fields; failures say the write is
 unconfirmed or not stored and must not be blindly retried. Failed or mismatched writes are audited;
 a mismatch stores the observed site values. Tool annotations identify these as open-world writes.
+
+Overview remains session-only and is not exposed as an MCP tool. `GET /v1/overview` accepts
+`timezone` (the viewer's IANA zone, default UTC), matching Analytics' Monday week boundary.
+`weekTotals.publishedThisWeek` and each client's `publishedThisWeek` count distinct post groups
+with a visible, non-removed published child whose `publishAt` is between Monday 00:00 and now,
+inclusive. Genuine imports published this week count; import/creation time does not.
+Production-hidden test providers follow `SHOW_FAKE_PROVIDERS` as elsewhere.
+
+The additive `upcomingGroups` field contains up to 12 groups ordered by earliest future scheduled
+publish time: `groupId`, `workspaceId`, `workspaceName`, `caption` (article title for WordPress),
+`publishAt`, `laterCount` (children scheduled after that earliest time), and `accounts`
+(`connectionId`, `provider`, `name`). The web Overview renders account badges with name tooltips
+and `+N later`. Legacy `upcoming` remains available with its original per-platform shape and limit.

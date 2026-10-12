@@ -39,10 +39,13 @@ const conn = (id: string, provider: string, over: Row = {}): Row => ({
   ...over,
 });
 const post = (provider: string, status: string, over: Row = {}): Row => ({
+  id: `${provider}-${status}`,
+  groupId: `${provider}-${status}`,
+  connectionId: `c-${provider}`,
   provider,
   status,
   caption: `${provider} ${status}`,
-  publishAt: null,
+  publishAt: status === 'published' ? new Date(now.getTime() - 3600_000) : null,
   createdAt: new Date(now.getTime() - 3600_000),
   ...over,
 });
@@ -154,5 +157,122 @@ describe('overviewForUser — test-only providers', () => {
     vi.stubEnv('NODE_ENV', 'test');
     const ov = await overviewForUser('user-1', clock);
     expect(ov.clients[0]!.followers).toBe(134); // not 5134
+  });
+});
+
+describe('overview groups and publication weeks', () => {
+  it('groups accounts, uses the earliest schedule, counts later deliveries and preserves legacy rows', async () => {
+    tables.set(schema.connections, [
+      conn('fb', 'facebook', { displayName: 'Acme Page' }),
+      conn('ig', 'instagram', { displayName: 'Acme Photos' }),
+    ]);
+    tables.set(schema.postGroups, [{ id: 'shared', caption: 'Group caption' }]);
+    tables.set(schema.posts, [
+      post('instagram', 'scheduled', {
+        groupId: 'shared',
+        connectionId: 'ig',
+        publishAt: new Date(soon.getTime() + 1000),
+      }),
+      post('facebook', 'scheduled', { groupId: 'shared', connectionId: 'fb', publishAt: soon }),
+      post('facebook', 'scheduled', {
+        groupId: 'first',
+        publishAt: new Date(soon.getTime() - 1000),
+      }),
+    ]);
+    const ov = await overviewForUser('user-1', clock);
+    expect(ov.upcomingGroups.map((g) => g.groupId)).toEqual(['first', 'shared']);
+    expect(ov.upcomingGroups[1]).toMatchObject({
+      caption: 'Group caption',
+      publishAt: soon,
+      laterCount: 1,
+      accounts: [
+        { connectionId: 'ig', provider: 'instagram', name: 'Acme Photos' },
+        { connectionId: 'fb', provider: 'facebook', name: 'Acme Page' },
+      ],
+    });
+    expect(ov.upcoming).toHaveLength(3);
+  });
+
+  it('limits to twelve groups after ordering, including all their accounts', async () => {
+    tables.set(
+      schema.posts,
+      Array.from({ length: 14 }, (_, i) => [
+        post('facebook', 'scheduled', {
+          groupId: `g${i}`,
+          publishAt: new Date(soon.getTime() + i * 1000),
+        }),
+        post('instagram', 'scheduled', {
+          groupId: `g${i}`,
+          publishAt: new Date(soon.getTime() + i * 1000),
+        }),
+      ])
+        .flat()
+        .reverse(),
+    );
+    const ov = await overviewForUser('user-1', clock);
+    expect(ov.upcomingGroups).toHaveLength(12);
+    expect(ov.upcomingGroups.map((g) => g.groupId)).toEqual(
+      Array.from({ length: 12 }, (_, i) => `g${i}`),
+    );
+    expect(ov.upcomingGroups.every((g) => g.accounts.length === 2 && g.laterCount === 0)).toBe(
+      true,
+    );
+  });
+
+  it('uses the article title for WordPress', async () => {
+    tables.set(schema.posts, [
+      post('wordpress', 'scheduled', {
+        publishAt: soon,
+        options: { kind: 'wordpress', title: 'Article title' },
+      }),
+    ]);
+    expect((await overviewForUser('user-1', clock)).upcomingGroups[0]?.caption).toBe(
+      'Article title',
+    );
+  });
+
+  it('counts actual publications including imports once per group, excluding removed, hidden, missing and future times', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('SHOW_FAKE_PROVIDERS', 'false');
+    tables.set(schema.posts, [
+      post('facebook', 'published', {
+        source: 'imported',
+        groupId: 'old',
+        publishAt: new Date('2026-01-01'),
+      }),
+      post('facebook', 'published', {
+        source: 'imported',
+        groupId: 'new',
+        createdAt: new Date('2026-01-01'),
+      }),
+      post('instagram', 'published', { groupId: 'new' }),
+      post('facebook', 'published', { groupId: 'removed', platformRemovedAt: now }),
+      post('fake', 'published'),
+      post('facebook', 'published', { groupId: 'missing', publishAt: null }),
+      post('facebook', 'published', { groupId: 'future', publishAt: soon }),
+    ]);
+    const ov = await overviewForUser('user-1', clock);
+    expect(ov.clients[0]?.publishedThisWeek).toBe(1);
+    expect(ov.weekTotals.publishedThisWeek).toBe(1);
+  });
+
+  it('includes Monday midnight, excludes the instant before, and uses the viewer timezone', async () => {
+    const start = new Date('2026-07-19T18:30:00Z'); // Monday midnight Kolkata
+    tables.set(schema.posts, [
+      post('facebook', 'published', { groupId: 'boundary', publishAt: start }),
+      post('facebook', 'published', {
+        groupId: 'before',
+        publishAt: new Date(start.getTime() - 1),
+      }),
+      post('facebook', 'published', { groupId: 'now', publishAt: now }),
+    ]);
+    expect(
+      (await overviewForUser('user-1', clock, 'Asia/Kolkata')).weekTotals.publishedThisWeek,
+    ).toBe(2);
+    expect((await overviewForUser('user-1', clock)).weekTotals.publishedThisWeek).toBe(1);
+  });
+
+  it('rejects invalid timezones', async () => {
+    await expect(overviewForUser('user-1', clock, 'invalid')).rejects.toThrow('Invalid timezone');
   });
 });
