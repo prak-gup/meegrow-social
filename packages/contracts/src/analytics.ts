@@ -317,6 +317,14 @@ export const analyticsReportView = z.object({
       /** First local day of the bucket, `YYYY-MM-DD`. */
       key: z.string(),
       start: z.coerce.date(),
+      /** Intersection of this bucket with the selected publication window. */
+      window: z
+        .object({
+          from: z.coerce.date(),
+          to: z.coerce.date(),
+          partial: z.boolean(),
+        })
+        .optional(),
       posts: z.number().int(),
       totals: conceptValues,
       engagementRate: nullableNumber,
@@ -338,6 +346,8 @@ export const analyticsReportView = z.object({
         posts: z.number().int(),
         /** Mean of `by` over the slot's posts that report it; null when none does. */
         average: nullableNumber,
+        /** Descriptive ramp index, not a rank or recommendation. */
+        level: z.number().int().min(0).max(4).nullable().optional(),
       }),
     ),
     /** The three best-scoring slots, best first. */
@@ -355,6 +365,8 @@ export const analyticsReportView = z.object({
     z.object({
       connectionId: z.string().uuid(),
       points: z.array(z.object({ day: z.string(), value: z.number() })),
+      /** Calendar days, including null gaps; never forward-filled. */
+      dailyPoints: z.array(z.object({ day: z.string(), value: nullableNumber })).optional(),
     }),
   ),
   formats: z.array(
@@ -430,6 +442,10 @@ export const analyticsReportView = z.object({
         posts: z.number().int(),
       }),
     ),
+    /** Display-qualified points: one account and at least ten contributors per age. */
+    displayPoints: z
+      .array(z.object({ untilHours: z.number(), pct: z.number(), posts: z.number().int() }))
+      .optional(),
     /** `untilHours` of the first point at or past 50% / 80%; null when never reached or no curve. */
     halfByHours: nullableNumber,
     eightyByHours: nullableNumber,

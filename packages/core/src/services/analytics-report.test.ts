@@ -10,9 +10,13 @@ import {
   buildAnalyticsReport,
   engagementHistory,
   followerSection,
+  followerCalendar,
+  publicationWindow,
+  engagementAgeDisplayPoints,
   formatSection,
   frequencySection,
   publishSlot,
+  publicationIntensity,
   rawMetricRows,
   resolvePeriod,
   timeBuckets,
@@ -203,6 +207,7 @@ describe('best time to post', () => {
       hour: 7,
       posts: 1,
       average: null,
+      level: null,
     });
   });
 
@@ -708,5 +713,79 @@ describe('buildAnalyticsReport', () => {
       }),
     );
     expect(report.summary.lastCapturedAt).toEqual(ago(2 * HOUR));
+  });
+});
+
+describe('analytics v3 display facts', () => {
+  it('keeps missing intensity distinct from observed zero and caps the ramp', () => {
+    expect(publicationIntensity(null, 100)).toBeNull();
+    expect(publicationIntensity(0, 100)).toBe(0);
+    expect(publicationIntensity(0, 0)).toBe(0);
+    expect(publicationIntensity(25, 100)).toBe(1);
+    expect(publicationIntensity(75, 100)).toBe(3);
+    expect(publicationIntensity(100, 100)).toBe(4);
+    expect(publicationIntensity(200, 100)).toBe(4);
+  });
+  it('clips partial publication buckets to the actual window', () => {
+    const buckets = timeBuckets(period30, 'UTC', 'week');
+    expect(publicationWindow(buckets[0]!, period30)).toEqual({
+      from: period30.start,
+      to: buckets[0]!.end,
+      partial: true,
+    });
+    expect(publicationWindow(buckets[1]!, period30).partial).toBe(false);
+    expect(publicationWindow(buckets.at(-1)!, period30)).toEqual({
+      from: buckets.at(-1)!.start,
+      to: period30.end,
+      partial: true,
+    });
+  });
+
+  it('expands calendar days through DST without inventing captures or losing zero', () => {
+    const period = resolvePeriod(
+      { from: at('2026-10-31T04:00:00Z'), to: at('2026-11-03T04:59:00Z') },
+      NOW,
+    );
+    expect(
+      followerCalendar(
+        [
+          { day: '2026-10-31', value: 0 },
+          { day: '2026-11-02', value: 12 },
+        ],
+        period,
+        'America/New_York',
+      ),
+    ).toEqual([
+      { day: '2026-10-31', value: 0 },
+      { day: '2026-11-01', value: null },
+      { day: '2026-11-02', value: 12 },
+    ]);
+    expect(followerCalendar([], period, 'America/New_York').every((p) => p.value === null)).toBe(
+      true,
+    );
+  });
+
+  it('requires one account and ten contributors at each age, retaining observed zero', () => {
+    const points = [
+      { untilHours: 6, pct: 50, posts: 9 },
+      { untilHours: 12, pct: 0, posts: 10 },
+      { untilHours: 24, pct: null, posts: 12 },
+      { untilHours: 48, pct: 80, posts: 11 },
+    ];
+    expect(engagementAgeDisplayPoints(points, 1)).toEqual([points[1], points[3]]);
+    expect(engagementAgeDisplayPoints(points, 0)).toEqual([]);
+    expect(engagementAgeDisplayPoints(points, 2)).toEqual([]);
+    expect(engagementAgeDisplayPoints([], 1)).toEqual([]);
+  });
+
+  it('exposes optional display facts via the report without synthesising findings', () => {
+    const report = buildAnalyticsReport(
+      input({ followerPoints: [{ connectionId: IG, value: 0, capturedAt: ago(DAY) }] }),
+    );
+    expect(report.overTime[0]!.window?.partial).toBe(true);
+    expect(report.followerSeries[0]!.dailyPoints?.some((p) => p.value === 0)).toBe(true);
+    expect(report.followerSeries[0]!.dailyPoints?.some((p) => p.value === null)).toBe(true);
+    expect(report.accumulation.displayPoints).toEqual([]);
+    expect(report.summary.totals.views.value).toBeNull();
   });
 });

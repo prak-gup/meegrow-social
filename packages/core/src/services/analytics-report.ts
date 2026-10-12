@@ -170,6 +170,37 @@ export function timeBuckets(
   return out;
 }
 
+/** Visible publication interval; a truncated bucket must never look like a full week. */
+export function publicationWindow(bucket: TimeBucket, period: ReportPeriod) {
+  return {
+    from: new Date(Math.max(bucket.start.getTime(), period.start.getTime())),
+    to: new Date(Math.min(bucket.end.getTime(), period.end.getTime())),
+    partial: bucket.start < period.start || bucket.end > period.end,
+  };
+}
+
+/** Expand observed daily captures across the local calendar, preserving missing days as null. */
+export function followerCalendar(
+  points: ReadonlyArray<{ day: string; value: number }>,
+  period: ReportPeriod,
+  zone: string,
+): Array<{ day: string; value: number | null }> {
+  const observed = new Map(points.map((p) => [p.day, p.value]));
+  return timeBuckets(period, zone, 'day').map((b) => ({
+    day: b.key,
+    value: observed.get(b.key) ?? null,
+  }));
+}
+
+/** Sample guardrail, not a significance test. Mixed-account samples never earn a plotted point. */
+export function engagementAgeDisplayPoints(
+  points: AnalyticsReportView['accumulation']['points'],
+  selectedAccounts: number,
+): NonNullable<AnalyticsReportView['accumulation']['displayPoints']> {
+  if (selectedAccounts !== 1) return [];
+  return points.flatMap((p) => (p.posts >= 10 && p.pct !== null ? [{ ...p, pct: p.pct }] : []));
+}
+
 /** Monday = 0 … Sunday = 6, and the hour 0–23, of an instant in `zone`. */
 export function publishSlot(at: Date, zone: string): { weekday: number; hour: number } {
   const dt = local(at, zone);
@@ -236,6 +267,13 @@ function byEngagement(a: Measured, b: Measured): number {
   );
 }
 
+/** Descriptive intensity; null is missing and zero occupies the palest observed cell. */
+export function publicationIntensity(value: number | null, maximum: number): number | null {
+  if (value === null) return null;
+  if (value <= 0 || maximum <= 0) return 0;
+  return Math.min(4, Math.ceil((value / maximum) * 4));
+}
+
 /**
  * Publish slots (weekday × hour in `zone`) scored by the mean of `by` over the slot's posts that
  * report it. The top three are the best-scoring slots above zero; more posts wins a tie.
@@ -272,7 +310,12 @@ export function bestTimes(
     .flatMap((c) => (c.average !== null && c.average > 0 ? [{ ...c, average: c.average }] : []))
     .sort((a, b) => b.average - a.average || b.posts - a.posts)
     .slice(0, 3);
-  return { cells, top, postsCounted };
+  const maximum = Math.max(0, ...cells.map((c) => c.average ?? 0));
+  return {
+    cells: cells.map((c) => ({ ...c, level: publicationIntensity(c.average, maximum) })),
+    top,
+    postsCounted,
+  };
 }
 
 /**
@@ -311,9 +354,11 @@ export function followerSection(
     // Oldest first, so a later capture on the same local day overwrites the earlier one.
     const days = new Map<string, number>();
     for (const p of inside) days.set(bucketKey(p.capturedAt, zone, 'day'), p.value);
+    const daily = [...days].map(([day, v]) => ({ day, value: v }));
     followerSeries.push({
       connectionId: account.id,
-      points: [...days].map(([day, v]) => ({ day, value: v })),
+      points: daily,
+      dailyPoints: followerCalendar(daily, period, zone),
     });
   }
   const known = value !== null && comparable;
@@ -615,6 +660,7 @@ export function buildAnalyticsReport(input: ReportInput): AnalyticsReportView {
     return {
       key: bucket.key,
       start: bucket.start,
+      window: publicationWindow(bucket, period),
       posts: own.length,
       totals: sumConcepts(values),
       engagementRate: engagementRate(values).rate,
@@ -626,6 +672,10 @@ export function buildAnalyticsReport(input: ReportInput): AnalyticsReportView {
   });
 
   const top = [...current].sort(byEngagement);
+  const accumulation = accumulationSection(
+    accumulationCandidates(current, period),
+    input.snapshots,
+  );
 
   return {
     generatedAt: input.now,
@@ -666,7 +716,10 @@ export function buildAnalyticsReport(input: ReportInput): AnalyticsReportView {
     postsOmitted: Math.max(0, top.length - ANALYTICS_REPORT_MAX_POSTS),
     rawMetrics: rawMetricRows(current),
     frequency: frequencySection(current, period, zone),
-    accumulation: accumulationSection(accumulationCandidates(current, period), input.snapshots),
+    accumulation: {
+      ...accumulation,
+      displayPoints: engagementAgeDisplayPoints(accumulation.points, accounts.length),
+    },
   };
 }
 
