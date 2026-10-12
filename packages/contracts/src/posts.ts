@@ -108,6 +108,9 @@ export const wordpressRemoteArticle = z.object({
   categories: z.array(z.string()),
   tags: z.array(z.string()),
   author: z.string(),
+  categoryIds: z.array(z.number().int().positive()).optional(),
+  tagIds: z.array(z.number().int().positive()).optional(),
+  featuredMediaId: z.number().int().nonnegative().optional(),
   bodyFormat: z.literal('html'),
   bodyTruncated: z.boolean(),
 });
@@ -449,3 +452,23 @@ export const postValidationResult = z.object({
   issues: z.array(postValidationIssue),
 });
 export type PostValidationResult = z.infer<typeof postValidationResult>;
+
+/** Remote edits are independent of scheduler lifecycle edits. IDs refer to existing site terms/media. */
+export const remotePostFields = z
+  .object({
+    title: z.string().trim().min(1).max(300).optional(),
+    body: z.string().max(ARTICLE_BODY_MAX).optional(),
+    excerpt: z.string().max(2000).optional(),
+    slug: z.string().max(200).optional(),
+    status: z.enum(['draft', 'publish', 'pending', 'private']).optional(),
+    categories: z.array(z.number().int().positive()).max(100).optional(),
+    tags: z.array(z.number().int().positive()).max(100).optional(),
+    featuredImage: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+export const remotePostVersion = z.object({ expectedModifiedAt: z.string().datetime() }).strict();
+export const updateRemotePostInput = remotePostVersion.extend({ fields: remotePostFields });
+export const trashRemotePostInput = remotePostVersion.extend({ confirm: z.literal(true) });
+export type RemotePostFields = z.infer<typeof remotePostFields>;
+export type UpdateRemotePostInput = z.infer<typeof updateRemotePostInput>;
+export type TrashRemotePostInput = z.infer<typeof trashRemotePostInput>;

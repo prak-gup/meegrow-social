@@ -1,4 +1,5 @@
 import type {
+  RemotePostFields,
   ConnectInputKind,
   ConnectMethod,
   SiteCheck,
@@ -8,6 +9,7 @@ import type {
   PostOptions,
 } from '@meegrow-social/contracts';
 import type {
+  PublishedPostItem,
   PublishedPostPage,
   PublishedPostPresence,
   PublishedPostQuery,
@@ -199,6 +201,18 @@ export interface SocialProvider {
    * published. Optional: a provider without it is simply never imported from.
    */
   listPublishedPosts?(tokens: AuthTokens, query: PublishedPostQuery): Promise<PublishedPostPage>;
+  /** Read a single existing article, including the version required for remote edits. */
+  readPublishedPost?(tokens: AuthTokens, id: string): Promise<PublishedPostItem>;
+  /** Must check the observed version before writing and return an independent read-back. */
+  updatePublishedPost?(
+    tokens: AuthTokens,
+    id: string,
+    expectedModifiedAt: string,
+    fields: RemotePostFields,
+    bodyFormat: 'html' | 'markdown',
+  ): Promise<PublishedPostItem>;
+  /** Trash only, never force-delete. Must independently observe the trash status. */
+  deletePublishedPost?(tokens: AuthTokens, id: string, expectedModifiedAt: string): Promise<void>;
   /** Whether the platform still has this post. Optional; without it nothing is marked removed. */
   publishedPostPresence?(
     tokens: AuthTokens,

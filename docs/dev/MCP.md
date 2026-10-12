@@ -285,3 +285,27 @@ Each of these calls the same `core` function as the tool beside it.
 | `POST /v1/posts/metrics/latest`, `GET /v1/analytics/status`                    | Dashboard reads added with the UI pass; `post_metrics` covers one post                  |
 | `GET /v1/analytics/report?scope=all`                                           | Spans every workspace of a signed-in user; a key has one workspace (`analytics_report`) |
 | Tags, reviews                                                                  | Workstreams C1 and B2 are not built; their tools are added with them                    |
+
+## Remote WordPress article management
+
+These tools manage one existing article, including imported articles; they do not use scheduler
+lifecycle edits. Both REST and MCP call the same workspace-scoped core services.
+
+- `refresh_remote_post { postId }`: observe the current site copy, store its HTML and
+  `options.remote.modifiedAt`. Discards the prior stored observation. REST:
+  `POST /v1/posts/:id/remote/refresh` with `{}`.
+- `update_remote_post { postId, expectedModifiedAt, fields }`: optional fields `title`, `body`,
+  `excerpt`, `slug`, `status` (`draft|publish|pending|private`), `categories`, `tags`,
+  `featuredImage`. Terms are arrays of existing numeric site IDs; featured image is an existing
+  attachment ID (0 removes). Omitted fields remain unchanged; empty term arrays remove assignments.
+  REST: `POST /v1/posts/:id/remote/update`, same input without `postId`.
+- `trash_remote_post { postId, expectedModifiedAt, confirm: true }`: call only after an explicit
+  human confirmation to move this article to WordPress trash, where it can be restored. REST:
+  `POST /v1/posts/:id/remote/trash`, same input without `postId`. Never bulk or permanent delete.
+
+All return the updated stored `PostView` (REST wraps it as `{ post }`). Refresh first when no
+modification date has been stored, or when a conflict asks for refresh. Imported HTML is submitted
+as HTML; it is never converted through Markdown. A truncated stored body cannot be edited, but
+other fields can. Independent read-back must match requested fields; failures say the write is
+unconfirmed or not stored and must not be blindly retried. Failed or mismatched writes are audited;
+a mismatch stores the observed site values. Tool annotations identify these as open-world writes.

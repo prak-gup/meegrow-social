@@ -35,6 +35,9 @@ vi.mock('@meegrow-social/core', async (importOriginal) => ({
   requestPostImport: vi.fn(),
   retryPost: vi.fn(),
   updatePost: vi.fn(),
+  updateRemotePost: vi.fn(),
+  trashRemotePost: vi.fn(),
+  refreshRemotePost: vi.fn(),
   validatePost: vi.fn(),
 }));
 
@@ -68,11 +71,14 @@ const EXPECTED_TOOLS = [
   'list_workspaces',
   'post_metrics',
   'preview_queue_slots',
+  'refresh_remote_post',
   'register_media_from_url',
   'retry_post',
   'schedule_post',
+  'trash_remote_post',
   'unschedule_post',
   'update_post',
+  'update_remote_post',
   'validate_post',
 ];
 
@@ -788,5 +794,54 @@ describe('failures come back as tool errors, not thrown JSON-RPC errors', () => 
     for (const outcome of [badId, badStatus, badLimit]) expect(outcome.isError).toBe(true);
     expect(core.getPost).not.toHaveBeenCalled();
     expect(core.listPosts).not.toHaveBeenCalled();
+  });
+});
+
+describe('remote article MCP delegation', () => {
+  const expectedModifiedAt = '2026-10-10T11:00:00.000Z';
+  it('passes authenticated context, version and fields to core', async () => {
+    vi.mocked(core.updateRemotePost).mockResolvedValue({ id: POST } as never);
+    expect(
+      (
+        await call('update_remote_post', {
+          postId: POST,
+          expectedModifiedAt,
+          fields: { title: 'New' },
+        })
+      ).isError,
+    ).toBeFalsy();
+    expect(core.updateRemotePost).toHaveBeenCalledWith(
+      { workspaceId: WS, apiKeyId: 'key-1' },
+      POST,
+      { expectedModifiedAt, fields: { title: 'New' } },
+    );
+  });
+  it('requires explicit confirmation before passing trash to core', async () => {
+    expect(
+      (await call('trash_remote_post', { postId: POST, expectedModifiedAt, confirm: false }))
+        .isError,
+    ).toBe(true);
+    expect(core.trashRemotePost).not.toHaveBeenCalled();
+    vi.mocked(core.trashRemotePost).mockResolvedValue({ id: POST } as never);
+    await call('trash_remote_post', { postId: POST, expectedModifiedAt, confirm: true });
+    expect(core.trashRemotePost).toHaveBeenCalledWith(
+      { workspaceId: WS, apiKeyId: 'key-1' },
+      POST,
+      { expectedModifiedAt, confirm: true },
+    );
+  });
+  it('maps site conflicts to invalid_state', async () => {
+    vi.mocked(core.updateRemotePost).mockRejectedValue(
+      new core.ProviderConflictError('changed on the site — refresh'),
+    );
+    expect(
+      (
+        await call('update_remote_post', {
+          postId: POST,
+          expectedModifiedAt,
+          fields: { title: 'New' },
+        })
+      ).body,
+    ).toMatchObject({ error: 'invalid_state' });
   });
 });

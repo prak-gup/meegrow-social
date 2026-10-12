@@ -1,3 +1,6 @@
+import { ProviderConflictError } from '@meegrow-social/core';
+import { updateRemotePostInput, trashRemotePostInput } from '@meegrow-social/contracts';
+import { updateRemotePost, trashRemotePost, refreshRemotePost } from '@meegrow-social/core';
 import { resolve } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
@@ -1175,6 +1178,40 @@ export async function buildServer(): Promise<FastifyInstance> {
     if (!post) return reply.code(404).send({ error: 'not found' });
     return { post };
   });
+
+  for (const action of ['refresh', 'update', 'trash'] as const) {
+    app.post<{ Params: { id: string } }>(`/v1/posts/:id/remote/${action}`, async (req, reply) => {
+      const ctx = req.authContext!;
+      try {
+        let post;
+        if (action === 'refresh') post = await refreshRemotePost(ctx, req.params.id);
+        else if (action === 'update') {
+          const parsed = updateRemotePostInput.safeParse(req.body);
+          if (!parsed.success)
+            return reply.code(400).send({ error: 'Invalid remote article edit.' });
+          post = await updateRemotePost(ctx, req.params.id, parsed.data);
+        } else {
+          const parsed = trashRemotePostInput.safeParse(req.body);
+          if (!parsed.success)
+            return reply
+              .code(400)
+              .send({ error: 'Explicit confirmation and modification date are required.' });
+          post = await trashRemotePost(ctx, req.params.id, parsed.data);
+        }
+        if (!post) return reply.code(404).send({ error: 'not found' });
+        return { post };
+      } catch (err) {
+        if (err instanceof PostStateError || err instanceof ProviderConflictError)
+          return reply.code(409).send({ error: err.message });
+        if (err instanceof ProviderBadRequestError)
+          return reply.code(400).send({ error: err.message });
+        if (err instanceof ProviderAuthError) return reply.code(401).send({ error: err.message });
+        if (err instanceof ProviderTransientError)
+          return reply.code(503).send({ error: err.message });
+        throw err;
+      }
+    });
+  }
 
   app.patch<{ Params: { id: string } }>('/v1/posts/:id', async (req, reply) => {
     const parsed = updatePostInput.safeParse(req.body);

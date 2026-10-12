@@ -1,6 +1,8 @@
+import { readArticle, updateArticle, trashArticle } from './manage.js';
 import { listArticles, articlePresence } from './articles.js';
 import type { PublishedPostQuery } from '../published-posts.js';
 import {
+  type RemotePostFields,
   ARTICLE_BODY_MAX,
   articleMarkdownToHtml,
   articleMarkdownToText,
@@ -105,6 +107,22 @@ export class WordPressProvider implements SocialProvider {
    * can use, why not when it cannot, which addresses WordPress goes by, and the exact `xmlrpc.php`
    * a login would be sent to. Unauthenticated requests only.
    */
+  readPublishedPost(tokens: AuthTokens, id: string) {
+    return readArticle(this.client, this.xmlrpc, tokens, id);
+  }
+  updatePublishedPost(
+    tokens: AuthTokens,
+    id: string,
+    expected: string,
+    fields: RemotePostFields,
+    format: 'html' | 'markdown',
+  ) {
+    return updateArticle(this.client, this.xmlrpc, tokens, id, expected, fields, format);
+  }
+  deletePublishedPost(tokens: AuthTokens, id: string, expected: string) {
+    return trashArticle(this.client, this.xmlrpc, tokens, id, expected);
+  }
+
   async inspectSite(siteUrl: string): Promise<SiteInspection> {
     const inspection = await this.client.inspect(siteUrl);
     let endpoint: string | null = null;

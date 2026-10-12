@@ -36,6 +36,9 @@ vi.mock('@meegrow-social/core', async (importOriginal) => ({
   getAnalyticsStatus: vi.fn(),
   getLatestPostMetrics: vi.fn(),
   getPost: vi.fn(),
+  updateRemotePost: vi.fn(),
+  trashRemotePost: vi.fn(),
+  refreshRemotePost: vi.fn(),
   getPostGroup: vi.fn(),
   getPostMetrics: vi.fn(),
   listPostGroups: vi.fn(),
@@ -1060,5 +1063,57 @@ describe('outstanding invite links', () => {
     const res = await revoke({ cookie: 'mg_sid=good', origin: 'https://evil.example' });
     expect(res.statusCode).toBe(403);
     expect(core.revokeConnectInvite).not.toHaveBeenCalled();
+  });
+});
+
+describe('remote article REST delegation', () => {
+  const expectedModifiedAt = '2026-10-10T11:00:00.000Z';
+  it('passes the authenticated actor, version and fields to core', async () => {
+    vi.mocked(core.updateRemotePost).mockResolvedValue({ id: POST } as never);
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/posts/${POST}/remote/update`,
+      headers: auth,
+      payload: { expectedModifiedAt, fields: { title: 'New' } },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(core.updateRemotePost).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: WS }),
+      POST,
+      { expectedModifiedAt, fields: { title: 'New' } },
+    );
+  });
+  it('rejects missing confirmation before calling core', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/posts/${POST}/remote/trash`,
+      headers: auth,
+      payload: { expectedModifiedAt },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(core.trashRemotePost).not.toHaveBeenCalled();
+  });
+  it('maps site-version conflicts to 409', async () => {
+    vi.mocked(core.updateRemotePost).mockRejectedValue(
+      new core.ProviderConflictError('changed on the site — refresh'),
+    );
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/posts/${POST}/remote/update`,
+      headers: auth,
+      payload: { expectedModifiedAt, fields: { title: 'New' } },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error).toContain('refresh');
+  });
+  it('refreshes through core and does not expose credentials', async () => {
+    vi.mocked(core.refreshRemotePost).mockResolvedValue({ id: POST } as never);
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/posts/${POST}/remote/refresh`,
+      headers: auth,
+      payload: {},
+    });
+    expect(response.json()).toEqual({ post: { id: POST } });
   });
 });
