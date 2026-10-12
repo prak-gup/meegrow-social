@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { OverviewView, ClientOverview } from '@meegrow-social/contracts';
+import { PlatformBadge } from '../components/ui/PlatformBadge';
+import { browserTimezone } from '../lib/analyticsReport';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { clientHue } from '../lib/clientHue';
@@ -23,7 +25,7 @@ export function Overview() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setOv(await api.overview());
+      setOv(await api.overview(browserTimezone()));
     } finally {
       setLoading(false);
     }
@@ -214,20 +216,35 @@ export function Overview() {
       />
 
       {/* publishing next */}
-      {ov && ov.upcoming.length > 0 && (
+      {ov && <PublishingNext groups={ov.upcomingGroups} />}
+
+      {adding && <AddClientModal onClose={() => setAdding(false)} />}
+    </div>
+  );
+}
+
+export function PublishingNext({ groups }: { groups: OverviewView['upcomingGroups'] }) {
+  return (
+    <>
+      {groups.length > 0 && (
         <>
           <h2 className="mb-2 mt-5 text-base font-semibold text-ink">Publishing next</h2>
           <Table
             caption="Publishing next"
             dense
-            rows={ov.upcoming}
-            rowKey={(u, i) => `${i}-${u.workspaceName}`}
+            rows={groups}
+            rowKey={(u) => `${u.workspaceId}-${u.groupId}`}
             columns={[
               {
                 key: 'when',
                 header: 'When',
                 className: 'whitespace-nowrap text-muted',
-                cell: (u) => nextPublishLabel(u.publishAt),
+                cell: (u) => (
+                  <span>
+                    {nextPublishLabel(u.publishAt)}
+                    {u.laterCount > 0 && <span className="ml-2">+{u.laterCount} later</span>}
+                  </span>
+                ),
               },
               {
                 key: 'client',
@@ -245,6 +262,20 @@ export function Overview() {
                 ),
               },
               {
+                key: 'platforms',
+                header: 'Accounts',
+                cell: (u) => (
+                  <span className="flex gap-2">
+                    {u.accounts.map((a) => (
+                      <span key={a.connectionId} title={`${a.name} (${a.provider})`}>
+                        <PlatformBadge provider={a.provider} name={a.name} size="sm" />
+                        <span className="sr-only">{a.name}</span>
+                      </span>
+                    ))}
+                  </span>
+                ),
+              },
+              {
                 key: 'caption',
                 header: 'Post',
                 className: 'w-full max-w-0 truncate',
@@ -254,8 +285,6 @@ export function Overview() {
           />
         </>
       )}
-
-      {adding && <AddClientModal onClose={() => setAdding(false)} />}
-    </div>
+    </>
   );
 }

@@ -9,6 +9,7 @@ import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import {
   analyticsReportQuery,
+  overviewQuery,
   bulkPostMetricsInput,
   calendarPostsQuery,
   changePasswordInput,
@@ -524,7 +525,14 @@ export async function buildServer(): Promise<FastifyInstance> {
   app.get('/v1/overview', async (req, reply) => {
     const userId = req.authContext?.userId;
     if (!userId) return reply.code(401).send({ error: 'session required' });
-    return overviewForUser(userId);
+    const parsed = overviewQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    try {
+      return await overviewForUser(userId, undefined, parsed.data.timezone);
+    } catch (err) {
+      if (err instanceof AnalyticsQueryError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
   });
 
   // Add a client: create a workspace and make the caller its owner. Session-only.

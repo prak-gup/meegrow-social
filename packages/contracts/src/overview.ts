@@ -33,6 +33,25 @@ export const upcomingPost = z.object({
 });
 export type UpcomingPost = z.infer<typeof upcomingPost>;
 
+/** Monday 00:00 in the viewer's zone; UTC for callers that omit it. */
+export const overviewQuery = z.object({ timezone: z.string().min(1).max(64).default('UTC') });
+
+export const upcomingPostGroup = z.object({
+  groupId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  workspaceName: z.string(),
+  caption: z.string(),
+  publishAt: z.coerce.date(),
+  laterCount: z.number().int().nonnegative(),
+  accounts: z.array(
+    z.object({
+      connectionId: z.string().uuid(),
+      provider: providerIdentifier,
+      name: z.string(),
+    }),
+  ),
+});
+
 export const overviewView = z.object({
   generatedAt: z.coerce.date(),
   attention: z.object({
@@ -44,6 +63,7 @@ export const overviewView = z.object({
   weekTotals: z.object({ publishedThisWeek: z.number().int() }),
   clients: z.array(clientOverview),
   upcoming: z.array(upcomingPost),
+  upcomingGroups: z.array(upcomingPostGroup),
 });
 export type OverviewView = z.infer<typeof overviewView>;
 

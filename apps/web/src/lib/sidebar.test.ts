@@ -168,6 +168,7 @@ describe('switcher data', () => {
     attention: { failedPublishes: 0, needsReconnect: 0, tokensExpiring: 0, emptyQueues: 0 },
     weekTotals: { publishedThisWeek: 0 },
     upcoming: [],
+    upcomingGroups: [],
     clients: [
       {
         workspaceId: 'a',
