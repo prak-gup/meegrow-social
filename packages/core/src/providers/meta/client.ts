@@ -69,7 +69,22 @@ const TRANSIENT_CODES = new Set([1, 2]);
  * Unknown 4xx is treated as bad_request (retrying a malformed call never helps); unknown 5xx as
  * transient.
  */
-export function mapMetaError(status: number, body: unknown): Error {
+export function mapMetaError(
+  status: number,
+  body: unknown,
+  headers?: { get(name: string): string | null },
+): Error {
+  const raw = headers?.get('retry-after');
+  const seconds = raw?.trim() ? Number(raw) : NaN;
+  const headerMs =
+    Number.isFinite(seconds) && seconds >= 0
+      ? seconds * 1000
+      : raw
+        ? Date.parse(raw) - Date.now()
+        : NaN;
+  const regain = readMetaUsage(headers)?.regainAccessMinutes;
+  const hints = [headerMs, regain == null ? NaN : regain * 60_000].filter(Number.isFinite);
+  const retryAfterMs = hints.length > 0 ? Math.max(0, ...hints) : undefined;
   const err = (body as MetaErrorBody | undefined)?.error;
   const code = err?.code;
   const subcode = err?.error_subcode;
@@ -78,10 +93,11 @@ export function mapMetaError(status: number, body: unknown): Error {
 
   if (subcode !== undefined && AUTH_SUBCODES.has(subcode)) return new ProviderAuthError(detail);
   if (code !== undefined && AUTH_CODES.has(code)) return new ProviderAuthError(detail);
-  if (code !== undefined && RATE_LIMIT_CODES.has(code)) return new ProviderRateLimitError(detail);
+  if (code !== undefined && RATE_LIMIT_CODES.has(code))
+    return new ProviderRateLimitError(detail, retryAfterMs);
   if (code !== undefined && TRANSIENT_CODES.has(code)) return new ProviderTransientError(detail);
   if (status >= 500) return new ProviderTransientError(detail);
-  if (status === 429) return new ProviderRateLimitError(detail);
+  if (status === 429) return new ProviderRateLimitError(detail, retryAfterMs);
   return new ProviderBadRequestError(detail);
 }
 
@@ -137,7 +153,7 @@ export class MetaClient {
   ): Promise<{ data: T; usage: MetaUsage | null }> {
     const qs = new URLSearchParams(params).toString();
     const { res, parsed } = await this.send(`${GRAPH_HOST}/${this.version}/${path}?${qs}`, 'GET');
-    if (!res.ok) throw mapMetaError(res.status, parsed);
+    if (!res.ok) throw mapMetaError(res.status, parsed, res.headers);
     return { data: parsed as T, usage: readMetaUsage(res.headers) };
   }
 
@@ -165,7 +181,7 @@ export class MetaClient {
 
   private async request<T>(url: string, method: string, body?: string): Promise<T> {
     const { res, parsed } = await this.send(url, method, body);
-    if (!res.ok) throw mapMetaError(res.status, parsed);
+    if (!res.ok) throw mapMetaError(res.status, parsed, res.headers);
     return parsed as T;
   }
 

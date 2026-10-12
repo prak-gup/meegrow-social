@@ -14,10 +14,33 @@ export class ProviderTransientError extends Error {
   readonly kind = 'transient' as const;
 }
 /**
- * The platform is throttling this app. Still transient — a publish retries it like any other — but
+ * The platform is throttling this app. Still transient, but publishing pauses without spending an ordinary attempt;
  * a sweep that reads many things must stop asking rather than try the next one.
  */
-export class ProviderRateLimitError extends ProviderTransientError {}
+export const RATE_LIMIT_MIN_MS = 30_000;
+export const RATE_LIMIT_MAX_MS = 6 * 60 * 60_000;
+
+export function boundedRateLimitDelay(ms: number): number {
+  return Math.min(RATE_LIMIT_MAX_MS, Math.max(RATE_LIMIT_MIN_MS, Math.ceil(ms)));
+}
+
+export class ProviderRateLimitError extends ProviderTransientError {
+  readonly retryAfterMs: number | undefined;
+  constructor(message: string, retryAfterMs?: number | null) {
+    super(message);
+    this.retryAfterMs =
+      retryAfterMs != null && Number.isFinite(retryAfterMs) && retryAfterMs >= 0
+        ? boundedRateLimitDelay(retryAfterMs)
+        : undefined;
+  }
+
+  delayForPause(pauses: number): number {
+    return (
+      this.retryAfterMs ??
+      boundedRateLimitDelay(120_000 * 2 ** Math.min(16, Math.max(0, pauses - 1)))
+    );
+  }
+}
 
 export type ProviderError = ProviderAuthError | ProviderBadRequestError | ProviderTransientError;
 

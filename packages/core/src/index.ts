@@ -50,3 +50,5 @@ export * from './services/post-import.js';
 export * from './services/metrics-retention.js';
 export * from './services/overview.js';
 export * from './services/invites.js';
+
+export * from './services/publish-rate-limit.js';

@@ -135,24 +135,27 @@ export function transportError(err: unknown, context: TransportContext): Error {
 }
 
 /**
- * "Slow down" from a platform. Still transient, so the publish queue retries it — on its own
- * schedule (2 and 4 minutes later, services/publish-queue.ts), which is longer than any wait these
- * platforms ask for in normal use. The platform's own figure is kept in the message.
+ * "Slow down" from a platform. Preserve its wait as a typed delay for the publish worker.
  */
 export function rateLimited(platform: string, retryAfterSeconds: number | null): Error {
   const wait =
     retryAfterSeconds !== null && Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0
       ? ` It asked for a ${Math.ceil(retryAfterSeconds)} second wait.`
       : '';
-  return new ProviderRateLimitError(`${platform} is rate limiting this connection.${wait}`);
+  return new ProviderRateLimitError(
+    `${platform} is rate limiting this connection.${wait}`,
+    retryAfterSeconds === null ? undefined : retryAfterSeconds * 1000,
+  );
 }
 
-/** A `Retry-After` header in seconds, or null. (The date form is not used by these platforms.) */
+/** A `Retry-After` delta or HTTP date, expressed in seconds, or null. */
 export function retryAfterHeader(response: SafeResponse): number | null {
   const raw = response.headers['retry-after'];
   if (raw === undefined || raw.trim() === '') return null;
   const seconds = Number(raw);
-  return Number.isFinite(seconds) ? seconds : null;
+  if (Number.isFinite(seconds)) return seconds;
+  const date = Date.parse(raw);
+  return Number.isFinite(date) ? Math.max(0, (date - Date.now()) / 1000) : null;
 }
 
 export interface DownloadedMedia {

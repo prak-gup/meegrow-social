@@ -51,6 +51,7 @@ import {
 import { POST_STATUSES, STATUS_LABEL } from '../lib/postStatus';
 import { ImportedMark, PlatformIcons } from '../components/PostMarks';
 import { usePostGroupActions, type PostChange } from '../components/PostGroupActions';
+import { PublishWaitingNote } from '../components/PublishWaitingNote';
 import { PostThumb } from '../components/PostThumb';
 import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -572,6 +573,7 @@ function GroupCard({
           </div>
           <WordPressArticleMeta posts={group.posts} />
           {failed && <FailureLine group={group} />}
+          <PublishWaitingNote posts={group.posts} />
         </div>
         <PostThumb thumb={groupThumb(group)} caption={groupCaption(group)} />
       </div>
@@ -624,6 +626,7 @@ function GroupTable({
             </div>
             <WordPressArticleMeta posts={g.posts} />
             <FailureLine group={g} />
+            <PublishWaitingNote posts={g.posts} />
           </div>
         </div>
       ),

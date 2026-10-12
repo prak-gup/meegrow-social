@@ -1,6 +1,7 @@
 import { db, schema, withWorkspace } from '@meegrow-social/db';
 import { and, asc, eq, isNotNull, isNull, lt, ne, or } from 'drizzle-orm';
 import { PUBLISHABLE_STATUS } from './publish.js';
+import { readRateLimitWait } from './publish-rate-limit.js';
 import { PUBLISH_QUEUE } from './publish-queue.js';
 import { getScheduler, type PublishJobState } from './scheduler.js';
 
@@ -31,8 +32,8 @@ export const PUBLISH_SWEEP_BATCH = 500;
 export type OverdueDecision =
   /** Not the sweep's business: not scheduled, not overdue enough, or a live job stands behind it. */
   | { action: 'leave' }
-  /** Never attempted and only slightly late: queue it again. */
-  | { action: 'requeue'; overdueMs: number }
+  /** Slightly late enqueue loss, or recovery of a persisted rate-limit timer. */
+  | { action: 'requeue'; overdueMs: number; when?: Date }
   /** Mark it failed. `job_died`: its job ran and died. `too_late`: no job, and past the window. */
   | { action: 'fail'; reason: 'job_died' | 'too_late'; overdueMs: number };
 
@@ -40,7 +41,9 @@ export type OverdueDecision =
  * What the sweep does with one post, given what the job engine holds for it. Pure.
  *
  * - A `live` job means the post is waiting its turn or being sent: never touched.
- * - A `dead` job means publishing was attempted and ended without the post being marked — the job
+ * - A persisted rate-limit waiting note means no publish succeeded: recover its timer if missing
+ *   or dead, even beyond the ordinary requeue window. A live delayed job is always left alone.
+ * - Otherwise a `dead` job means publishing was attempted and ended without the post being marked — the job
  *   stalled out (the worker died mid-publish, so BullMQ failed it without the worker's `failed`
  *   handler running) or the mark-failed write was lost. It is failed, never run again by itself:
  *   the platform may already have the post, and a job that killed its worker should not be retried
@@ -51,7 +54,13 @@ export type OverdueDecision =
  * A publish-now post has no `publishAt`; it was due when it was created.
  */
 export function decideOverduePublish(
-  post: { status: string; publishAt: Date | null; createdAt: Date; source?: string },
+  post: {
+    status: string;
+    publishAt: Date | null;
+    createdAt: Date;
+    source?: string;
+    error?: string | null;
+  },
   job: PublishJobState,
   now: Date,
 ): OverdueDecision {
@@ -61,6 +70,13 @@ export function decideOverduePublish(
   const overdueMs = now.getTime() - (post.publishAt ?? post.createdAt).getTime();
   if (overdueMs < PUBLISH_OVERDUE_GRACE_MS) return { action: 'leave' };
   if (job === 'live') return { action: 'leave' };
+  const wait = readRateLimitWait(post.error);
+  if (wait)
+    return {
+      action: 'requeue',
+      overdueMs,
+      when: new Date(Math.min(wait.retryAt.getTime(), wait.deadline.getTime())),
+    };
   if (job === 'dead') return { action: 'fail', reason: 'job_died', overdueMs };
   return overdueMs <= PUBLISH_REQUEUE_WINDOW_MS
     ? { action: 'requeue', overdueMs }
@@ -172,6 +188,7 @@ async function resolveOverduePost(
     const [post] = await tx
       .select({
         status: schema.posts.status,
+        error: schema.posts.error,
         source: schema.posts.source,
         publishAt: schema.posts.publishAt,
         createdAt: schema.posts.createdAt,
@@ -202,12 +219,14 @@ async function resolveOverduePost(
     if (decision.action === 'requeue') {
       // Clear whatever is left under the job id first — the queue drops an add whose id exists.
       await getScheduler().cancelPublish({ postId });
-      await getScheduler().schedulePublish({ workspaceId, postId, when: 'now' });
+      await getScheduler().schedulePublish({ workspaceId, postId, when: decision.when ?? 'now' });
       await tx.insert(schema.eventLogs).values({
         ...log,
         status: 'requeued',
         account,
-        message: `No publish job was found ${describeDuration(decision.overdueMs)} after the post was due; queued again`,
+        message: decision.when
+          ? `Restored the rate-limit retry timer for ${decision.when.toISOString()}.`
+          : `No publish job was found ${describeDuration(decision.overdueMs)} after the post was due; queued again`,
       });
       return 'requeue';
     }

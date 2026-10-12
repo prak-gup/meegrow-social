@@ -12,7 +12,8 @@ export interface PublishJobData {
  * Publish retry policy: 3 attempts, the 2nd and 3rd roughly 2 and 4 minutes after the one before
  * (exponential from `PUBLISH_BACKOFF_MS`). Deliberately few and fast — a social post is tied to
  * its time, so one that cannot go out within minutes should fail where a person sees it rather
- * than appear hours late. Only transient provider errors are retried at all.
+ * than appear hours late. Rate-limit responses use a separate bounded waiting path in the worker
+ * (`DelayedError`) without spending these attempts. Other transient provider errors use this policy.
  */
 export const PUBLISH_ATTEMPTS = 3;
 export const PUBLISH_BACKOFF_MS = 120_000;

@@ -16,7 +16,12 @@ import { platformMeta } from '../lib/platforms';
 import {
   MEDIA_MAX,
   SCHEDULE_MODES,
-  accountWarnings,
+  visibleAccountProblems,
+  initialContentMode,
+  modeConnections,
+  switchContentMode,
+  type ComposerModes,
+  type ContentMode,
   buildCreatePostInput,
   buildValidationInput,
   busyLabel,
@@ -501,7 +506,23 @@ export function Composer({
   const [article, setArticle] = useState<ArticleForm>(emptyArticle);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [media, setMedia] = useState<MediaItem[]>([]);
-  const [connectionIds, setConnectionIds] = useState<string[]>([]);
+  const [contentModes, setContentModes] = useState<ComposerModes>(() => ({
+    contentMode: initialContentMode(background),
+    selections: { post: [], article: [] },
+  }));
+  const { contentMode } = contentModes;
+  const available = useMemo(() => modeConnections(conns, contentMode), [conns, contentMode]);
+  const connectionIds = contentModes.selections[contentMode];
+  const setConnectionIds = (ids: string[]) =>
+    setContentModes((prev) => ({
+      ...prev,
+      selections: { ...prev.selections, [prev.contentMode]: ids },
+    }));
+  const changeContentMode = (next: ContentMode) => {
+    setContentModes((prev) => switchContentMode(prev, next));
+    setAttempted(false);
+    setIssues([]);
+  };
   const [mode, setMode] = useState<ScheduleMode>('draft');
   const [at, setAt] = useState('');
   const [queueId, setQueueId] = useState('');
@@ -534,7 +555,17 @@ export function Composer({
       setConns(visible);
       setQueues(q.queues);
       // Defaults as before: the first visible account and the first queue.
-      setConnectionIds(visible[0] ? [visible[0].id] : []);
+      setContentModes((prev) => ({
+        contentMode: visible.some((c) => isArticleProvider(c.provider)) ? prev.contentMode : 'post',
+        selections: {
+          post: modeConnections(visible, 'post')
+            .slice(0, 1)
+            .map((c) => c.id),
+          article: modeConnections(visible, 'article')
+            .slice(0, 1)
+            .map((c) => c.id),
+        },
+      }));
       setQueueId(q.queues[0]?.id ?? '');
       setLoad({ state: 'ready' });
     } catch (e) {
@@ -594,23 +625,22 @@ export function Composer({
     };
   }, [mode, queueId]);
 
-  // Which accounts can take this post as written: a dry run (`POST /v1/posts/validate`) over EVERY
-  // account, so one that cannot is marked before it is picked. The rules are the server's — each
-  // provider's own — and none is restated here. The validator stops at a contract failure, so the
-  // accounts it rejected there are set aside and the rest are asked about once more. Advisory only:
-  // a failed dry run costs the warnings, never the form, and the server still decides on submit.
+  // Validate only selected accounts in the current content mode. Contract failures are set aside
+  // before asking about the rest. A failed dry run leaves submission to the server's checks.
   const mediaKey = media.map((m) => m.ref.mediaId).join(',');
   const articleKey = JSON.stringify(article);
   useEffect(() => {
-    if (conns.length === 0) return;
+    const checked = selectedConnections(available, connectionIds);
+    setIssues([]);
+    if (checked.length === 0) return;
     let stale = false;
     const timer = window.setTimeout(() => {
       void (async () => {
         const draft = { caption, media: media.map((m) => m.ref), article };
         try {
-          let found = (await api.validatePost(buildValidationInput(draft, conns))).issues;
+          let found = (await api.validatePost(buildValidationInput(draft, checked))).issues;
           const rejected = new Set(contractRejected(found));
-          const rest = conns.filter((c) => !rejected.has(c.id));
+          const rest = checked.filter((c) => !rejected.has(c.id));
           if (rejected.size > 0 && rest.length > 0) {
             const again = await api.validatePost(buildValidationInput(draft, rest));
             found = [...found, ...again.issues];
@@ -627,7 +657,7 @@ export function Composer({
     };
     // `mediaKey` stands for `media`, and `articleKey` for `article`: the values matter, not the
     // objects' identity.
-  }, [caption, mediaKey, articleKey, conns]);
+  }, [caption, mediaKey, articleKey, available, connectionIds]);
 
   useEffect(() => {
     if (outcome) outcomeHeading.current?.focus();
@@ -644,12 +674,18 @@ export function Composer({
   };
   const errors = validateForm(form, queues, new Date(), conns);
   const targets = selectedConnections(conns, connectionIds);
-  const role = captionRole(targets);
-  const writingArticle = role.kind !== 'caption';
+  const role = captionRole([{ provider: contentMode === 'article' ? 'wordpress' : 'facebook' }]);
+  const writingArticle = contentMode === 'article';
   const counts = platformCounts(targets, caption, media.length);
   const setArticleField = <K extends keyof ArticleForm>(field: K, value: ArticleForm[K]) =>
     setArticle((prev) => ({ ...prev, [field]: value }));
-  const warnings = accountWarnings(conns, issues);
+  const warnings = visibleAccountProblems(
+    available,
+    issues,
+    connectionIds,
+    isDirty({ ...form, article: writingArticle ? article : undefined }),
+    attempted,
+  );
   const flagged = targets.filter((c) => warnings.has(c.id)).length;
   const queueName = queues.find((q) => q.id === queueId)?.name;
   const atError = errors.at && (attempted || at !== '') ? errors.at : undefined;
@@ -712,7 +748,7 @@ export function Composer({
 
   const onSubmit = () => {
     setAttempted(true);
-    if (hasErrors(errors)) return;
+    if (hasErrors(errors) || warnings.size > 0) return;
     if (mode === 'now') setConfirming(true);
     else void send();
   };
@@ -766,7 +802,7 @@ export function Composer({
     setCaption('');
     setArticle(emptyArticle());
     setMedia([]);
-    setConnectionIds(conns[0] ? [conns[0].id] : []);
+    setConnectionIds(available[0] ? [available[0].id] : []);
     setMode('draft');
     setAt('');
     setQueueId(queues[0]?.id ?? '');
@@ -870,6 +906,31 @@ export function Composer({
       <div className="grid lg:min-h-full lg:grid-cols-composer lg:grid-rows-head-fill xl:grid-cols-composer-wide xl:grid-rows-1">
         {/* Content first: what is being said, then with what, then when. */}
         <div className="min-w-0 lg:col-start-1 lg:row-start-1 lg:border-r lg:border-hairline-soft">
+          {conns.some((c) => isArticleProvider(c.provider)) && (
+            <div
+              className="flex gap-1 border-b border-hairline-soft px-4 py-3"
+              role="group"
+              aria-label="Content type"
+            >
+              {(['post', 'article'] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={contentMode === value}
+                  onClick={() => changeContentMode(value)}
+                  disabled={busy || uploading > 0}
+                  className={cn(
+                    'rounded-sm px-3 py-1.5 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink',
+                    contentMode === value
+                      ? 'bg-ink text-white'
+                      : 'bg-surface-soft text-ink hover:bg-surface-strong',
+                  )}
+                >
+                  {value === 'post' ? 'Post' : 'Article'}
+                </button>
+              ))}
+            </div>
+          )}
           {writingArticle && (
             <Section
               title="Article"
@@ -1187,15 +1248,13 @@ export function Composer({
             title="Post to"
             hint={
               <>
-                {targets.length} of {conns.length} selected
-                {flagged > 0 && (
-                  <span className="text-status-warn"> · {flagged} with a warning</span>
-                )}
+                {targets.length} of {available.length} selected
+                {flagged > 0 && <span className="text-error"> · {flagged} with a problem</span>}
               </>
             }
           >
             <AccountPicker
-              connections={conns}
+              connections={available}
               selectedIds={connectionIds}
               onChange={setConnectionIds}
               warnings={warnings}
@@ -1272,7 +1331,27 @@ export function Composer({
                 Cancel
               </Button>
               {/* The label says what pressing it does: Save draft / Publish now / Schedule / Add to queue. */}
-              <Button disabled={busy || uploading > 0} onClick={onSubmit}>
+              {(busy || uploading > 0 || (attempted && hasErrors(errors)) || warnings.size > 0) && (
+                <span className="min-w-0 truncate text-caption text-muted" role="status">
+                  {busy
+                    ? 'Saving the post…'
+                    : uploading > 0
+                      ? 'Wait for media uploads.'
+                      : (errors.accounts ??
+                        errors.caption ??
+                        errors.article?.title ??
+                        errors.at ??
+                        errors.queue ??
+                        warnings.values().next().value?.reason ??
+                        'Check the article settings.')}
+                </span>
+              )}
+              <Button
+                disabled={
+                  busy || uploading > 0 || (attempted && hasErrors(errors)) || warnings.size > 0
+                }
+                onClick={onSubmit}
+              >
                 {busy ? busyLabel(mode) : submitLabel(mode, targets.length)}
               </Button>
             </div>

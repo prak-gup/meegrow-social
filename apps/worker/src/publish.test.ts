@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { recordPublishExhaustion } from './deps.js';
-import { isFinalFailure, onPublishJobFailed, type FailedPublishJob } from './publish.js';
+import { publishPost, recordPublishExhaustion } from './deps.js';
+import {
+  isFinalFailure,
+  onPublishJobFailed,
+  processPublishJob,
+  type FailedPublishJob,
+} from './publish.js';
 
 vi.mock('./deps.js', () => ({
   PUBLISH_QUEUE: 'publish',
@@ -76,5 +81,30 @@ describe('onPublishJobFailed', () => {
     expect(logged).toHaveBeenCalledTimes(1);
     expect(String(logged.mock.calls[0]![0])).toContain('post-1');
     logged.mockRestore();
+  });
+});
+
+describe('rate-limit pauses', () => {
+  it('moves the same job to the exact delay without completing or spending a failure attempt', async () => {
+    const retryAt = new Date('2026-10-12T02:00:00Z');
+    vi.mocked(publishPost).mockResolvedValue({ postId: data.postId, status: 'waiting', retryAt });
+    const moveToDelayed = vi.fn().mockResolvedValue(undefined);
+    await expect(processPublishJob({ data, moveToDelayed }, 'TEST_ONLY_LOCK')).rejects.toThrow(
+      'bullmq:movedToDelayed',
+    );
+    expect(moveToDelayed).toHaveBeenCalledWith(retryAt.getTime(), 'TEST_ONLY_LOCK');
+    expect(recordPublishExhaustion).not.toHaveBeenCalled();
+  });
+  it('returns terminal deadline failure and leaves ordinary failures to BullMQ', async () => {
+    const moveToDelayed = vi.fn();
+    vi.mocked(publishPost).mockResolvedValue({
+      postId: data.postId,
+      status: 'failed',
+      error: 'Rate limited — try again.',
+    });
+    expect(await processPublishJob({ data, moveToDelayed })).toMatchObject({ status: 'failed' });
+    expect(moveToDelayed).not.toHaveBeenCalled();
+    vi.mocked(publishPost).mockRejectedValue(new Error('503'));
+    await expect(processPublishJob({ data, moveToDelayed })).rejects.toThrow('503');
   });
 });

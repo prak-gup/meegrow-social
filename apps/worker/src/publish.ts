@@ -1,4 +1,4 @@
-import { Worker, type Job } from 'bullmq';
+import { DelayedError, Worker, type Job } from 'bullmq';
 import {
   PUBLISH_QUEUE,
   publishPost,
@@ -53,17 +53,24 @@ export async function onPublishJobFailed(
   }
 }
 
+/** BullMQ's DelayedError moves the same job without incrementing attemptsMade. */
+export async function processPublishJob(
+  job: Pick<Job<PublishJobData>, 'data' | 'moveToDelayed'>,
+  token?: string,
+) {
+  const result = await publishPost(job.data.workspaceId, job.data.postId);
+  if (result.status === 'waiting' && result.retryAt) {
+    await job.moveToDelayed(result.retryAt.getTime(), token);
+    throw new DelayedError();
+  }
+  return result;
+}
+
 export function buildPublishWorker(redisUrl: string): Worker<PublishJobData> {
-  const worker = new Worker<PublishJobData>(
-    PUBLISH_QUEUE,
-    async (job) => {
-      const { workspaceId, postId } = job.data;
-      // Throws on a transient error → BullMQ retries. A refused job (post cancelled, moved to
-      // draft, rescheduled) returns `skipped` and so completes: no retry, nothing marked failed.
-      return publishPost(workspaceId, postId);
-    },
-    { connection: { url: redisUrl }, concurrency: 5 },
-  );
+  const worker = new Worker<PublishJobData>(PUBLISH_QUEUE, processPublishJob, {
+    connection: { url: redisUrl },
+    concurrency: 5,
+  });
   worker.on('failed', (job, err) => void onPublishJobFailed(job, err));
   return worker;
 }

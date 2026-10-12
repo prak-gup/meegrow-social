@@ -62,3 +62,14 @@ export function writeViewMode(
     /* a per-viewer convenience: the page works without it */
   }
 }
+
+/** Read the user-facing portion of core's durable rate-limit waiting note. */
+export function publishWaitingTime(post: { status: string; error: string | null }): Date | null {
+  if (post.status !== 'scheduled') return null;
+  const match = /^Waiting for .+ rate limit, retrying at (\S+)\. Pause \d+; deadline \S+\.$/.exec(
+    post.error ?? '',
+  );
+  if (!match) return null;
+  const when = new Date(match[1]!);
+  return Number.isFinite(when.getTime()) ? when : null;
+}
