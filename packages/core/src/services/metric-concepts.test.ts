@@ -25,6 +25,16 @@ const values = (patch: Partial<ConceptValues>): ConceptValues => ({ ...EMPTY_CON
  * ones the providers request (`POST_METRICS` / `MEDIA_METRICS` / `VIDEO_REPORT_METRICS`).
  */
 const EXPECTED: Record<string, Record<(typeof METRIC_CONCEPTS)[number], string[]>> = {
+  bluesky: {
+    views: [],
+    reach: [],
+    likes: ['likeCount'],
+    comments: ['replyCount'],
+    shares: ['repostCount'],
+    saves: ['bookmarkCount'],
+    clicks: [],
+    follows: [],
+  },
   facebook: {
     views: ['post_media_view'],
     reach: ['post_total_media_view_unique'],
@@ -100,6 +110,7 @@ describe('the concept mapping', () => {
     expect(followerSources('facebook')).toEqual(['followers']);
     expect(followerSources('instagram')).toEqual(['followers']);
     expect(followerSources('youtube')).toEqual(['followers']);
+    expect(followerSources('bluesky')).toEqual(['followers']);
     expect(followerSources('gmb')).toEqual([]);
     expect(followerSources('wordpress')).toEqual([]);
     expect(allFollowerMetricNames()).toEqual(['followers']);
@@ -108,6 +119,9 @@ describe('the concept mapping', () => {
   it('names every native metric an engagement can come from', () => {
     expect(allEngagementMetricNames().sort()).toEqual(
       [
+        'bookmarkCount',
+        'replyCount',
+        'repostCount',
         'commentCount',
         'comments',
         'likeCount',
@@ -284,4 +298,11 @@ describe('deltaPct', () => {
     expect(deltaPct(null, 40)).toBeNull();
     expect(deltaPct(0, 0)).toBeNull();
   });
+});
+
+it('reads Bluesky native counts and preserves missing concepts', () => {
+  expect(
+    toConcepts('bluesky', { likeCount: 0, replyCount: 2, repostCount: 3, bookmarkCount: 4 }),
+  ).toEqual({ ...EMPTY_CONCEPTS, likes: 0, comments: 2, shares: 3, saves: 4 });
+  expect(toConcepts('bluesky', { likeCount: 1 })).toEqual({ ...EMPTY_CONCEPTS, likes: 1 });
 });

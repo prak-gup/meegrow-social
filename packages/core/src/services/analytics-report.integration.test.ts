@@ -229,7 +229,8 @@ describe('getAnalyticsReport', () => {
       accounts: 2,
       accountsCounted: 1,
     });
-    expect(report.followerSeries).toEqual([
+    // The series also carries additive display fields (daily calendar points); assert the facts.
+    expect(report.followerSeries).toMatchObject([
       {
         connectionId: ig,
         points: [

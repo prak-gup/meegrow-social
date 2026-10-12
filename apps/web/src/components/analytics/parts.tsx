@@ -41,7 +41,10 @@ export function Section({
   return (
     <section
       aria-label={title}
-      className={cn('min-w-0 rounded-md border border-hairline bg-canvas p-3', className)}
+      className={cn(
+        'min-w-0 rounded-lg border border-hairline bg-canvas p-4 shadow-[0_2px_8px_rgba(0,0,0,0.025)]',
+        className,
+      )}
     >
       <div className="mb-2 flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
         <div className="min-w-0">
@@ -72,10 +75,13 @@ export function Insufficient({
   return (
     <div
       className={cn(
-        'flex min-h-40 flex-col items-center justify-center rounded-sm border border-dashed border-hairline-strong bg-surface-soft px-4 py-6 text-center',
+        'flex flex-col items-start justify-center rounded-sm border border-dashed border-hairline-strong bg-surface-soft px-3 py-3 text-left',
         className,
       )}
     >
+      <span aria-hidden="true" className="mb-2 text-2xl text-muted">
+        ◇
+      </span>
       <p className="text-sm font-medium text-ink">{title}</p>
       {children && <p className="mt-1 max-w-md text-caption text-muted">{children}</p>}
     </div>
@@ -125,7 +131,7 @@ export function InlineSelect({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-11 rounded-sm border border-muted-soft bg-canvas px-2 text-lg text-ink hover:bg-surface-soft focus:border-ink focus:outline-none focus:ring-1 focus:ring-ink md:h-7 md:text-sm"
+        className="h-11 rounded-sm border border-muted bg-canvas px-2 text-lg text-ink hover:bg-surface-soft focus:border-ink focus:outline-none focus:ring-1 focus:ring-ink md:h-7 md:text-sm"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -136,3 +142,5 @@ export function InlineSelect({
     </label>
   );
 }
+
+export { Help } from '../ui/Help';

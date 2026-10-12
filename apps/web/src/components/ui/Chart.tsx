@@ -224,6 +224,8 @@ export function Chart({
                   fill={colorOf(s, i)}
                   stackId={stacked ? 'stack' : undefined}
                   radius={stacked ? undefined : BAR_RADIUS}
+                  maxBarSize={40}
+                  isAnimationActive={false}
                 >
                   {totalKey && (
                     <LabelList
@@ -256,6 +258,7 @@ export function Chart({
                   strokeWidth={LINE_WIDTH}
                   strokeDasharray={LINE_DASHES[i % LINE_DASHES.length]}
                   dot={dots}
+                  isAnimationActive={false}
                   connectNulls={!gaps}
                 />
               ))}

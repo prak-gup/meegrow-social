@@ -7,7 +7,7 @@ import type {
 } from '@meegrow-social/contracts';
 
 /**
- * Pure logic for the Analytics screen: URL filters, the report query, labels, chart rows, sorting
+ * Pure logic for the Analytics screen: URL filters, the report query, labels, sorting
  * and the CSV export. No arithmetic about the numbers themselves lives here — totals, rates,
  * deltas and buckets all arrive computed from `GET /v1/analytics/report` (core), and a value that
  * does not exist is `null` (drawn "—"), never 0.
@@ -236,13 +236,6 @@ export function bandLabel(band: { min: number; max: number | null }): string {
   return band.min === band.max ? `${band.min}/wk` : `${band.min}–${band.max}/wk`;
 }
 
-/** 0–4: how deeply a heatmap cell is shaded, against the strongest cell. */
-export function heatLevel(value: number | null, max: number): 0 | 1 | 2 | 3 | 4 {
-  if (value === null || value <= 0 || max <= 0) return 0;
-  const share = value / max;
-  return share > 0.75 ? 4 : share > 0.5 ? 3 : share > 0.25 ? 2 : 1;
-}
-
 // --- Engagement rate, in words ---
 
 /** What a rate was divided by: "÷ reach", "÷ views", or the split when the two were mixed. */
@@ -277,72 +270,6 @@ export function rateNote(stat: EngagementRateStat): string {
       : `${stat.postsCounted.toLocaleString()} of ${stat.posts.toLocaleString()} posts`;
   const counted = stat.components.map((c) => CONCEPT_LABEL[c].toLowerCase()).join(' + ');
   return `From ${of}, ${basisText(stat)}. Counted: ${counted}.`;
-}
-
-// --- Chart rows ---
-
-export type ChartRow = Record<string, string | number | null>;
-
-/**
- * One row per time bucket with a field per platform, for a stacked bar: post counts, or one
- * concept's totals. `total` is the bucket's own number (null when nothing reports the concept).
- */
-export function stackedRows(
-  overTime: Report['overTime'],
-  providers: readonly string[],
-  pick: 'posts' | MetricConcept,
-): ChartRow[] {
-  return overTime.map((bucket) => {
-    const row: ChartRow = {
-      bucket: bucketLabel(bucket.key),
-      total: pick === 'posts' ? bucket.posts || null : bucket.totals[pick],
-    };
-    for (const provider of providers) {
-      const slice = bucket.byPlatform.find((p) => p.provider === provider);
-      row[provider] = !slice ? null : pick === 'posts' ? slice.posts : slice.totals[pick];
-    }
-    return row;
-  });
-}
-
-/** One row per platform: post count, or one concept's total. */
-export function platformRows(
-  byPlatform: Report['byPlatform'],
-  pick: 'posts' | MetricConcept,
-  label: (provider: string) => string,
-): Array<{ provider: string; platform: string; value: number | null }> {
-  return byPlatform.map((p) => ({
-    provider: p.provider,
-    platform: label(p.provider),
-    value: pick === 'posts' ? p.posts : p.totals[pick],
-  }));
-}
-
-export type TrendKey = MetricConcept | 'engagementRate';
-
-/** One row per time bucket with a field per requested series, for the engagement lines. */
-export function trendRows(overTime: Report['overTime'], keys: readonly TrendKey[]): ChartRow[] {
-  return overTime.map((bucket) => {
-    const row: ChartRow = { bucket: bucketLabel(bucket.key) };
-    for (const key of keys) {
-      row[key] = key === 'engagementRate' ? bucket.engagementRate : bucket.totals[key];
-    }
-    return row;
-  });
-}
-
-/**
- * Follower series as chart rows: one per day any account was captured on, oldest first, with a
- * field per account id. A day an account was not captured on is null — a gap, not a carried value.
- */
-export function followerRows(series: Report['followerSeries']): ChartRow[] {
-  const days = [...new Set(series.flatMap((s) => s.points.map((p) => p.day)))].sort();
-  return days.map((day) => {
-    const row: ChartRow = { day: bucketLabel(day) };
-    for (const s of series)
-      row[s.connectionId] = s.points.find((p) => p.day === day)?.value ?? null;
-    return row;
-  });
 }
 
 // --- Top posts ---

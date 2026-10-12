@@ -1,11 +1,13 @@
 import { Fragment, type ReactNode } from 'react';
 import { cn } from '../../lib/cn';
 import { ArrowDown, ArrowUp } from '../../lib/icons';
+import { Help } from './Help';
 import { EmptyState, type EmptyStateProps } from './EmptyState';
 
 export interface TableColumn<T> {
   key: string;
   header: ReactNode;
+  help?: string;
   cell: (row: T) => ReactNode;
   align?: 'left' | 'right';
   /** Extra classes for both header and cells, e.g. `hidden md:table-cell` to drop it on phones. */
@@ -124,6 +126,9 @@ export function Table<T>({
                     </button>
                   ) : (
                     c.header
+                  )}
+                  {c.help && (
+                    <Help label={typeof c.header === 'string' ? c.header : c.key} text={c.help} />
                   )}
                 </th>
               );

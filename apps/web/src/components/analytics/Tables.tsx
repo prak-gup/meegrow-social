@@ -5,13 +5,12 @@ import {
   basisText,
   formatRate,
   postsCsv,
-  rateNote,
   sortPosts,
   type PostSortKey,
   type Report,
 } from '../../lib/analyticsReport';
 import { ArrowSquareOut, DownloadSimple } from '../../lib/icons';
-import { compactNumber, shortDateTime } from '../../lib/postGroups';
+import { compactNumber } from '../../lib/postGroups';
 import { captionSnippet, safeExternalUrl } from '../../lib/postList';
 import { platformMeta } from '../../lib/platforms';
 import { PostThumb } from '../PostThumb';
@@ -31,18 +30,10 @@ const number = (value: number | null, why: string) =>
 function Rate({ rate, basis }: { rate: number | null; basis: string | null }) {
   if (rate === null) return <NoValue why="No rate: no engagement count, or no reach or views" />;
   return (
-    <span className="inline-flex items-baseline gap-1">
+    <span className="inline-flex items-baseline gap-1" title={basis ?? undefined}>
       <span className="font-semibold">{formatRate(rate)}</span>
-      {basis && <span className="text-micro font-normal text-muted">{basis}</span>}
     </span>
   );
-}
-
-/** Which concepts no platform in view reports, as the line under a table that leaves them out. */
-function absentNote(absent: readonly MetricConcept[]): string | null {
-  if (absent.length === 0) return null;
-  const names = absent.map((c) => CONCEPT_LABEL[c]).join(', ');
-  return `Not shown — no platform in view reports ${absent.length === 1 ? 'it' : 'them'}: ${names}.`;
 }
 
 // --- Platform breakdown ---------------------------------------------------------------------------
@@ -52,17 +43,16 @@ type PlatformRow = Report['byPlatform'][number];
 export function PlatformTable({
   report,
   concepts,
-  absent,
 }: {
   report: Report;
   concepts: readonly MetricConcept[];
-  absent: readonly MetricConcept[];
+  absent?: readonly MetricConcept[];
 }) {
   const columns: TableColumn<PlatformRow>[] = [
     {
       key: 'platform',
       header: 'Platform',
-      className: 'whitespace-nowrap',
+      className: 'sticky left-0 bg-canvas whitespace-nowrap',
       cell: (p) => <PlatformName provider={p.provider} className="font-semibold" />,
     },
     {
@@ -73,7 +63,13 @@ export function PlatformTable({
     },
     ...concepts.map((concept): TableColumn<PlatformRow> => ({
       key: concept,
-      header: CONCEPT_LABEL[concept],
+      help: `Latest reported ${CONCEPT_LABEL[concept].toLowerCase()}; — means unreported. Hover a count for its exact value.`,
+      header:
+        concept === 'follows' &&
+        report.mapping.length === 1 &&
+        report.mapping[0]?.provider === 'youtube'
+          ? 'Subscribers gained'
+          : CONCEPT_LABEL[concept],
       align: 'right',
       cell: (p) =>
         number(
@@ -84,27 +80,14 @@ export function PlatformTable({
     {
       key: 'rate',
       header: 'Eng. rate',
+      help: 'Reported likes + comments + shares + saves ÷ reach × 100, with views as fallback. Hover a rate for its basis.',
       align: 'right',
       className: 'whitespace-nowrap',
-      cell: (p) => (
-        <span title={rateNote(p.engagementRate)}>
-          <Rate rate={p.engagementRate.rate} basis={basisText(p.engagementRate)} />
-        </span>
-      ),
+      cell: (p) => <Rate rate={p.engagementRate.rate} basis={basisText(p.engagementRate)} />,
     },
   ];
   return (
-    <Section
-      title="Platform breakdown"
-      subtitle="All-time totals of the posts published in the period, per platform"
-      note={
-        <>
-          “—” means the platform does not report that number, not that it was zero. Each rate says
-          what it was divided by: a rate by views reads lower than one by reach, so compare
-          platforms only where the basis matches. {absentNote(absent)}
-        </>
-      }
-    >
+    <Section title="Platform breakdown" subtitle="Latest reported totals by platform">
       <Table
         caption="Totals per platform for the period"
         dense
@@ -113,16 +96,6 @@ export function PlatformTable({
         columns={columns}
         empty={{ title: 'No platform in view' }}
       />
-      <ul className="mt-2 space-y-0.5 text-caption text-muted">
-        {report.byPlatform
-          .filter((p) => p.posts > 0)
-          .map((p) => (
-            <li key={p.provider}>
-              <span className="font-semibold text-body-ink">{platformLabel(p.provider)}:</span>{' '}
-              {rateNote(p.engagementRate)}
-            </li>
-          ))}
-      </ul>
     </Section>
   );
 }
@@ -145,11 +118,10 @@ function download(filename: string, text: string) {
 export function TopPosts({
   report,
   concepts,
-  absent,
 }: {
   report: Report;
   concepts: readonly MetricConcept[];
-  absent: readonly MetricConcept[];
+  absent?: readonly MetricConcept[];
 }) {
   const [sort, setSort] = useState<TableSort>({ key: 'engagements', dir: 'desc' });
   const [shown, setShown] = useState(PAGE);
@@ -168,7 +140,7 @@ export function TopPosts({
       key: 'post',
       header: 'Post',
       sortKey: 'publishAt',
-      className: 'w-full min-w-64',
+      className: 'sticky left-0 z-10 w-full min-w-48 max-w-64 bg-canvas',
       cell: (post) => {
         const url = safeExternalUrl(post.releaseUrl);
         const platform = platformMeta({ identifier: post.provider, displayName: post.provider });
@@ -209,11 +181,15 @@ export function TopPosts({
                 </span>
                 <span aria-hidden="true">·</span>
                 <time dateTime={new Date(post.publishAt).toISOString()} className="tnum flex-none">
-                  {shortDateTime(new Date(post.publishAt))}
+                  {new Date(post.publishAt).toLocaleDateString('en-GB', {
+                    day: 'numeric',
+                    month: 'short',
+                    timeZone: report.timezone,
+                  })}
                 </time>
                 {post.source === 'imported' && (
                   <span className="flex-none" title="Found on the platform, not published here">
-                    · imported
+                    · Imported
                   </span>
                 )}
               </span>
@@ -224,7 +200,13 @@ export function TopPosts({
     },
     ...concepts.map((concept): TableColumn<ReportPost> => ({
       key: concept,
-      header: CONCEPT_LABEL[concept],
+      help: `Latest reported ${CONCEPT_LABEL[concept].toLowerCase()}; — means unreported. Hover a count for its exact value.`,
+      header:
+        concept === 'follows' &&
+        report.mapping.length === 1 &&
+        report.mapping[0]?.provider === 'youtube'
+          ? 'Subscribers gained'
+          : CONCEPT_LABEL[concept],
       sortKey: concept,
       align: 'right',
       className: 'whitespace-nowrap',
@@ -233,6 +215,7 @@ export function TopPosts({
     })),
     {
       key: 'engagements',
+      help: 'Sum of reported likes, comments, shares and saves.',
       header: (
         <span title="Likes + comments + shares + saves, over the ones reported">Engagements</span>
       ),
@@ -244,6 +227,7 @@ export function TopPosts({
     {
       key: 'rate',
       header: 'Eng. rate',
+      help: 'Reported likes + comments + shares + saves ÷ reach × 100, with views as fallback. Hover a rate for its basis.',
       sortKey: 'engagementRate',
       align: 'right',
       className: 'whitespace-nowrap',
@@ -261,8 +245,8 @@ export function TopPosts({
 
   return (
     <Section
-      title="Top performing posts"
-      subtitle="Posts published in the period, at their all-time totals. Sort by any column."
+      title="Top posts"
+      subtitle={`Sorted by ${sort.key === 'publishAt' ? 'publication date' : sort.key === 'engagementRate' ? 'engagement rate' : sort.key} · ${sort.dir === 'desc' ? 'descending' : 'ascending'}`}
       actions={
         report.topPosts.length > 0 && (
           <Button variant="outline" size="sm" onClick={exportCsv}>
@@ -271,18 +255,9 @@ export function TopPosts({
           </Button>
         )
       }
-      note={
-        report.topPosts.length > 0 && (
-          <>
-            “—” is “not reported for this post”, and sorts last either way. See “Platform metrics,
-            as collected” below for the platform’s own metric names. {absentNote(absent)}
-            {report.postsOmitted > 0 &&
-              ` ${report.postsOmitted.toLocaleString()} more posts with fewer engagements are not listed.`}
-          </>
-        )
-      }
     >
       <Table
+        className="[&_th_button]:min-h-11 [&_th_button]:focus-visible:outline [&_th_button]:focus-visible:outline-2 [&_th_button]:focus-visible:outline-ink"
         caption="Posts published in the period with their metrics"
         dense
         rows={rows}
@@ -298,7 +273,8 @@ export function TopPosts({
       {rows.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
           <p className="tnum text-caption text-muted">
-            Showing {rows.length.toLocaleString()} of {sorted.length.toLocaleString()} posts
+            Showing {rows.length.toLocaleString()} of {sorted.length.toLocaleString()} returned
+            posts{report.postsOmitted > 0 && ` · ${report.postsOmitted} omitted`}
           </p>
           <div className="flex gap-2">
             {shown < sorted.length && (

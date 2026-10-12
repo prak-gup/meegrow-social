@@ -10,9 +10,13 @@ import {
   buildAnalyticsReport,
   engagementHistory,
   followerSection,
+  followerCalendar,
+  publicationWindow,
+  engagementAgeDisplayPoints,
   formatSection,
   frequencySection,
   publishSlot,
+  publicationIntensity,
   rawMetricRows,
   resolvePeriod,
   timeBuckets,
@@ -202,7 +206,9 @@ describe('best time to post', () => {
       weekday: 5,
       hour: 7,
       posts: 1,
+      postsCounted: 0,
       average: null,
+      level: null,
     });
   });
 
@@ -620,7 +626,12 @@ describe('buildAnalyticsReport', () => {
     expect(weekOf(ist).key).toBe('2026-10-05');
     expect(weekOf(utc)).toMatchObject({ totals: { likes: 7 }, engagementRate: 10 });
     expect(weekOf(utc).byPlatform).toEqual([
-      { provider: 'instagram', posts: 1, totals: { ...EMPTY_CONCEPTS, likes: 7, reach: 70 } },
+      {
+        provider: 'instagram',
+        posts: 1,
+        totals: { ...EMPTY_CONCEPTS, likes: 7, reach: 70 },
+        engagementRate: 10,
+      },
     ]);
     // Empty weeks are listed with nulls, not zeros.
     expect(utc.bucket).toBe('week');
@@ -708,5 +719,120 @@ describe('buildAnalyticsReport', () => {
       }),
     );
     expect(report.summary.lastCapturedAt).toEqual(ago(2 * HOUR));
+  });
+});
+
+describe('analytics v3 display facts', () => {
+  it('keeps missing intensity distinct from observed zero and caps the ramp', () => {
+    expect(publicationIntensity(null, 100)).toBeNull();
+    expect(publicationIntensity(0, 100)).toBe(0);
+    expect(publicationIntensity(0, 0)).toBe(0);
+    expect(publicationIntensity(25, 100)).toBe(1);
+    expect(publicationIntensity(75, 100)).toBe(3);
+    expect(publicationIntensity(100, 100)).toBe(4);
+    expect(publicationIntensity(200, 100)).toBe(4);
+  });
+  it('clips partial publication buckets to the actual window', () => {
+    const buckets = timeBuckets(period30, 'UTC', 'week');
+    expect(publicationWindow(buckets[0]!, period30)).toEqual({
+      from: period30.start,
+      to: buckets[0]!.end,
+      partial: true,
+    });
+    expect(publicationWindow(buckets[1]!, period30).partial).toBe(false);
+    expect(publicationWindow(buckets.at(-1)!, period30)).toEqual({
+      from: buckets.at(-1)!.start,
+      to: period30.end,
+      partial: true,
+    });
+  });
+
+  it('expands calendar days through DST without inventing captures or losing zero', () => {
+    const period = resolvePeriod(
+      { from: at('2026-10-31T04:00:00Z'), to: at('2026-11-03T04:59:00Z') },
+      NOW,
+    );
+    expect(
+      followerCalendar(
+        [
+          { day: '2026-10-31', value: 0 },
+          { day: '2026-11-02', value: 12 },
+        ],
+        period,
+        'America/New_York',
+      ),
+    ).toEqual([
+      { day: '2026-10-31', value: 0 },
+      { day: '2026-11-01', value: null },
+      { day: '2026-11-02', value: 12 },
+    ]);
+    expect(followerCalendar([], period, 'America/New_York').every((p) => p.value === null)).toBe(
+      true,
+    );
+  });
+
+  it('requires one account and ten contributors at each age, retaining observed zero', () => {
+    const points = [
+      { untilHours: 6, pct: 50, posts: 9 },
+      { untilHours: 12, pct: 0, posts: 10 },
+      { untilHours: 24, pct: null, posts: 12 },
+      { untilHours: 48, pct: 80, posts: 11 },
+    ];
+    expect(engagementAgeDisplayPoints(points, 1)).toEqual([points[1], points[3]]);
+    expect(engagementAgeDisplayPoints(points, 0)).toEqual([]);
+    expect(engagementAgeDisplayPoints(points, 2)).toEqual([]);
+    expect(engagementAgeDisplayPoints([], 1)).toEqual([]);
+  });
+
+  it('exposes optional display facts via the report without synthesising findings', () => {
+    const report = buildAnalyticsReport(
+      input({ followerPoints: [{ connectionId: IG, value: 0, capturedAt: ago(DAY) }] }),
+    );
+    expect(report.overTime[0]!.window?.partial).toBe(true);
+    expect(report.followerSeries[0]!.dailyPoints?.some((p) => p.value === 0)).toBe(true);
+    expect(report.followerSeries[0]!.dailyPoints?.some((p) => p.value === null)).toBe(true);
+    expect(report.accumulation.displayPoints).toEqual([]);
+    expect(report.summary.totals.views.value).toBeNull();
+  });
+});
+
+describe('revision 2 optional report facts', () => {
+  it('always provides honest Monday weeks even for a short daily report', () => {
+    const report = buildAnalyticsReport(
+      input({
+        period: resolvePeriod({ days: 7 }, NOW),
+        posts: [post({ publishAt: at('2026-10-10T12:00:00Z'), native: { likes: 10, reach: 100 } })],
+      }),
+    );
+    expect(report.bucket).toBe('day');
+    expect(report.weeklySeries!.length).toBeLessThan(report.overTime.length);
+    expect(report.weeklySeries!.reduce((n, b) => n + b.posts, 0)).toBe(report.summary.posts.value);
+    expect(
+      report.weeklySeries!.flatMap((b) => b.byPlatform).find((p) => p.provider === 'instagram'),
+    ).toMatchObject({ engagementRate: 10 });
+    for (const b of report.weeklySeries!.filter((b) => b.posts === 0))
+      expect(b.totals).toEqual(EMPTY_CONCEPTS);
+  });
+  it('returns account change only with a prior-period capture', () => {
+    const period = resolvePeriod({ days: 30 }, NOW);
+    const report = buildAnalyticsReport(
+      input({
+        period,
+        accounts: [account(IG, 'instagram')],
+        followerPoints: [
+          { connectionId: IG, value: 100, capturedAt: new Date(period.start.getTime() - 1000) },
+          { connectionId: IG, value: 120, capturedAt: NOW },
+        ],
+      }),
+    );
+    expect(report.followerSeries[0]!.change).toBe(20);
+    const missing = buildAnalyticsReport(
+      input({
+        period,
+        accounts: [account(IG, 'instagram')],
+        followerPoints: [{ connectionId: IG, value: 120, capturedAt: NOW }],
+      }),
+    );
+    expect(missing.followerSeries[0]!.change).toBeNull();
   });
 });

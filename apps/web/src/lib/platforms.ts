@@ -120,14 +120,15 @@ export function platformMeta(p: { identifier: string; displayName: string }): Pl
 }
 
 const PLATFORM_COLOR: Record<string, string> = {
-  facebook: 'hsl(var(--brand-facebook))',
-  instagram: 'hsl(var(--brand-instagram))',
-  gmb: 'hsl(var(--brand-gmb))',
+  bluesky: '#0284c7',
+  facebook: '#2563eb',
+  instagram: '#db2777',
+  gmb: '#0d9488',
   linkedin: 'hsl(var(--brand-linkedin))',
   'linkedin-page': 'hsl(var(--brand-linkedin))',
   x: 'hsl(var(--brand-x))',
-  youtube: 'hsl(var(--brand-youtube))',
-  wordpress: 'hsl(var(--brand-wordpress))',
+  youtube: '#dc2626',
+  wordpress: '#475569',
 };
 
 /**

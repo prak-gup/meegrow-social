@@ -1,14 +1,15 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { AnalyticsStatusView, ConnectionView, MetricConcept } from '@meegrow-social/contracts';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
-import { cadenceText, isClientRole, nextRefresh } from '../lib/analytics';
+import { isClientRole } from '../lib/analytics';
 import {
   RANGE_DAYS,
   browserTimezone,
   conceptsInView,
+  formatRate,
   dayInput,
   parseReportFilters,
   platformsOf,
@@ -19,20 +20,21 @@ import {
   type Report,
   type ReportFilters,
 } from '../lib/analyticsReport';
-import { ChartLineUp, Plugs } from '../lib/icons';
-import { shortDateTime } from '../lib/postGroups';
+import { Plugs } from '../lib/icons';
 import { importingAnalyticsNote } from '../lib/postImport';
 import {
+  Insights,
+  PlatformSplit,
+  type TrendMetric,
   BestTimes,
-  BreakdownCharts,
-  ConceptCharts,
   EngagementAccumulation,
-  EngagementTrend,
+  PublishTrend,
   FollowerEvolution,
   FormatBreakdown,
   FrequencyVsEngagement,
 } from '../components/analytics/Charts';
 import { KpiSkeleton, Kpis } from '../components/analytics/Kpis';
+import { platformColor } from '../lib/platforms';
 import { platformLabel } from '../components/analytics/parts';
 import { PlatformTable, RawMetrics, TopPosts } from '../components/analytics/Tables';
 import { Badge } from '../components/ui/Badge';
@@ -42,11 +44,6 @@ import { ErrorState } from '../components/ui/ErrorState';
 import { FilterBar, FilterSelect } from '../components/ui/FilterBar';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Skeleton } from '../components/ui/Skeleton';
-
-// The page is in the sidebar for everyone, but its numbers have not been checked against the
-// platforms yet (docs/dev/ANALYTICS-UI-BRIEF.md §7), so it says so. Setting VITE_ANALYTICS_UI=true at
-// build time records that sign-off and drops the badge; this is the only read of the flag.
-const VALIDATED = import.meta.env.VITE_ANALYTICS_UI === 'true';
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : 'Please try again.');
 
@@ -171,30 +168,24 @@ export function Analytics() {
     [report],
   );
   const concept = (
-    concepts.includes(wantedConcept as MetricConcept)
-      ? wantedConcept
-      : concepts.includes('likes')
-        ? 'likes'
-        : concepts[0]
-  ) as MetricConcept | undefined;
+    wantedConcept === 'rate'
+      ? 'rate'
+      : concepts.includes(wantedConcept as MetricConcept)
+        ? wantedConcept
+        : wantedConcept === 'posts'
+          ? 'posts'
+          : concepts.includes('views')
+            ? 'views'
+            : concepts.includes('likes')
+              ? 'likes'
+              : 'posts'
+  ) as TrendMetric;
 
   const header = (
     <PageHeader
       title="Analytics"
-      subtitle={
-        all
-          ? 'Published posts and connected accounts across every client you can see.'
-          : workspace
-            ? `Published posts and connected accounts for ${workspace.name}.`
-            : 'Published posts and connected accounts for this client.'
-      }
-      actions={
-        !VALIDATED && (
-          <Badge variant="neutral">
-            {isClient ? 'Beta' : 'Preview — numbers not yet validated'}
-          </Badge>
-        )
-      }
+      subtitle={all ? 'All clients' : (workspace?.name ?? 'This client')}
+      actions={<Badge variant="neutral">Preview — numbers not yet validated</Badge>}
     />
   );
 
@@ -237,29 +228,18 @@ export function Analytics() {
     );
   }
 
-  const periodDays = report
-    ? Math.round(
-        (new Date(report.period.end).getTime() - new Date(report.period.start).getTime()) /
-          86_400_000,
-      )
-    : Number(filters.range) || 0;
-  const rangeText = report
-    ? `${new Date(report.period.start).toLocaleDateString()} – ${new Date(report.period.end).toLocaleDateString()}`
-    : '';
   const importing = all ? null : importingAnalyticsNote(data.connections);
-  const nothingYet =
-    report !== null && report.summary.posts.value === 0 && report.summary.followers.value === null;
   const customDefault = (): Pick<ReportFilters, 'from' | 'to'> => ({
     from: dayInput(new Date(data.now - (Number(filters.range) || 30) * 86_400_000)),
     to: dayInput(new Date(data.now)),
   });
 
   return (
-    <div>
+    <div className="min-w-0 max-w-full">
       {header}
 
       <FilterBar
-        className="mb-2"
+        className="mb-5"
         filters={
           <>
             {manyClients && (
@@ -269,46 +249,6 @@ export function Analytics() {
                 onChange={(scope) => setFilters({ scope })}
               />
             )}
-            <FilterSelect
-              label="Platform"
-              value={filters.platform}
-              onChange={(v) => setFilters({ platform: v })}
-              options={[
-                { value: '', label: 'All platforms' },
-                ...platformsOf(accounts).map((p) => ({ value: p, label: platformLabel(p) })),
-              ]}
-            />
-            <FilterSelect
-              label="Account"
-              value={filters.connection}
-              onChange={(v) => setFilters({ connection: v })}
-              options={[
-                { value: '', label: 'All accounts' },
-                ...accounts
-                  .filter((a) => filters.platform === '' || a.provider === filters.platform)
-                  .map((a) => ({
-                    value: a.id,
-                    // Two accounts can share a name: the platform (and the client) tell them apart.
-                    label: [
-                      a.displayName,
-                      filters.platform ? null : platformLabel(a.provider),
-                      all ? a.workspaceName : null,
-                    ]
-                      .filter(Boolean)
-                      .join(' · '),
-                  })),
-              ]}
-            />
-            <FilterSelect
-              label="Source"
-              value={filters.source}
-              onChange={(v) => setFilters({ source: v as ReportFilters['source'] })}
-              options={[
-                { value: '', label: 'All sources' },
-                { value: 'app', label: 'Published here' },
-                { value: 'imported', label: 'Imported' },
-              ]}
-            />
             <FilterSelect
               label="Period"
               value={filters.range}
@@ -345,22 +285,74 @@ export function Analytics() {
                 />
               </>
             )}
+            <div role="group" aria-label="Platform" className="flex max-w-full flex-wrap gap-1">
+              {[
+                { value: '', label: 'All platforms' },
+                ...platformsOf(accounts).map((p) => ({ value: p, label: platformLabel(p) })),
+              ].map((p) => (
+                <button
+                  key={p.value}
+                  type="button"
+                  aria-pressed={filters.platform === p.value}
+                  onClick={() => setFilters({ platform: p.value })}
+                  className={cn(
+                    'inline-flex items-center gap-2 min-h-11 rounded-full border px-3 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink md:min-h-8',
+                    filters.platform === p.value
+                      ? 'border-ink bg-surface-strong text-ink'
+                      : 'border-muted bg-canvas text-muted',
+                  )}
+                >
+                  {p.value && (
+                    <span
+                      aria-hidden="true"
+                      className="h-2 w-2 rounded-full"
+                      style={{ background: platformColor(p.value) }}
+                    />
+                  )}
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <FilterSelect
+              label="Account"
+              value={filters.connection}
+              onChange={(v) => setFilters({ connection: v })}
+              options={[
+                { value: '', label: 'All accounts' },
+                ...accounts
+                  .filter((a) => filters.platform === '' || a.provider === filters.platform)
+                  .map((a) => ({
+                    value: a.id,
+                    // Two accounts can share a name: the platform (and the client) tell them apart.
+                    label: [
+                      a.displayName,
+                      filters.platform ? null : platformLabel(a.provider),
+                      all ? a.workspaceName : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · '),
+                  })),
+              ]}
+            />
+            <FilterSelect
+              label="Source"
+              value={filters.source}
+              onChange={(v) => setFilters({ source: v as ReportFilters['source'] })}
+              options={[
+                { value: '', label: 'All sources' },
+                { value: 'app', label: 'Published here' },
+                { value: 'imported', label: 'Imported' },
+              ]}
+            />
           </>
         }
         actions={
           <p className="tnum text-caption text-muted">
-            {rangeText}
-            <span className="hidden sm:inline"> · times in {timezone}</span>
+            {report?.summary.lastCapturedAt
+              ? `Updated ${new Date(report.summary.lastCapturedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: timezone })}, ${new Date(report.summary.lastCapturedAt).toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', timeZone: timezone })}`
+              : 'No captures yet'}
           </p>
         }
-      />
-
-      <SyncLine
-        status={data.status}
-        now={data.now}
-        all={all}
-        report={report}
-        canReconnect={!isClient}
       />
 
       {/* Announces load progress and filter results to screen readers. */}
@@ -374,65 +366,147 @@ export function Analytics() {
 
       {!report ? (
         <PageSkeleton />
-      ) : nothingYet ? (
-        <EmptyState
-          // A newly connected account is not empty, it is still arriving.
-          title={importing ? 'Importing past posts…' : 'Nothing collected for this period'}
-          description={
-            importing ??
-            (report.summary.undatedPosts > 0
-              ? undatedNote(report.summary.undatedPosts)
-              : 'No post was published in it and no follower count was captured. Metrics appear within an hour of the first published post; a longer period may have data.')
-          }
-          icon={ChartLineUp}
-        />
       ) : (
         <div
           aria-busy={load.status === 'loading'}
-          className={cn('space-y-3 transition-opacity', load.status === 'loading' && 'opacity-60')}
+          className={cn('space-y-4', load.status === 'loading' && 'opacity-60')}
         >
-          <Kpis
-            report={report}
-            periodText={`the ${periodDays} ${periodDays === 1 ? 'day' : 'days'} before`}
-          />
-          {report.summary.undatedPosts > 0 && (
-            <p className="text-caption text-muted">{undatedNote(report.summary.undatedPosts)}</p>
+          {load.status === 'loading' && (
+            <p role="status" className="sr-only">
+              Updating · retained results: {new Date(report.period.start).toLocaleDateString()} –{' '}
+              {new Date(report.period.end).toLocaleDateString()} ·{' '}
+              {report.accounts
+                .filter((a) => a.selected)
+                .map((a) => `${a.workspaceName} / ${a.displayName}`)
+                .join(', ')}
+            </p>
           )}
-          {importing && <p className="text-caption font-semibold text-status-warn">{importing}</p>}
-          <BreakdownCharts report={report} pick="posts" />
-          <ConceptCharts
-            report={report}
-            concepts={concepts}
-            concept={concept}
-            onConcept={(c) => write(filters, c === 'likes' ? '' : c)}
-          />
-          <EngagementTrend report={report} concepts={concepts} />
-          <div className="grid gap-3 lg:grid-cols-2">
-            <BestTimes report={report} />
-            <FollowerEvolution report={report} />
-          </div>
-          <FormatBreakdown report={report} />
-          <PlatformTable report={report} concepts={concepts} absent={absent} />
-          <TopPosts
-            // A new filter set starts again from the first rows.
-            key={params.toString()}
-            report={report}
-            concepts={concepts}
-            absent={absent}
-          />
-          <div className="grid gap-3 lg:grid-cols-2">
-            <FrequencyVsEngagement report={report} />
-            <EngagementAccumulation report={report} />
-          </div>
-          <RawMetrics report={report} />
+          <fieldset
+            disabled={load.status === 'loading'}
+            {...(load.status === 'loading' ? { inert: '' } : {})}
+            className="min-w-0 space-y-4"
+          >
+            {report.summary.posts.value === 0 && (
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="text-sm text-muted">No posts published in this period</p>
+                <Button
+                  variant="outline"
+                  onClick={() => setFilters({ range: '90', from: '', to: '' })}
+                >
+                  Widen period
+                </Button>
+              </div>
+            )}
+            <Kpis report={report} />
+            <Insights report={report} />
+            <PublishTrend
+              report={report}
+              concepts={concepts}
+              metric={concept}
+              onMetric={(c) => write(filters, c)}
+            />
+            <div className="grid min-w-0 gap-4 md:grid-cols-2">
+              <PlatformSplit report={report} />
+              <FormatBreakdown report={report} />
+              <BestTimes report={report} />
+              <FollowerEvolution report={report} />
+              <FrequencyVsEngagement report={report} />
+              <EngagementAccumulation report={report} />
+            </div>
+            <TopPosts key={params.toString()} report={report} concepts={concepts} absent={absent} />
+            <PlatformTable report={report} concepts={concepts} absent={absent} />
+            <details
+              id="analytics-calculations"
+              className="rounded-lg border border-hairline bg-canvas p-4"
+            >
+              <summary className="min-h-11 cursor-pointer py-3 text-base font-semibold text-ink">
+                How these numbers are calculated
+              </summary>
+              <div className="space-y-3 text-sm text-body-ink">
+                <p>
+                  Rate coverage: {report.summary.engagementRate.postsCounted}/
+                  {report.summary.engagementRate.posts} posts. Basis:{' '}
+                  {report.summary.engagementRate.basis ?? 'none'}.{' '}
+                  {undatedNote(report.summary.undatedPosts)}. {report.postsOmitted} posts omitted
+                  from the returned table.
+                </p>
+                {importing && <p>{importing}</p>}
+                {report.accounts
+                  .filter((a) => a.selected && a.needsReconnect)
+                  .map((a) => (
+                    <p key={a.id}>{a.displayName}: reconnect needed.</p>
+                  ))}
+
+                <p>
+                  Latest counts for posts published in (start, end], not counts gained during each
+                  day or week. Captures can be after the selected end date. Reach is summed post
+                  reach, not unique people.
+                </p>
+                <p>
+                  Engagement rate divides summed reported likes, comments, shares and saves by
+                  positive reach, with views as fallback. Components are a union and can differ by
+                  post. Mixed basis is descriptive. Missing is —; observed zero is 0. Unsupported
+                  and uncollected counts are different.
+                </p>
+                <p>
+                  Followers sum each counted account’s latest capture in the period, potentially on
+                  different dates. Change compares prior captures, not followers acquired during
+                  this date range. Latest capture can include prior-period posts and follower
+                  records.
+                </p>
+                <p>
+                  Prior comparisons use equally long publication windows. Older posts have longer to
+                  accrue counts; these comparisons do not establish growth. Rate change is relative
+                  percent, not percentage points.
+                </p>
+                <div className="tnum space-y-1">
+                  {concepts.map((c) => (
+                    <div key={c}>
+                      {c}: {report.summary.totals[c].value?.toLocaleString() ?? '—'} · prior{' '}
+                      {report.summary.totals[c].prior?.toLocaleString() ?? '—'} · relative change{' '}
+                      {formatRate(report.summary.totals[c].deltaPct)}
+                    </div>
+                  ))}
+                  <div>
+                    Rate: {formatRate(report.summary.engagementRate.rate)} · prior{' '}
+                    {formatRate(report.summary.engagementRatePrior)} · relative change{' '}
+                    {formatRate(report.summary.engagementRateDeltaPct)}
+                  </div>
+                </div>
+                <p>
+                  Insights are descriptive: format comparisons need five measured posts per group,
+                  matching bases and engagement components, and unequal rates. Time-slot findings
+                  need three measured posts; chips show the top three qualified slots. Top-post
+                  share needs five published posts and a positive engagement total. Platform reach
+                  share needs two platforms reporting reach and five posts on the leading platform.
+                  Change findings need positive prior data and a finite, nonzero change. At most
+                  four findings appear in format, time, post, platform, then delta order.
+                </p>
+                <p>
+                  Publishing times describe mean historical response by publication slot, not
+                  audience activity. Formats use first media kind. Cadence mixes accounts by
+                  platform and omits zero-post weeks. None establish causal recommendations.
+                </p>
+                <p>
+                  Captured engagement uses up to the newest 200 candidate posts. Qualification:{' '}
+                  {report.accumulation.rules.minSnapshots} capture times, first within{' '}
+                  {report.accumulation.rules.firstWithinHours}h, latest at least{' '}
+                  {report.accumulation.rules.minAgeHours}h, positive latest engagements. Display
+                  needs one account and 10 contributors at each age. Values carry forward between
+                  captures and cap at 100%; changing samples never form a trajectory or predict
+                  lifetime engagement.
+                </p>
+                <RawMetrics report={report} />
+              </div>
+            </details>
+          </fieldset>
         </div>
       )}
     </div>
   );
 }
 
-const undatedNote = (count: number) =>
-  `${count.toLocaleString()} published ${count === 1 ? 'post has' : 'posts have'} no recorded publish time, so ${count === 1 ? 'it falls' : 'they fall'} in no period and ${count === 1 ? 'is' : 'are'} in none of these numbers.`;
+const undatedNote = (count: number) => `${count.toLocaleString()} undated posts excluded`;
 
 function ScopeSelect({
   scope,
@@ -485,100 +559,23 @@ function DateInput({
   );
 }
 
-/**
- * When the data was last collected and when the next collection falls due — facts from
- * `GET /v1/analytics/status` for the client in view, with the collection rules worded from the
- * cadence it reports. Across all clients there is no single schedule, so only the newest capture
- * the report read is stated.
- */
-function SyncLine({
-  status,
-  now,
-  all,
-  report,
-  canReconnect,
-}: {
-  status: Load<AnalyticsStatusView>;
-  now: number;
-  all: boolean;
-  report: Report | null;
-  canReconnect: boolean;
-}) {
-  const at = (ms: number) => (
-    <time dateTime={new Date(ms).toISOString()}>{shortDateTime(new Date(ms), new Date(now))}</time>
-  );
-  let line: ReactNode;
-  if (all) {
-    const last = report?.summary.lastCapturedAt;
-    line = !report ? (
-      'Checking when data was last collected…'
-    ) : last ? (
-      <>Newest data in this view: {at(new Date(last).getTime())}</>
-    ) : (
-      'No data collected yet'
-    );
-  } else if (status.status === 'loading') line = 'Checking when data was last collected…';
-  else if (status.status === 'error') line = 'Couldn’t check when data was last collected.';
-  else {
-    const captured = status.data.lastCapturedAt
-      ? new Date(status.data.lastCapturedAt).getTime()
-      : null;
-    const next = nextRefresh(status.data, now);
-    line = (
-      <>
-        {captured !== null ? <>Data as of {at(captured)}</> : 'No data collected yet'}
-        {' · '}
-        {next.kind === 'at' ? (
-          <>next refresh from {at(next.at)}</>
-        ) : next.kind === 'due' ? (
-          'next refresh due now'
-        ) : (
-          'nothing to refresh: no account can be read'
-        )}
-        <span className="hidden sm:inline">
-          {' · '}
-          {cadenceText(status.data.cadence)}
-        </span>
-      </>
-    );
-  }
-  const stale = (report?.accounts ?? []).filter((a) => a.selected && a.needsReconnect);
-  return (
-    <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-      <p className="tnum text-caption text-muted">{line}</p>
-      {stale.map((a) => (
-        <Badge key={a.id} variant="warning" className="text-left">
-          {a.displayName} needs reconnecting — its numbers have stopped updating
-        </Badge>
-      ))}
-      {canReconnect && stale.length > 0 && (
-        <Link to="/connections" className="text-caption font-semibold text-ink underline">
-          Reconnect
-        </Link>
-      )}
-    </div>
-  );
-}
-
 /** The loaded page's blocks at their sizes, so nothing jumps when the report arrives. */
 function PageSkeleton() {
-  const card = 'rounded-md border border-hairline p-3';
+  const card = 'rounded-lg border border-hairline p-4';
   return (
     <div className="space-y-3" aria-hidden="true">
       <KpiSkeleton />
-      {[0, 1].map((row) => (
-        <div key={row} className="grid gap-3 lg:grid-cols-2">
-          {[0, 1].map((col) => (
-            <div key={col} className={card}>
-              <Skeleton className="h-5 w-40" />
-              <Skeleton className="mt-3 h-56 w-full" />
-            </div>
-          ))}
-        </div>
-      ))}
       <div className={card}>
         <Skeleton className="h-5 w-48" />
         <Skeleton className="mt-3 h-56 w-full" />
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className={card}>
+            <Skeleton className="h-5 w-40" />
+            <Skeleton className="mt-3 h-52 w-full" />
+          </div>
+        ))}
       </div>
       <div className={card}>
         <Skeleton className="h-5 w-48" />

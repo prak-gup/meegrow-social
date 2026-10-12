@@ -17,12 +17,9 @@ import {
   conceptsInView,
   csvCell,
   dayInput,
-  followerRows,
   formatRate,
-  heatLevel,
   hourLabel,
   parseReportFilters,
-  platformRows,
   platformsOf,
   postsCsv,
   rateNote,
@@ -32,8 +29,6 @@ import {
   signedPercent,
   slotLabel,
   sortPosts,
-  stackedRows,
-  trendRows,
   type ReportFilters,
 } from './analyticsReport';
 
@@ -251,16 +246,6 @@ describe('formatting', () => {
       new Date(2026, 8, 28).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
     );
   });
-
-  it('shades a heatmap cell against the strongest one, and leaves nothing unshaded as 0', () => {
-    expect(heatLevel(null, 100)).toBe(0);
-    expect(heatLevel(0, 100)).toBe(0);
-    expect(heatLevel(10, 100)).toBe(1);
-    expect(heatLevel(40, 100)).toBe(2);
-    expect(heatLevel(70, 100)).toBe(3);
-    expect(heatLevel(100, 100)).toBe(4);
-    expect(heatLevel(5, 0)).toBe(0);
-  });
 });
 
 describe('engagement rate, in words', () => {
@@ -296,89 +281,6 @@ describe('engagement rate, in words', () => {
     expect(rateNote(stat({ rate: null, basis: null, posts: 0, postsCounted: 0 }))).toBe(
       'No posts in this period.',
     );
-  });
-});
-
-describe('chart rows', () => {
-  const bucket = (
-    key: string,
-    byPlatform: Array<{ provider: string; posts: number; totals: Partial<ConceptValues> }>,
-    totals: Partial<ConceptValues> = {},
-    engagementRate: number | null = null,
-  ): AnalyticsReportView['overTime'][number] => ({
-    key,
-    start: new Date(key),
-    posts: byPlatform.reduce((n, p) => n + p.posts, 0),
-    totals: { ...NONE, ...totals },
-    engagementRate,
-    byPlatform: byPlatform.map((p) => ({ ...p, totals: { ...NONE, ...p.totals } })),
-  });
-  const overTime = [
-    bucket(
-      '2026-09-28',
-      [
-        { provider: 'instagram', posts: 2, totals: { likes: 30 } },
-        { provider: 'facebook', posts: 1, totals: {} },
-      ],
-      { likes: 30, views: 900 },
-      4.5,
-    ),
-    bucket('2026-10-05', []),
-  ];
-
-  it('stacks post counts per platform, an empty bucket with no total', () => {
-    expect(stackedRows(overTime, ['instagram', 'facebook'], 'posts')).toEqual([
-      { bucket: bucketLabel('2026-09-28'), total: 3, instagram: 2, facebook: 1 },
-      { bucket: bucketLabel('2026-10-05'), total: null, instagram: null, facebook: null },
-    ]);
-  });
-
-  it('stacks a concept, leaving a platform that does not report it out — not at 0', () => {
-    expect(stackedRows(overTime, ['instagram', 'facebook'], 'likes')[0]).toEqual({
-      bucket: bucketLabel('2026-09-28'),
-      total: 30,
-      instagram: 30,
-      facebook: null,
-    });
-  });
-
-  it('draws the engagement lines from the bucket totals and rate', () => {
-    expect(trendRows(overTime, ['likes', 'views', 'engagementRate'])).toEqual([
-      { bucket: bucketLabel('2026-09-28'), likes: 30, views: 900, engagementRate: 4.5 },
-      { bucket: bucketLabel('2026-10-05'), likes: null, views: null, engagementRate: null },
-    ]);
-  });
-
-  it('lists one value per platform', () => {
-    const byPlatform = [
-      { provider: 'instagram', posts: 4, totals: { ...NONE, likes: 9 } },
-      { provider: 'gmb', posts: 1, totals: NONE },
-    ] as AnalyticsReportView['byPlatform'];
-    const label = (p: string) => p.toUpperCase();
-    expect(platformRows(byPlatform, 'likes', label)).toEqual([
-      { provider: 'instagram', platform: 'INSTAGRAM', value: 9 },
-      { provider: 'gmb', platform: 'GMB', value: null },
-    ]);
-    expect(platformRows(byPlatform, 'posts', label).map((r) => r.value)).toEqual([4, 1]);
-  });
-
-  it('lines follower series up by day, a day without a capture left as a gap', () => {
-    expect(
-      followerRows([
-        {
-          connectionId: 'a',
-          points: [
-            { day: '2026-10-01', value: 10 },
-            { day: '2026-10-03', value: 12 },
-          ],
-        },
-        { connectionId: 'b', points: [{ day: '2026-10-02', value: 7 }] },
-      ]),
-    ).toEqual([
-      { day: bucketLabel('2026-10-01'), a: 10, b: null },
-      { day: bucketLabel('2026-10-02'), a: null, b: 7 },
-      { day: bucketLabel('2026-10-03'), a: 12, b: null },
-    ]);
   });
 });
 
