@@ -20,6 +20,7 @@ import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import {
   House,
+  Article,
   CalendarBlank,
   SquaresFour,
   ChartLineUp,
@@ -39,6 +40,7 @@ const TABS: { to: string; label: string; Icon: IconComponent; badge?: BadgeKey }
   { to: '/overview', label: 'Overview', Icon: House },
   { to: '/calendar', label: 'Calendar', Icon: CalendarBlank },
   { to: '/content', label: 'Content', Icon: SquaresFour, badge: 'content' },
+  { to: '/blog', label: 'Blog', Icon: Article },
   // Always listed. Until the numbers are validated against the platforms the page itself carries a
   // "Preview" badge (VITE_ANALYTICS_UI, see pages/Analytics.tsx and docs/dev/ANALYTICS-UI-BRIEF.md §1).
   { to: '/analytics', label: 'Analytics', Icon: ChartLineUp },
@@ -76,9 +78,11 @@ function SidebarContent({
   onToggleCollapsed,
   composing,
 }: SidebarProps) {
+  const { me } = useAuth();
   const navigate = useNavigate();
   const { pathname, search } = useLocation();
   const badges = navBadges(overview);
+  const tabs = TABS.filter((tab) => tab.to !== '/blog' || me?.activeWorkspaceId);
 
   return (
     <div className={cn('flex h-full flex-col gap-3', collapsed ? 'p-2' : 'p-3')}>
@@ -126,7 +130,7 @@ function SidebarContent({
       </Tooltip>
 
       <nav aria-label="Main" className="flex flex-col gap-0.5">
-        {TABS.map(({ to, label, Icon, badge }) => {
+        {tabs.map(({ to, label, Icon, badge }) => {
           const n = badge ? badges[badge] : 0;
           const words = n > 0 && badge ? `${formatBadge(n)} ${BADGE_WORDS[badge](n)}` : '';
           return (

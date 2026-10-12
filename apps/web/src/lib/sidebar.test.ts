@@ -221,6 +221,10 @@ describe('switcher data', () => {
 });
 
 describe('switchTarget', () => {
+  it('keeps Blog and leaves a previous client’s article detail for the new client’s inventory', () => {
+    expect(switchTarget('/blog')).toBe('/blog');
+    expect(switchTarget('/blog/old-client-post')).toBe('/blog');
+  });
   it('stays on workspace-scoped screens', () => {
     for (const p of ['/content', '/calendar', '/analytics', '/connections', '/settings/api-keys'])
       expect(switchTarget(p)).toBe(p);

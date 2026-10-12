@@ -1,9 +1,115 @@
 # WordPress management — implementation notes
 
-2026-10-12. **This run implements Step 1 only. Steps 2 and 3 are not built.**
+2026-10-12. **Step 1 was already merged; this run adds Step 1b only. Steps 2 and 3 are not built.**
 Changes are uncommitted. No WordPress site, database or Redis was contacted. No browser was opened.
 
-## Step 1 — see articles
+## Step 1b — dedicated Blog page (this run)
+
+- Added `/blog` and `/blog/:postId` under the existing authenticated layout. The Blog sidebar
+  entry uses the existing Phosphor Article icon and appears when a client is active. Content stays
+  the cross-platform overview; its existing WordPress metadata component now links app-published
+  and imported article cards/table entries to their Blog detail as well as the site permalink.
+- The dense table shows full title, separate site status, site, author, categories, tags,
+  publication/modification dates, source and a safe external article link. Site status is Published,
+  Draft on site, Pending, Scheduled, Private or Removed, independently of our lifecycle status.
+  Removal takes precedence. Unsent Composer drafts/schedules stay in Content.
+- Uses existing scoped `GET /v1/posts?provider=wordpress&status=published&limit=50&offset=…` and
+  `GET /v1/connections`. Reads stored pages serially to the end before filtering/sorting, so a title
+  or category on later pages is searchable. Deduplicates repeated IDs if offsets shift. A failed
+  page shows a retryable error rather than silently presenting a partial inventory. Navigation or
+  a client switch discards old results and stops requesting further pages. No outbound site call
+  is added. The existing `withWorkspace` core read service continues to own scoping.
+- Title search ignores case and surrounding whitespace. Site-status/category filters combine
+  with a site selector when multiple sites are connected. Publication/modification date and title
+  sorts work in both directions, with sortable table headers and a sort selector. Missing dates
+  sort last; ID breaks ties. Show more reveals 50 additional matching rows at a time.
+- Empty states distinguish no connected WordPress site (Connections link), import in progress
+  and no stored articles. Shows existing import messages, including the 500-article cap and failed
+  or paused runs. Refresh re-reads stored import results; it does not request a live site scan.
+- Detail reads `GET /v1/posts/:postId` and shows all stored article settings, stored featured image,
+  source, removal state, body preview and the truncation warning. Older app-published articles have
+  no site-owned metadata in Step 1: these show the original publishing settings, known term names
+  or explicitly labelled term IDs, and `—` for unknown authors/dates. The UI explains this; it does
+  not invent a site publication date from our dispatch time or claim those settings are current.
+- Chose the permitted **escaped source with a simple formatted text preview** option. HTML is
+  never inserted with `innerHTML` or `dangerouslySetInnerHTML`. `articlePreviewText` extracts text,
+  paragraph breaks and list markers, removes non-visible blocks, then decodes a small entity set.
+  Both the result and original source are React text children. This helper is expressly **not an
+  HTML sanitizer** and must never be used as one. Malformed tags or encoded payloads remain text.
+  App-authored Markdown is displayed as escaped source/text; it is not reclassified as imported
+  HTML. Site styles, links and embedded media are omitted; the live-site link provides that view.
+- Reuses the app's layout, typography, controls and table frame. Controls wrap, table overflow is
+  contained horizontally, long detail content wraps, and the detail columns stack below `xl`.
+  Title links provide keyboard navigation alongside clickable rows. Switching client from an
+  article detail returns to `/blog`, not an ID owned by the previous client. The layout remounts
+  scoped pages using the active workspace key. These are implementation facts, not browser proof
+  at 1512 / 1024 / 390 px.
+- Added 24 Blog library/preview tests, 3 rendered Content-link tests and 1 sidebar switching test.
+  Fixtures parse through the real `postView` contract, which caught an initial incorrect assumption
+  that `externalPostId` is exposed on that view. Tests cover statuses, missing dates, original
+  app settings, combined filters, both sorts, later-page reads, deduplication, excluded-row offsets,
+  read failures, stale client results, large bodies and malicious/malformed HTML. Server-rendered
+  markup proves escaping and internal/external link destinations; it does not exercise effects or
+  browser interaction. No provider/service change or integration test was necessary for this UI step.
+
+**Migration:** none; no SQL or schema change. **API/MCP:** no new query parameter, route or tool.
+`docs/dev/MCP.md` is unchanged. No dependency was added. No credentials are requested, logged or
+returned by the new UI. Existing imported-source publish/edit/cancel/retry guards and safeFetch
+transports remain in place. The existing stored-body cap is unchanged at 100,000 characters; the
+detail warns when truncated and has no body-write path.
+
+This run stops at the tested Step 1b boundary under the request's room-limit fallback. Step 2
+remote update/trash, concurrency, read-back, field event logs, API/MCP write tools and confirmation
+dialog remain unbuilt. Step 3 SEO reads/writes, research §12 and Royal MCP transport specification
+remain unbuilt. Nothing here implies those steps are supported.
+
+## Step 1b gates (this run)
+
+Dependencies were already installed; `pnpm install --frozen-lockfile` was not needed. Changed files
+were formatted using `pnpm exec prettier --write`. The following gates ran from the repository
+root after the final code/test changes:
+
+| Command                      | Observed result                                       |
+| ---------------------------- | ----------------------------------------------------- |
+| `pnpm format:check`          | Exit 0; “All matched files use Prettier code style!”  |
+| `bash scripts/guardrails.sh` | Exit 0; “✅ guardrails passed”                        |
+| `pnpm lint`                  | Exit 0; no ESLint errors or warnings                  |
+| `pnpm build`                 | Exit 0; 7 successful tasks, 7 total; 6 cached; 5.37 s |
+| `pnpm test`                  | Exit 0; 91 files passed; 2,590 tests passed; 19.35 s  |
+| `git diff --check`           | Exit 0; no whitespace errors                          |
+
+The final build emitted one `WARNING IO error: Operation not permitted (os error 1)` from Turbo
+and Vite's warning about chunks larger than 500 kB. The test runner emitted Vite's CJS Node API
+deprecation warning. There were no `listen EPERM 127.0.0.1` test failures and no exception to the
+passing test gate was needed. Intermediate checks caught a missing JSX brace, a fixture relying
+on the unexposed `externalPostId`, and an overbroad assertion matching attribute-like text in an
+escaped source block; these were corrected. Link tests now use StaticRouter for server rendering
+instead of MemoryRouter, eliminating its server-side layout-effect warning. Notes were then updated
+with these observations and formatted; the repository formatting check was repeated afterwards.
+
+### Step 1b evidence limits
+
+- No browser was opened. Responsive behavior at 1512 / 1024 / 390 px, focus/navigation, client
+  switching, import progress, Show more and the authenticated Content → Blog detail user journey
+  have not been exercised in a browser. Static markup tests cover escaping and link destinations.
+- No database or Redis was contacted, and no integration tests were run. Actual scoped API reads,
+  RLS and worker behavior were not re-proven live. Existing core reads and their guards are reused.
+- No WordPress network calls were made. The table is a view of stored observations, not a live
+  site inventory. Existing import caps/pacing/truncation apply. Refresh only re-reads our API.
+- Older app-published articles lack site-owned metadata; original settings and Markdown body are
+  shown with an explanation. Original category IDs are labelled as IDs. Site edits to these rows
+  are not made current by this UI change, and missing dates/author are not fabricated.
+- Offset reads do not establish a snapshot while imports change records. Deduplication handles
+  repeats; concurrent inserts can still shift pages. Reload revisits the inventory. The UI reads
+  the entire stored WordPress inventory (bodies included) for global filtering/sorting; latency and
+  memory use on very large stored inventories have not been benchmarked. Show more bounds rendered
+  rows, not the amount fetched. Provider import runs retain their existing 500-article cap.
+- Remote editing/trash and SEO have no implementation or test evidence in this run. Steps 2 and 3
+  remain required work, including the research §12 and plugin-key transport specification.
+- No migration, dependencies, commits, pushes or client-system mutations were performed. No `.env`
+  file was opened. `pnpm test:integration` and direct vitest invocation were never used.
+
+## Step 1 — see articles (already merged)
 
 - `WordPressProvider` now implements `listPublishedPosts` and `publishedPostPresence` on both
   existing transports. Registration makes the existing connection/worker import pipeline pick up
@@ -73,7 +179,7 @@ back. Step 2 must enforce that restriction in its independent core update servic
 ## Step 2 — not built
 
 No `updatePublishedPost` / `deletePublishedPost`, `updateRemotePost` / `trashRemotePost`, REST write
-routes, MCP write tools, or article edit/detail panel. Optimistic concurrency, write read-back,
+routes, MCP write tools, or article editing panel. Step 1b adds a read-only detail page. Optimistic concurrency, write read-back,
 actor/field event logs, site trash confirmation and edit-field validation remain outstanding.
 Nothing in this run writes to a WordPress site or moves an article to its trash.
 
@@ -106,7 +212,7 @@ copying/refusal. Web library tests cover titles/status chips in Content/Calendar
 restrictions and WordPress/account query filters. Update/trash/conflict/SEO fixtures are not written
 because their steps are not built. No integration tests were run.
 
-## Gates
+## Previous Step 1 gates (historical; not this run)
 
 Dependencies were already installed; `pnpm install --frozen-lockfile` was not needed.
 Changed files were formatted with `pnpm exec prettier --write`.

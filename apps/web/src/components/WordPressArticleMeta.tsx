@@ -1,4 +1,6 @@
 import type { PostView } from '@meegrow-social/contracts';
+import { Link } from 'react-router-dom';
+import { isSiteArticle } from '../lib/blog';
 import { safeExternalUrl } from '../lib/postList';
 
 /** Text only: imported HTML is never rendered as executable page content. */
@@ -22,6 +24,11 @@ export function WordPressArticleMeta({
       )}
       {remote?.bodyTruncated && (
         <span className="block">Body truncated for storage. Body editing is unavailable.</span>
+      )}
+      {link && isSiteArticle(post) && (
+        <Link to={`/blog/${post.id}`} className="mr-3 inline-block underline">
+          Article details
+        </Link>
       )}
       {link && url && (
         <a href={url} target="_blank" rel="noopener noreferrer" className="underline">
