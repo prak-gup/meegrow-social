@@ -207,7 +207,10 @@ describe('single-client member REST isolation', () => {
       expect(response.statusCode).toBe(200);
       expect(response.body).not.toContain(B);
     }
-    expect(core.overviewForUser).toHaveBeenCalledWith(USER);
+    // Keyed by the session's user; the other arguments are display options (a timezone), never a
+    // workspace the caller chose.
+    expect(vi.mocked(core.overviewForUser).mock.calls[0]?.[0]).toBe(USER);
+    expect(vi.mocked(core.overviewForUser).mock.calls[0]?.[1]).toBeUndefined();
     expect(core.buildUserView).toHaveBeenCalledWith(USER);
     expect(core.getAnalyticsReportForUser).toHaveBeenCalledWith(
       USER,
