@@ -1,86 +1,61 @@
-# Analytics v3 implementation notes
+# Analytics v3 — Revision 2 implementation
 
-Implemented against `ANALYTICS-V3-DESIGN.md`, the final agreed design dated 12 October 2026.
+Implemented 12 October 2026. The owner’s dashboard brief supersedes conflicting instructions in the earlier design review. Changes are uncommitted; nothing was pushed or published.
 
-## Built
+## What was built
 
-- Factual KPI band: supported Views, Post reach, descriptive engagement rate and Followers; YouTube uses Subscribers/Post engagement rate, and GBP uses Views/CTA clicks. Unsupported KPIs disappear, missing values remain `—`, observed zero remains zero, rate basis/counts and small samples stay visible. Follower absolute change is labelled “vs prior capture”.
-- Client/period controls precede account-derived single-select platform chips in DOM order; retained URL filters/custom periods/client scope, collapsible account/source filters with active counts and a visible scope summary. Capture status, reconnect/import/undated/partial-rate/GBP/preview warnings remain visible. Retained results have their previous scope labelled and are inert while updating.
-- One zero-based blue bar chart of latest counts grouped by publication day/week. Partial buckets are labelled. Missing bucket totals have explicit dash labels; a visible data disclosure gives dates, publication counts and reported totals. No daily-gain claim, rate timeline, platform-contribution plot, stacked mode or dual axes.
-- Top posts before platform breakdown. Sorting/null-last behaviour, initial ten rows, +25 Show more, Show fewer, safe external links, thumbnails/account/date/source, post-native metrics/history and returned-row CSV export remain available. Capped-result warnings explain that summary/chart totals include omitted posts while sorting/export do not. Identity columns scroll locally/stick where practical; the selected chart concept is first among post metric columns.
-- Collapsed Explore patterns: neutral format rows; one-account follower chart with null calendar gaps, straight segments and observed dots; desktop roving day/hour grid with exact selected-day data and mobile day/hour rows; discrete provider cadence rows; isolated engagement-age points only with one account and at least ten contributors per age. No best/rank/optimal/crossing badges or recommendation claims.
-- Calculation definitions and raw prior comparisons live in one main disclosure. “Platform metrics, as collected” remains a separate collapsed table inside it, with all native names/mappings intact. Definition controls work by focus/hover/tap with Escape dismissal, and exact chart data is available visibly.
-- Removed unused legacy stacked/multi-series/follower-row builders and the frontend heat-level computation. Formatting, selection and table sorting remain in web; new analytics computation stays in core.
+- A compact title/client header, visible period/platform/account/source controls, platform colour dots, a muted capture timestamp, and the retained “Preview — numbers not yet validated” badge.
+- Five KPI cards: engagement rate, reach, views, followers, and published posts. Cards show relative prior-period delta pills and gradient sparklines. Followers also show the observed net change. Definitions and coverage are available through one info tooltip per card.
+- Up to four deterministic, server-generated insight cards. An empty insight list renders no row.
+- A wide platform-coloured publication-week area chart with Views, Reach, Likes, Comments, Saves, and Engagement rate chips, friendly dates, light horizontal gridlines, exact hover values, a period total and delta, and a screen-reader data table. Segments are straight; missing metric buckets remain null gaps.
+- Six visible supporting cards: platform reach split with post counts/rates, format rate bars, weekday/hour heatmap with a sequential teal ramp and qualified slot chips, follower captures per account, stacked publication-week posting bars, and snapshot-qualified engagement by post age. Cards have icon/text empty states.
+- Top posts and platform tables retain their content, top-post sorting, pagination and CSV export. Post titles have no history link or expansion. Definitions sit in column headers rather than every cell. Rows show thumbnails, single-line titles, accounts, friendly dates and Imported markers. Rate bases are in tooltips.
+- One collapsed calculation footer contains formulas, coverage/exclusions, comparison limitations, snapshot rules, and the native metric table. The raw table is visible when that footer opens.
+- Shared platform chart colours are defined once: Instagram pink, Facebook blue, YouTube red, Google Business teal, Bluesky sky blue and WordPress slate. Cards use existing surface/type/status tokens, 12px corners and a very soft shadow. Desktop uses five KPI columns and two supporting-card columns; narrower screens wrap KPIs and use one supporting-card column on phones. Tables retain their internal overflow containers. Layout skeletons cover KPI, primary trend, supporting cards and table rows.
 
-## Optional report additions
+## Core computations and contract compatibility
 
-All additions flow through the existing report builder/GET report response and are optional in the shared contract; no API route, storage, collection, dependency or infrastructure change:
+All new report arithmetic lives in core. `analytics-insights.ts` is pure; no AI generation, network calls or storage writes are involved. Existing fields remain, with additive optional fields in the GET `/v1/analytics/report` schema:
 
-| Field                          | Core owner                   | Meaning                                                                                                            |
-| ------------------------------ | ---------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `overTime[].window`            | `publicationWindow`          | Selected publication-window intersection and partial-bucket flag.                                                  |
-| `followerSeries[].dailyPoints` | `followerCalendar`           | Calendar-day series in the viewer timezone, with null gaps and observed zeros preserved, including DST.            |
-| `bestTimes.cells[].level`      | `publicationIntensity`       | Descriptive ramp index; missing is null, zero is observed, never a rank.                                           |
-| `accumulation.displayPoints`   | `engagementAgeDisplayPoints` | One selected account and at least ten non-null contributors at each plotted age; no winner or lifetime prediction. |
+- `insights`, `formatWinner`, `bestSlots`, `platformShares`, `followerTrend`, and `weeklySeries`.
+- `bestTimes.cells[].postsCounted`, `followerSeries[].change`, and per-platform publication-bucket engagement rates.
 
-Each new pure core function has unit tests. Old payloads still parse: missing bucket metadata is marked “Not supplied”, missing daily follower facts use exact capture tables without reconstructing a calendar in web, missing intensity uses a neutral observed surface, and missing age eligibility suppresses the plot.
+`weeklySeries` always uses viewer-zone Monday weeks, even when the existing `overTime` uses days for a short period. Weekly follower sparklines sum each selected, mapped account’s latest actual capture in that week only when every such account has a capture. Missing weeks/accounts remain null. Account follower change compares the latest in-period capture with its prior-period capture; no prior capture means no change.
 
-## Design decisions and deviations
+Bluesky now maps `likeCount`, `replyCount`, `repostCount`, and `bookmarkCount` to likes/comments/shares/saves, and `followers` to the account count. Unsupported concepts remain null. Raw native values remain available.
 
-The task summary requested sparklines, an insights row, a default compact card grid and Bluesky mappings. The final design explicitly removes sparklines/default diagnostic grids, permits no findings strip when comparison evidence is missing, and defers Bluesky mappings. The conflicting requirements were surfaced; implementation follows the instruction to implement the final design exactly. **No Bluesky mapping was added:** native metrics remain in the calculation table; mapped Bluesky engagement/follower heroes stay absent. No median engine or comparison findings were invented from capped posts.
+## Insight and display sample rules
 
-Small optional presentation facts were added to core to satisfy the requested separation of computation and rendering. These do not supply deferred age-matched change/format/slot/cadence recommendation evidence. Existing `best`, `top`, and crossing fields remain backward compatible but are ignored as recommendation authority.
+1. Format comparisons require at least **five rate-counted posts in each group**, matching non-mixed bases and identical engagement components, and unequal rates. The highest eligible winner gets the Best marker. The legacy `formats[].best` flag is not used as authority.
+2. Time slots require **three measured posts**, not merely three published posts. Slots sort by average, then weekday/hour. The top three qualified slots become chips. A time insight appears only when scored by engagements, rather than fallback views.
+3. Top-post engagement share requires **five published posts**, an engagement-ranked best post and a positive reported engagement total. The share is of reported engagement, not an estimate of unreported counts.
+4. Platform reach findings require **two platforms with reported reach**, positive total reach and **five published posts on the leading platform**. Unreported platform reach stays null; it never becomes a zero share.
+5. Reach-change findings require a positive prior value, a current value, and a finite nonzero relative change. Missing/zero baselines never produce infinity.
+6. Findings appear in stable format → time → post → platform → delta order, capped at four. Ineligible findings are absent. These are descriptive observations, not significance tests or causal recommendations.
+7. Engagement-by-age uses the existing snapshot qualification: three captures, first within 24h, latest at least 48h old, positive latest engagement. The display retains the stricter existing rule of one selected account and ten contributors per age, and requires at least two qualified points to render a curve. Otherwise it shows an insufficient-data state.
 
-The follower chart uses a zero-based axis rather than cropping it; this is an allowed safer axis treatment and needs no inferred bound. Exact daily values remain available. Missing main-chart buckets are named with a dash beneath the plot and in its table, rather than inserting fabricated zero bars. No browser-based fixture journey was performed because the task prohibits opening a browser.
+Unit tests cover threshold boundaries, absent values, mixed/incompatible comparisons, equal rates, stable ordering/capping, missing follower weeks, publication-week totals, account net changes, Bluesky native mappings and legacy optional-field parsing. Server-rendered markup tests cover the visible cards, null/zero distinctions, finite deltas, friendly dates, tooltip placement, removal of expansion, CSV/pagination controls and empty states.
 
-## Verification observed
+## Gates exactly as observed
 
-Commands were run from the repository root. Existing dependencies were already installed and resolved; `pnpm install --frozen-lockfile` was not needed. No new dependency was added.
+All commands were run from the repository root. No integration test command, direct Vitest invocation, database/Redis connection, environment-file read, dependency installation, commit or push was performed.
 
-| Gate                                          | Observed result                                                                                                                                                                                                    |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `pnpm exec prettier --write` on changed files | Exit 0.                                                                                                                                                                                                            |
-| `pnpm format:check`                           | Exit 0; “All matched files use Prettier code style!”                                                                                                                                                               |
-| `bash scripts/guardrails.sh`                  | Exit 0; “✅ guardrails passed”.                                                                                                                                                                                    |
-| `pnpm lint`                                   | Exit 0; no lint diagnostics.                                                                                                                                                                                       |
-| `pnpm build`                                  | Exit 0; “7 successful, 7 total”. Vite warns that some chunks exceed 500 kB. Turbo also printed “IO error: Operation not permitted (os error 1)” cache warnings on uncached builds; package builds still succeeded. |
-| `pnpm test`                                   | Final run: exit 0; 88 test files passed, 2,542 tests passed. No `listen EPERM` failures occurred in this environment.                                                                                              |
-| `git diff --check`                            | Exit 0.                                                                                                                                                                                                            |
+| Gate                                          | Observed result                                                                                                      |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `pnpm exec prettier --write` on changed files | Passed. Changed source/tests/docs formatted.                                                                         |
+| `pnpm format:check`                           | Passed: “All matched files use Prettier code style!”                                                                 |
+| `bash scripts/guardrails.sh`                  | Passed: “✅ guardrails passed”.                                                                                      |
+| `pnpm lint`                                   | Passed, exit 0; no lint diagnostics.                                                                                 |
+| `pnpm build`                                  | Passed: **7 successful tasks / 7 total**, including TypeScript and Vite production output.                           |
+| `pnpm test`                                   | Passed: **89 files, 2,576 tests**. Final observed run duration **20.20s**. No `listen EPERM` exceptions were needed. |
+| `git diff --check`                            | Passed; no whitespace diagnostics.                                                                                   |
 
-Earlier unit runs exposed and then corrected three fixture issues: an old exact slot-object assertion omitted the additive `level: null`; a new rendering test expected `0%` while the existing formatter returns `0.00%`; removal of obsolete chart-helper imports also removed the `bucketLabel` import still used by a retained formatting test. No non-environment failure remains in the final run.
+The initial build exposed two chart typing errors (dynamic row indexing and a too-narrow Recharts formatter signature); these were corrected. The initial test run had three failures from changed report-field expectations and a zero-post platform empty-state defect; these were corrected. Subsequent full test runs passed.
 
-The Node-only rendering fixtures establish missing/zero output, YouTube/GBP/Bluesky vocabulary and supported concepts, mixed/partial rate labels, suppressed unqualified winners, follower-only captures/gaps, old optional payload compatibility, capped returned-row export wording, first-ten pagination and sortable headings. Existing URL/sorting/CSV/core tests also pass. Static code implements touch-sized controls, local table overflow, responsive chart heights and KPI wrapping; these are not browser usability proof.
+Build output included sandbox Turbo-cache IO warnings (“Operation not permitted”) and Vite’s warning about a minified chunk larger than 500 kB. These were warnings, not gate failures. The test runner emitted the existing Vite CJS Node API deprecation warning.
 
-Calculated sRGB contrast pairs: white on `#277461` 5.59:1; white on `#006650` 6.96:1; ink `#222` on the first three heatmap shades 13.85/10.86/6.84:1; `#6a6a6a` outlines on white 5.41:1; main `#0072B2` on white 5.19:1. Heatmap focus outlines are offset onto the surrounding surface. These are calculations, not rendered accessibility certification.
+## What remains unverified
 
-## Commit block
+No browser was opened. The evidence does **not** establish visual quality or absence of overflow at 1512 / 1024 / 390px, actual chart geometry/hover rendering, touch usability of the hourly heatmap, keyboard interaction behaviour in a browser, or screen-reader announcements. Responsive classes, accessible labels/data alternatives and server-rendered markup were checked; they are not substitutes for those real journeys.
 
-Staging and committing were attempted, but Git cannot create the worktree lock:
-
-```text
-fatal: Unable to create '/Users/prakhar/Desktop/Meegrow/meegrow-social/.git/worktrees/analytics-v3/index.lock': Operation not permitted
-```
-
-The Git metadata lives outside the sandbox's writable roots, and approval escalation is unavailable. Changes therefore remain uncommitted. Intended sensible commits, each with the required blank line and trailer:
-
-```text
-feat(analytics): expose optional publication and sample display facts
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-
-feat(web): implement the agreed analytics v3 evidence-first layout
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-
-docs(analytics): record implementation and verification limits
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-```
-
-`.design-ref/` was inspected locally and never staged or committed. No push was attempted.
-
-## Not verified
-
-No browser was opened. The real React route, fixture-intercepted auth/status/connections/history requests, keyboard/touch/focus/Escape behaviour, visual layout at 1512/1024/390/320 px, 200% zoom, body scroll width, rendered contrast, screen readers and colour-blind simulations remain unverified. Server-rendered component fixtures are narrower evidence than an interactive route test.
-
-No database, Redis, backend or live provider was connected. No `.env` file was read, direct Vitest invocation or integration-test command run, migration/collection change made, or client system mutated. Provider accuracy, collection completeness, permission enforcement and production freshness remain unverified. The preview behaviour is preserved; independent production validation is still required. Git commit creation is also unverified/blocked as described above.
+No database, Redis or live platform was contacted. The evidence does **not** validate production metric accuracy, imported media classification, real account coverage, provider data freshness, transport-backed filtering, or live CSV downloads. The preview badge remains visible. Prior comparisons are publication-cohort comparisons of latest counts, and followers compare captures; neither establishes period-attributed audience growth. API additions compile and parse in unit fixtures, but were not exercised through a live authenticated report request.

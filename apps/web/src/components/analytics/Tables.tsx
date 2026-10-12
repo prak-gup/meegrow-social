@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { MetricConcept, PostMetricsView, ReportPost } from '@meegrow-social/contracts';
+import { useMemo, useState } from 'react';
+import type { MetricConcept, ReportPost } from '@meegrow-social/contracts';
 import {
   CONCEPT_LABEL,
   basisText,
@@ -9,34 +9,29 @@ import {
   type PostSortKey,
   type Report,
 } from '../../lib/analyticsReport';
-import { api } from '../../lib/api';
 import { ArrowSquareOut, DownloadSimple } from '../../lib/icons';
-import { compactNumber, shortDateTime } from '../../lib/postGroups';
+import { compactNumber } from '../../lib/postGroups';
 import { captionSnippet, safeExternalUrl } from '../../lib/postList';
 import { platformMeta } from '../../lib/platforms';
 import { PostThumb } from '../PostThumb';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Table, type TableColumn, type TableSort } from '../ui/Table';
-import { Help, NoValue, PlatformName, Section, platformLabel } from './parts';
+import { NoValue, PlatformName, Section, platformLabel } from './parts';
 
 const number = (value: number | null, why: string) =>
   value === null ? (
     <NoValue why={why} />
   ) : (
-    <span className="inline-flex items-center">
-      <span>{compactNumber(value)}</span>
-      <Help label="reported count" text={`Exact reported count: ${value.toLocaleString()}`} />
-    </span>
+    <span title={value.toLocaleString()}>{compactNumber(value)}</span>
   );
 
 /** Engagement rate with what it was divided by beside it, so two bases never look alike. */
 function Rate({ rate, basis }: { rate: number | null; basis: string | null }) {
   if (rate === null) return <NoValue why="No rate: no engagement count, or no reach or views" />;
   return (
-    <span className="inline-flex items-baseline gap-1">
+    <span className="inline-flex items-baseline gap-1" title={basis ?? undefined}>
       <span className="font-semibold">{formatRate(rate)}</span>
-      {basis && <span className="text-micro font-normal text-muted">{basis}</span>}
     </span>
   );
 }
@@ -68,6 +63,7 @@ export function PlatformTable({
     },
     ...concepts.map((concept): TableColumn<PlatformRow> => ({
       key: concept,
+      help: `Latest reported ${CONCEPT_LABEL[concept].toLowerCase()}; — means unreported. Hover a count for its exact value.`,
       header:
         concept === 'follows' &&
         report.mapping.length === 1 &&
@@ -84,16 +80,10 @@ export function PlatformTable({
     {
       key: 'rate',
       header: 'Eng. rate',
+      help: 'Reported likes + comments + shares + saves ÷ reach × 100, with views as fallback. Hover a rate for its basis.',
       align: 'right',
       className: 'whitespace-nowrap',
-      cell: (p) => (
-        <span>
-          <Rate rate={p.engagementRate.rate} basis={basisText(p.engagementRate)} />{' '}
-          <span className="text-caption text-muted">
-            {p.engagementRate.postsCounted}/{p.engagementRate.posts}
-          </span>
-        </span>
-      ),
+      cell: (p) => <Rate rate={p.engagementRate.rate} basis={basisText(p.engagementRate)} />,
     },
   ];
   return (
@@ -135,7 +125,6 @@ export function TopPosts({
 }) {
   const [sort, setSort] = useState<TableSort>({ key: 'engagements', dir: 'desc' });
   const [shown, setShown] = useState(PAGE);
-  const [expanded, setExpanded] = useState<string | null>(null);
   const sorted = useMemo(
     () => sortPosts(report.topPosts, sort.key as PostSortKey, sort.dir),
     [report.topPosts, sort],
@@ -169,15 +158,6 @@ export function TopPosts({
               size="sm"
             />
             <span className="min-w-0">
-              <button
-                type="button"
-                aria-expanded={expanded === post.id}
-                aria-label={`Metrics and history: ${text}`}
-                onClick={() => setExpanded((prev) => (prev === post.id ? null : post.id))}
-                className="min-h-11 rounded-sm text-caption font-medium text-ink underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink"
-              >
-                {expanded === post.id ? 'Hide history' : 'Metrics and history'}
-              </button>
               {url ? (
                 <a
                   href={url}
@@ -201,11 +181,15 @@ export function TopPosts({
                 </span>
                 <span aria-hidden="true">·</span>
                 <time dateTime={new Date(post.publishAt).toISOString()} className="tnum flex-none">
-                  {shortDateTime(new Date(post.publishAt))}
+                  {new Date(post.publishAt).toLocaleDateString('en-GB', {
+                    day: 'numeric',
+                    month: 'short',
+                    timeZone: report.timezone,
+                  })}
                 </time>
                 {post.source === 'imported' && (
                   <span className="flex-none" title="Found on the platform, not published here">
-                    · imported
+                    · Imported
                   </span>
                 )}
               </span>
@@ -216,6 +200,7 @@ export function TopPosts({
     },
     ...concepts.map((concept): TableColumn<ReportPost> => ({
       key: concept,
+      help: `Latest reported ${CONCEPT_LABEL[concept].toLowerCase()}; — means unreported. Hover a count for its exact value.`,
       header:
         concept === 'follows' &&
         report.mapping.length === 1 &&
@@ -230,6 +215,7 @@ export function TopPosts({
     })),
     {
       key: 'engagements',
+      help: 'Sum of reported likes, comments, shares and saves.',
       header: (
         <span title="Likes + comments + shares + saves, over the ones reported">Engagements</span>
       ),
@@ -241,6 +227,7 @@ export function TopPosts({
     {
       key: 'rate',
       header: 'Eng. rate',
+      help: 'Reported likes + comments + shares + saves ÷ reach × 100, with views as fallback. Hover a rate for its basis.',
       sortKey: 'engagementRate',
       align: 'right',
       className: 'whitespace-nowrap',
@@ -274,9 +261,6 @@ export function TopPosts({
         caption="Posts published in the period with their metrics"
         dense
         rows={rows}
-        renderExpanded={(post) =>
-          expanded === post.id ? <PostHistory key={post.id} id={post.id} /> : null
-        }
         rowKey={(post) => post.id}
         columns={columns}
         sort={sort}
@@ -286,17 +270,11 @@ export function TopPosts({
           description: 'A longer period may have some.',
         }}
       />
-      {report.postsOmitted > 0 && (
-        <p role="status" className="mt-2 text-caption font-medium text-ink">
-          {report.postsOmitted.toLocaleString()} posts omitted. Summary and chart cover all posts;
-          sorting and CSV cover only returned rows (up to 1,000).
-        </p>
-      )}
       {rows.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
           <p className="tnum text-caption text-muted">
             Showing {rows.length.toLocaleString()} of {sorted.length.toLocaleString()} returned
-            posts
+            posts{report.postsOmitted > 0 && ` · ${report.postsOmitted} omitted`}
           </p>
           <div className="flex gap-2">
             {shown < sorted.length && (
@@ -357,64 +335,59 @@ export function RawMetrics({ report }: { report: Report }) {
     },
   ];
   return (
-    <details>
-      <summary className="min-h-11 cursor-pointer py-3 text-sm font-semibold text-ink">
-        Platform metrics, as collected
-      </summary>
-      <Section
-        title="Platform metrics, as collected"
-        subtitle={`${rawMetrics.length.toLocaleString()} metric ${rawMetrics.length === 1 ? 'name' : 'names'} across the posts of the period${unmapped > 0 ? `, ${unmapped} of them shown only here` : ''}`}
-        note="Numbers are stored under each platform’s own metric name and only read as the columns above. A name that feeds no column is still collected and listed here; a sum of a metric that is itself an average or a rate is not meaningful and is shown only as collected."
-      >
-        <Table
-          caption="Every native metric of the period’s posts"
-          dense
-          rows={rawMetrics}
-          rowKey={(r) => `${r.provider}:${r.metric}`}
-          columns={columns}
-          empty={{ title: 'No metrics collected for posts published in this period' }}
-        />
-        {mapping.length > 0 && (
-          <details className="mt-3">
-            <summary className="cursor-pointer text-caption font-semibold text-ink">
-              How each column is read from each platform
-            </summary>
-            <Table
-              className="mt-2"
-              caption="The platform metric behind each column, per platform"
-              dense
-              rows={[
-                ...(Object.keys(CONCEPT_LABEL) as MetricConcept[]).map((concept) => ({
-                  label: CONCEPT_LABEL[concept],
-                  sources: (m: Mapping) => m.concepts[concept],
-                })),
-                { label: 'Followers (account)', sources: (m: Mapping) => m.followers },
-              ]}
-              rowKey={(row) => row.label}
-              columns={[
-                {
-                  key: 'column',
-                  header: 'Column',
-                  className: 'whitespace-nowrap font-medium',
-                  cell: (row) => row.label,
-                },
-                ...mapping.map((m) => ({
-                  key: m.provider,
-                  header: <PlatformName provider={m.provider} />,
-                  cell: (row: { sources: (m: Mapping) => readonly string[] }) => (
-                    <Sources names={row.sources(m)} />
-                  ),
-                })),
-              ]}
-            />
-            <p className="mt-1.5 text-caption text-muted">
-              “—” = the platform has no equivalent, or it is not collected. Where two names are
-              listed, the first one a post carries is used.
-            </p>
-          </details>
-        )}
-      </Section>
-    </details>
+    <Section
+      title="Platform metrics, as collected"
+      subtitle={`${rawMetrics.length.toLocaleString()} metric ${rawMetrics.length === 1 ? 'name' : 'names'} across the posts of the period${unmapped > 0 ? `, ${unmapped} of them shown only here` : ''}`}
+      note="Numbers are stored under each platform’s own metric name and only read as the columns above. A name that feeds no column is still collected and listed here; a sum of a metric that is itself an average or a rate is not meaningful and is shown only as collected."
+    >
+      <Table
+        caption="Every native metric of the period’s posts"
+        dense
+        rows={rawMetrics}
+        rowKey={(r) => `${r.provider}:${r.metric}`}
+        columns={columns}
+        empty={{ title: 'No metrics collected for posts published in this period' }}
+      />
+      {mapping.length > 0 && (
+        <details className="mt-3">
+          <summary className="cursor-pointer text-caption font-semibold text-ink">
+            How each column is read from each platform
+          </summary>
+          <Table
+            className="mt-2"
+            caption="The platform metric behind each column, per platform"
+            dense
+            rows={[
+              ...(Object.keys(CONCEPT_LABEL) as MetricConcept[]).map((concept) => ({
+                label: CONCEPT_LABEL[concept],
+                sources: (m: Mapping) => m.concepts[concept],
+              })),
+              { label: 'Followers (account)', sources: (m: Mapping) => m.followers },
+            ]}
+            rowKey={(row) => row.label}
+            columns={[
+              {
+                key: 'column',
+                header: 'Column',
+                className: 'whitespace-nowrap font-medium',
+                cell: (row) => row.label,
+              },
+              ...mapping.map((m) => ({
+                key: m.provider,
+                header: <PlatformName provider={m.provider} />,
+                cell: (row: { sources: (m: Mapping) => readonly string[] }) => (
+                  <Sources names={row.sources(m)} />
+                ),
+              })),
+            ]}
+          />
+          <p className="mt-1.5 text-caption text-muted">
+            “—” = the platform has no equivalent, or it is not collected. Where two names are
+            listed, the first one a post carries is used.
+          </p>
+        </details>
+      )}
+    </Section>
   );
 }
 
@@ -423,78 +396,4 @@ type Mapping = Report['mapping'][number];
 function Sources({ names }: { names: readonly string[] }) {
   if (names.length === 0) return <NoValue why="No equivalent on this platform" />;
   return <code className="break-all text-caption text-body-ink">{names.join(', then ')}</code>;
-}
-
-/** Read post-native values lazily; no provider or report arithmetic in the app. */
-function PostHistory({ id }: { id: string }) {
-  const [load, setLoad] = useState<{ data: PostMetricsView } | { error: string } | null>(null);
-  const [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    let stale = false;
-    api
-      .postMetrics(id)
-      .then((data) => {
-        if (!stale) setLoad({ data });
-      })
-      .catch(() => {
-        if (!stale) setLoad({ error: 'Could not load metrics history' });
-      });
-    return () => {
-      stale = true;
-    };
-  }, [id, attempt]);
-  if (!load)
-    return (
-      <p role="status" className="text-caption text-muted">
-        Loading metrics history
-      </p>
-    );
-  if ('error' in load)
-    return (
-      <div role="alert">
-        <p>{load.error}</p>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            setLoad(null);
-            setAttempt((n) => n + 1);
-          }}
-        >
-          Retry history
-        </Button>
-      </div>
-    );
-  return (
-    <div className="space-y-2">
-      <Table
-        caption="Latest native values for this post"
-        dense
-        rows={Object.entries(load.data.latest).map(([metric, value]) => ({ metric, value }))}
-        rowKey={(r) => r.metric}
-        columns={[
-          { key: 'metric', header: 'Native metric', cell: (r) => <code>{r.metric}</code> },
-          {
-            key: 'value',
-            header: 'Latest value',
-            align: 'right',
-            cell: (r) => r.value.toLocaleString(),
-          },
-        ]}
-        empty={{ title: 'No metrics collected' }}
-      />
-      <Table
-        caption="Native capture history for this post"
-        dense
-        rows={load.data.series}
-        rowKey={(r, i) => `${r.metric}:${i}`}
-        columns={[
-          { key: 'at', header: 'Capture', cell: (r) => new Date(r.capturedAt).toLocaleString() },
-          { key: 'metric', header: 'Native metric', cell: (r) => <code>{r.metric}</code> },
-          { key: 'value', header: 'Value', align: 'right', cell: (r) => r.value.toLocaleString() },
-        ]}
-        empty={{ title: 'No capture history' }}
-      />
-    </div>
-  );
 }

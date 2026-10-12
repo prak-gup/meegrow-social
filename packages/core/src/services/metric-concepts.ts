@@ -82,6 +82,13 @@ const POST_SOURCES: Readonly<Record<string, ConceptSources>> = {
    * `POST_METRICS` in providers/google/gbp.ts. Both cover a trailing 30-day window rather than the
    * post's lifetime — the names are still the closest equivalents GBP has.
    */
+  bluesky: {
+    ...NONE,
+    likes: ['likeCount'],
+    comments: ['replyCount'],
+    shares: ['repostCount'],
+    saves: ['bookmarkCount'],
+  },
   gmb: {
     ...NONE,
     views: ['LOCAL_POST_VIEWS_SEARCH'],
@@ -94,6 +101,7 @@ const FOLLOWER_SOURCES: Readonly<Record<string, readonly string[]>> = {
   facebook: ['followers'],
   instagram: ['followers'],
   youtube: ['followers'],
+  bluesky: ['followers'],
 };
 
 /** The native names behind each concept on this platform; all empty for one that is not mapped. */

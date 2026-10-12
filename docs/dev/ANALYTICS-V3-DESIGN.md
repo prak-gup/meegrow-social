@@ -1,3 +1,5 @@
+> **Revision 2 — 12 October 2026:** The owner’s dashboard brief supersedes this review wherever they conflict. Restore five KPI sparklines and period deltas, deterministic sample-qualified insights, and the visible six-card grid. Remove post history expansion and per-cell info icons; move caveats into the calculation footer.
+
 # Analytics v3 — final agreed design
 
 Status: design review complete · 12 October 2026 · implementation pending

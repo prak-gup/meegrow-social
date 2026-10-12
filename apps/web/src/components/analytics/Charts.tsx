@@ -1,439 +1,436 @@
-import { useRef, useState } from 'react';
-import {
-  Scatter,
-  ScatterChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  XAxis,
-  YAxis,
-  Tooltip,
-} from 'recharts';
+import { useState } from 'react';
 import type { MetricConcept } from '@meegrow-social/contracts';
+import { CONCEPT_LABEL, compact, formatRate, type Report } from '../../lib/analyticsReport';
+import { platformColor } from '../../lib/platforms';
+import { ChartLineUp, Clock, Lightning, PlayCircle, ShareNetwork } from '../../lib/icons';
+import { Delta } from './Kpis';
 import {
-  CONCEPT_LABEL,
-  formatNumber,
-  formatRate,
-  basisText,
-  type Report,
-} from '../../lib/analyticsReport';
-import { Chart } from '../ui/Chart';
-import { Table } from '../ui/Table';
-import { InlineSelect, Section, platformLabel } from './parts';
+  InlineSelect,
+  Insufficient,
+  PlatformKey,
+  PlatformName,
+  Section,
+  platformLabel,
+} from './parts';
+import { Plot, friendlyDay } from './Plot';
 
-const BLUE = '#0072B2';
-const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-const RAMP = ['#E5F2EF', '#B8DDD4', '#72B7A5', '#277461', '#006650'];
+export type TrendMetric = MetricConcept | 'posts' | 'rate';
+const DAY = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const hourLabel = (h: number) => `${h % 12 || 12}${h < 12 ? 'am' : 'pm'}`;
+const slotLabel = (day: number, hour: number) => `${DAY[day]} ${hourLabel(hour)}`;
+const RAMP = ['#e5f2ef', '#b8ddd4', '#72b7a5', '#277461', '#006650'];
+
+export function Insights({ report }: { report: Report }) {
+  if (!report.insights?.length) return null;
+  const icons = {
+    format: PlayCircle,
+    time: Clock,
+    post: Lightning,
+    platform: ShareNetwork,
+    delta: ChartLineUp,
+  };
+  return (
+    <section aria-label="Insights" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {report.insights.map((i) => {
+        const Icon = icons[i.kind];
+        return (
+          <article
+            key={i.kind}
+            className="flex min-w-0 items-start gap-3 rounded-lg border border-hairline bg-surface-soft/50 p-4"
+          >
+            <span className="rounded-md bg-canvas p-2 text-ink">
+              <Icon size={18} aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-ink">{i.title}</h2>
+              <p className="mt-1 truncate text-caption text-muted" title={i.detail}>
+                {i.detail}
+              </p>
+            </div>
+          </article>
+        );
+      })}
+    </section>
+  );
+}
 
 export function PublishTrend({
   report,
-  concepts,
   metric,
   onMetric,
 }: {
   report: Report;
-  concepts: readonly MetricConcept[];
-  metric: MetricConcept | 'posts';
+  concepts?: readonly MetricConcept[];
+  metric: TrendMetric;
   onMetric: (metric: string) => void;
 }) {
-  if (report.summary.posts.value === 0) return null;
-  const label = metric === 'posts' ? 'Posts' : CONCEPT_LABEL[metric];
-  const rows = report.overTime.map((b) => ({
-    bucket: `${b.key}${b.window?.partial ? ' · Partial' : ''}`,
-    value: metric === 'posts' ? b.posts : b.totals[metric],
-    published: b.posts,
-    from: b.window?.from,
-    to: b.window?.to,
+  const label =
+    metric === 'rate' ? 'Engagement rate' : metric === 'posts' ? 'Posts' : CONCEPT_LABEL[metric];
+  const total =
+    metric === 'rate'
+      ? formatRate(report.summary.engagementRate.rate)
+      : compact(
+          metric === 'posts' ? report.summary.posts.value : report.summary.totals[metric].value,
+        );
+  const delta =
+    metric === 'rate'
+      ? report.summary.engagementRateDeltaPct
+      : metric === 'posts'
+        ? report.summary.posts.deltaPct
+        : report.summary.totals[metric].deltaPct;
+  const providers = report.byPlatform.map((p) => p.provider);
+  const series = providers.map((provider) => ({
+    key: provider,
+    label: platformLabel(provider),
+    color: platformColor(provider),
+  }));
+  const rows: Array<Record<string, string | number | null>> = (
+    report.weeklySeries ?? report.overTime
+  ).map((b) => ({
+    date: friendlyDay(b.key),
+    ...Object.fromEntries(
+      providers.map((provider) => {
+        const p = b.byPlatform.find((p) => p.provider === provider);
+        return [
+          provider,
+          metric === 'posts'
+            ? (p?.posts ?? 0)
+            : metric === 'rate'
+              ? (p?.engagementRate ?? null)
+              : (p?.totals[metric] ?? null),
+        ];
+      }),
+    ),
   }));
   return (
     <Section
-      title={`Results by publish ${report.bucket}`}
-      subtitle={`Latest counts for posts published in each ${report.bucket}`}
+      title={`${label} over time`}
+      subtitle={'By publish week'}
       actions={
-        <InlineSelect
-          label="Chart metric"
-          value={metric}
-          onChange={onMetric}
-          options={[
-            ...concepts.map((c) => ({ value: c, label: CONCEPT_LABEL[c] })),
-            { value: 'posts', label: 'Posts' },
-          ]}
-        />
+        <div className="flex items-center gap-2">
+          <span className="tnum text-xl font-semibold text-ink">{total}</span>
+          <Delta value={delta} />
+        </div>
       }
     >
-      <Chart
-        bare
-        type="bar"
-        title={`${label} by publication ${report.bucket}; latest reported counts`}
-        data={rows.map((r) => ({ bucket: r.bucket, value: r.value }))}
-        xKey="bucket"
-        xLabel="Publish bucket"
-        series={[{ key: 'value', label, color: BLUE }]}
-        plotClassName="h-[180px] md:h-[220px] xl:h-[260px]"
-      />
-      {rows.some((r) => r.value === null) && (
-        <p className="text-caption text-muted">
-          — Missing reported counts:{' '}
-          {rows
-            .filter((r) => r.value === null)
-            .map((r) => r.bucket)
-            .join(', ')}
-        </p>
-      )}
-      <details className="mt-2">
-        <summary className="min-h-11 cursor-pointer py-3 text-caption font-medium text-ink">
-          Chart data
-        </summary>
-        <Table
-          caption={`${label} by publish bucket`}
-          dense
+      <div role="group" aria-label="Trend metric" className="mb-5 flex flex-wrap gap-1.5">
+        {(['views', 'reach', 'likes', 'comments', 'saves', 'rate'] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            aria-pressed={metric === m}
+            onClick={() => onMetric(m)}
+            className={`min-h-11 rounded-full px-3 text-caption font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink md:min-h-8 ${metric === m ? 'bg-ink text-canvas' : 'bg-surface-soft text-muted hover:text-ink'}`}
+          >
+            {m === 'rate' ? 'Engagement rate' : CONCEPT_LABEL[m]}
+          </button>
+        ))}
+      </div>
+      {rows.some((r) => series.some((s) => r[s.key] !== null)) ? (
+        <Plot
+          tall
           rows={rows}
-          rowKey={(r) => r.bucket}
-          columns={[
-            { key: 'bucket', header: 'Publish bucket', cell: (r) => r.bucket },
-            {
-              key: 'range',
-              header: 'Included date range',
-              cell: (r) =>
-                r.from && r.to
-                  ? `${new Date(r.from).toLocaleString([], { timeZone: report.timezone })} – ${new Date(r.to).toLocaleString([], { timeZone: report.timezone })}`
-                  : 'Not supplied',
-            },
-            {
-              key: 'posts',
-              header: 'Published posts',
-              align: 'right',
-              cell: (r) => formatNumber(r.published),
-            },
-            { key: 'value', header: label, align: 'right', cell: (r) => formatNumber(r.value) },
-          ]}
+          series={series}
+          title={`${label} by publish week`}
+          percent={metric === 'rate'}
         />
-      </details>
+      ) : (
+        <Insufficient className="h-52" title="No reported values for this metric yet" />
+      )}
+      <PlatformKey providers={providers} />
+    </Section>
+  );
+}
+
+export function PlatformSplit({ report }: { report: Report }) {
+  return (
+    <Section title="Platform split" subtitle="Published posts and reported reach">
+      {report.byPlatform.some((p) => p.posts > 0) ? (
+        <div className="space-y-5 py-2">
+          {report.byPlatform.map((p) => {
+            const share = report.platformShares?.find((s) => s.provider === p.provider)?.reachPct;
+            return (
+              <div key={p.provider}>
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-caption">
+                  <PlatformName provider={p.provider} className="font-semibold text-ink" />
+                  <span className="tnum text-muted">
+                    {p.posts} posts · {share == null ? '—' : `${share.toFixed(1)}%`} reach ·{' '}
+                    {formatRate(p.engagementRate.rate)} ER
+                  </span>
+                </div>
+                <div className="h-2 rounded-full bg-surface-soft">
+                  <div
+                    className="h-2 rounded-full"
+                    style={{
+                      width: share == null ? '0%' : `${share}%`,
+                      background: platformColor(p.provider),
+                    }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <Insufficient className="h-52" title="No platforms in this period" />
+      )}
     </Section>
   );
 }
 
 export function FormatBreakdown({ report }: { report: Report }) {
-  if (!report.formats.length) return null;
+  const max = Math.max(1, ...report.formats.map((f) => f.engagementRate.rate ?? 0));
   return (
-    <Section
-      title="Formats"
-      subtitle="First media kind; Text can include unavailable imported media"
-    >
-      <Table
-        caption="Descriptive format totals"
-        dense
-        rows={report.formats}
-        rowKey={(r) => r.format}
-        columns={[
-          {
-            key: 'format',
-            header: 'Format',
-            cell: (r) => ({ video: 'Video', image: 'Image', text: 'Text' })[r.format],
-          },
-          { key: 'posts', header: 'Posts', align: 'right', cell: (r) => formatNumber(r.posts) },
-          {
-            key: 'rate',
-            header: 'Rate / basis',
-            align: 'right',
-            cell: (r) => (
-              <>
-                {formatRate(r.engagementRate.rate)} {basisText(r.engagementRate)}
-              </>
-            ),
-          },
-          {
-            key: 'counted',
-            header: 'Counted',
-            align: 'right',
-            cell: (r) => `${r.engagementRate.postsCounted}/${r.posts}`,
-          },
-        ]}
-      />
-    </Section>
-  );
-}
-
-export function FollowerEvolution({ report }: { report: Report }) {
-  const accounts = report.accounts.filter(
-    (a) =>
-      a.selected && report.mapping.some((m) => m.provider === a.provider && m.followers.length > 0),
-  );
-  const [choice, setChoice] = useState('');
-  const account = accounts.find((a) => a.id === choice) ?? accounts[0];
-  if (!account) return null;
-  const series = report.followerSeries.find((s) => s.connectionId === account.id);
-  const rows = series?.dailyPoints;
-  const label = account.provider === 'youtube' ? 'Subscribers' : 'Followers';
-  return (
-    <Section
-      title={label}
-      subtitle={`${account.displayName} · ${platformLabel(account.provider)} · ${report.timezone}`}
-      actions={
-        <InlineSelect
-          label="Follower account"
-          value={account.id}
-          onChange={setChoice}
-          options={accounts.map((a) => ({
-            value: a.id,
-            label: `${a.displayName} · ${platformLabel(a.provider)} · ${a.workspaceName}`,
-          }))}
-        />
-      }
-    >
-      {!series?.points.length ? (
-        <p className="text-sm text-muted">No follower captures</p>
+    <Section title="Format performance" subtitle="Engagement rate by post format">
+      {report.formats.some((f) => f.engagementRate.rate !== null) ? (
+        <div className="space-y-5 py-2">
+          {(['video', 'image', 'text'] as const).map((format) => {
+            const f = report.formats.find((f) => f.format === format);
+            const rate = f?.engagementRate.rate ?? null;
+            const best = report.formatWinner === format;
+            return (
+              <div key={format}>
+                <div className="mb-2 flex items-center justify-between gap-2 text-sm">
+                  <span className="flex items-center gap-2 font-medium text-ink">
+                    {{ video: 'Video', image: 'Image', text: 'Text' }[format]}
+                    {best && (
+                      <span className="rounded-full bg-status-ok/10 px-2 py-0.5 text-micro text-status-ok">
+                        Best
+                      </span>
+                    )}
+                  </span>
+                  <span className="tnum text-muted">
+                    {f ? `${f.posts} posts` : '—'}{' '}
+                    <span className="ml-3 font-semibold text-ink">{formatRate(rate)}</span>
+                  </span>
+                </div>
+                <div className="h-2 rounded-full bg-surface-soft">
+                  <div
+                    className={`h-2 rounded-full ${best ? 'bg-status-ok' : 'bg-muted-soft'}`}
+                    style={{ width: `${rate === null ? 0 : (rate / max) * 100}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
       ) : (
-        <>
-          <p className="tnum mb-2 text-sm text-ink">
-            Latest capture: {formatNumber(series.points.at(-1)?.value ?? null)}{' '}
-            {label.toLowerCase()}
-          </p>
-          {rows && (
-            <Chart
-              bare
-              type="line"
-              gaps
-              dots
-              title={`${label} for ${account.displayName}; missing days are gaps`}
-              xKey="day"
-              xLabel="Day"
-              data={rows}
-              series={[{ key: 'value', label, color: BLUE }]}
-              plotClassName="h-[180px] md:h-[220px]"
-            />
-          )}
-          <details className="mt-2">
-            <summary className="min-h-11 cursor-pointer py-3 text-caption font-medium text-ink">
-              Capture data
-            </summary>
-            <Table
-              caption={`${label} captures for ${account.displayName}`}
-              dense
-              rows={rows ?? series.points}
-              rowKey={(r) => r.day}
-              columns={[
-                { key: 'day', header: 'Day', cell: (r) => r.day },
-                { key: 'value', header: label, align: 'right', cell: (r) => formatNumber(r.value) },
-              ]}
-            />
-          </details>
-        </>
+        <Insufficient className="h-52" title="Publish posts to compare formats" />
       )}
     </Section>
   );
 }
 
-/** One roving desktop grid; 24 touch-sized hourly rows for the selected day on phones. */
 export function BestTimes({ report }: { report: Report }) {
-  const [slot, setSlot] = useState(0);
-  const refs = useRef<Array<HTMLButtonElement | null>>([]);
-  const { bestTimes } = report;
-  if (!bestTimes.by || !bestTimes.cells.length) return null;
-  const day = Math.floor(slot / 24);
-  const hour = slot % 24;
-  const cell = (d: number, h: number) =>
-    bestTimes.cells.find((c) => c.weekday === d && c.hour === h);
-  const selected = cell(day, hour);
-  const choose = (index: number, focus = false) => {
-    setSlot(index);
-    if (focus) refs.current[index]?.focus();
-  };
+  const { bestTimes: b } = report;
+  const [active, setActive] = useState<string | null>(null);
   return (
     <Section
-      title="Publishing times"
-      subtitle={`Historical post response, not audience online activity · ${report.timezone}`}
+      title="Best time to post"
+      subtitle={`Average ${b.by ?? 'engagements'} per post · ${report.timezone}`}
     >
-      <div className="hidden md:block">
-        <div role="grid" aria-label="Publication day and hour" className="space-y-1">
-          {WEEKDAYS.map((name, d) => (
-            <div role="row" key={name} className="flex items-center gap-1">
-              <span className="w-16 flex-none text-caption text-muted">{name.slice(0, 3)}</span>
-              {Array.from({ length: 24 }, (_, h) => {
-                const index = d * 24 + h;
-                const c = cell(d, h);
-                const level = c?.level;
-                const background =
-                  c?.average == null ? undefined : level == null ? RAMP[0] : RAMP[level];
-                return (
-                  <span role="gridcell" key={h} className="min-w-0 flex-1">
-                    <button
-                      ref={(el) => {
-                        refs.current[index] = el;
-                      }}
-                      type="button"
-                      tabIndex={slot === index ? 0 : -1}
-                      aria-pressed={slot === index}
-                      aria-label={`${name} ${h}:00: ${formatNumber(c?.average ?? null)} mean ${bestTimes.by}; Published: ${c?.posts ?? 0}`}
-                      onClick={() => choose(index)}
-                      onFocus={() => setSlot(index)}
-                      onKeyDown={(e) => {
-                        const delta = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -24, ArrowDown: 24 }[
-                          e.key
-                        ];
-                        if (delta !== undefined) {
-                          e.preventDefault();
-                          choose(Math.max(0, Math.min(167, index + delta)), true);
-                        }
-                      }}
-                      style={{
-                        background:
-                          background ??
-                          'repeating-linear-gradient(45deg,#fff,#fff 3px,#ddd 3px,#ddd 4px)',
-                        color:
-                          level !== undefined && level !== null && level >= 3 ? '#fff' : '#222',
-                        borderColor: '#6a6a6a',
-                      }}
-                      className="h-8 w-full rounded-xs border text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
-                    >
-                      {c?.average == null ? '—' : h}
-                    </button>
-                  </span>
-                );
-              })}
-            </div>
-          ))}
+      {!b.cells.some((c) => c.average !== null) ? (
+        <Insufficient className="h-52" title="No measured publishing slots yet" />
+      ) : (
+        <>
+          <div
+            className="grid gap-1"
+            style={{ gridTemplateColumns: '28px repeat(24, minmax(0, 1fr))' }}
+          >
+            <span />
+            {Array.from({ length: 24 }, (_, h) => (
+              <span key={h} className="text-center text-micro text-muted">
+                {h % 6 === 0 ? hourLabel(h) : ''}
+              </span>
+            ))}
+            {DAY.map((day, d) => (
+              <Row
+                key={day}
+                day={day}
+                index={d}
+                cells={b.cells}
+                active={active}
+                setActive={setActive}
+              />
+            ))}
+          </div>
+          <div
+            className="mt-2 flex items-center justify-end gap-1 text-micro text-muted"
+            aria-label="Heatmap intensity: less to more"
+          >
+            <span>Less</span>
+            {RAMP.map((color) => (
+              <span
+                key={color}
+                aria-hidden="true"
+                className="h-2 w-3 rounded-xs"
+                style={{ background: color }}
+              />
+            ))}
+            <span>More</span>
+          </div>
+          <p role="status" className="mt-2 min-h-8 text-caption text-muted">
+            {active ?? 'Select a slot for its measured average and post count'}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {report.bestSlots?.map((c) => (
+              <span
+                key={`${c.weekday}:${c.hour}`}
+                className="tnum rounded-full bg-status-ok/10 px-2 py-1 text-micro text-status-ok"
+              >
+                {slotLabel(c.weekday, c.hour)} · {c.average.toFixed(0)} avg · {c.posts} posts
+              </span>
+            ))}
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}
+function Row({
+  day,
+  index,
+  cells,
+  active,
+  setActive,
+}: {
+  day: string;
+  index: number;
+  cells: Report['bestTimes']['cells'];
+  active: string | null;
+  setActive: (s: string) => void;
+}) {
+  return (
+    <>
+      <span className="self-center text-micro text-muted">{day}</span>
+      {Array.from({ length: 24 }, (_, h) => {
+        const c = cells.find((c) => c.weekday === index && c.hour === h);
+        const text = `${slotLabel(index, h)}: ${c?.average == null ? 'no measured data' : `${c.average.toFixed(1)} average across ${c.postsCounted ?? c.posts} measured posts`}`;
+        return (
+          <button
+            key={h}
+            type="button"
+            aria-label={text}
+            aria-pressed={active === text}
+            title={text}
+            onFocus={() => setActive(text)}
+            onClick={() => setActive(text)}
+            className="h-6 min-w-0 rounded-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink"
+            style={{ background: c?.level == null ? 'hsl(var(--surface-soft))' : RAMP[c.level] }}
+          >
+            <span className="sr-only">{text}</span>
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
+export function FollowerEvolution({ report }: { report: Report }) {
+  const accounts = report.accounts.filter((a) => a.selected);
+  const [choice, setChoice] = useState('');
+  const account = accounts.find((a) => a.id === choice) ?? accounts[0];
+  const s = report.followerSeries.find((s) => s.connectionId === account?.id);
+  const change = s?.change;
+  return (
+    <Section
+      title="Follower growth"
+      subtitle={
+        account
+          ? `${account.displayName} · ${platformLabel(account.provider)}`
+          : 'Followers per connected account'
+      }
+      actions={
+        <span className="tnum text-sm font-semibold text-ink">
+          {change == null ? '— net' : `${change >= 0 ? '+' : ''}${change.toLocaleString()} net`}
+        </span>
+      }
+    >
+      {accounts.length > 1 && (
+        <div className="mb-3">
+          <InlineSelect
+            label="Follower account"
+            value={account?.id ?? ''}
+            onChange={setChoice}
+            options={accounts.map((a) => ({
+              value: a.id,
+              label: `${a.displayName} · ${platformLabel(a.provider)}`,
+            }))}
+          />
         </div>
-        <p aria-live="polite" className="tnum mt-2 text-caption text-ink">
-          {WEEKDAYS[day]} {hour}:00 · Mean {bestTimes.by}: {formatNumber(selected?.average ?? null)}{' '}
-          · Published: {selected?.posts ?? 0}
-        </p>
-      </div>
-      <div className="md:hidden">
-        <InlineSelect
-          label="Publication day"
-          value={String(day)}
-          onChange={(v) => setSlot(Number(v) * 24)}
-          options={WEEKDAYS.map((name, d) => ({ value: String(d), label: name }))}
-        />
-      </div>
-      <details className="mt-2" open>
-        <summary className="hidden min-h-11 cursor-pointer py-3 text-caption font-medium text-ink md:block">
-          Hourly data
-        </summary>
-        <Table
-          caption={`${WEEKDAYS[day]} publication hours; mean ${bestTimes.by}`}
-          rows={Array.from({ length: 24 }, (_, h) => ({ hour: h, cell: cell(day, h) }))}
-          rowKey={(r) => String(r.hour)}
-          columns={[
-            { key: 'hour', header: 'Hour', className: 'h-11', cell: (r) => `${r.hour}:00` },
+      )}
+      {s?.points.length ? (
+        <Plot
+          rows={(s.dailyPoints ?? s.points).map((p) => ({
+            date: friendlyDay(p.day),
+            value: p.value,
+          }))}
+          series={[
             {
-              key: 'mean',
-              header: `Mean ${bestTimes.by}`,
-              align: 'right',
-              cell: (r) => formatNumber(r.cell?.average ?? null),
-            },
-            {
-              key: 'posts',
-              header: 'Published',
-              align: 'right',
-              cell: (r) => formatNumber(r.cell?.posts ?? 0),
+              key: 'value',
+              label: account?.displayName ?? 'Followers',
+              color: platformColor(account?.provider ?? ''),
             },
           ]}
+          title={`Follower captures for ${account?.displayName ?? 'account'}`}
+          fitted
         />
-      </details>
+      ) : (
+        <Insufficient className="h-52" title="No follower captures for this account yet" />
+      )}
     </Section>
   );
 }
 
 export function FrequencyVsEngagement({ report }: { report: Report }) {
-  if (!report.frequency.platforms.length) return null;
-  const rows = report.frequency.platforms.flatMap((p) =>
-    p.bands.map((b) => ({ ...b, provider: p.provider })),
-  );
+  const providers = report.byPlatform.map((p) => p.provider);
   return (
-    <Section title="Cadence" subtitle="Full publishing weeks only; zero-post weeks are absent">
-      {report.frequency.fullWeeks < 2 ? (
-        <p className="text-sm text-muted">Needs two full publishing weeks</p>
+    <Section title="Posting rhythm" subtitle={'Posts published per week'}>
+      {(report.weeklySeries ?? report.overTime).some((b) => b.posts > 0) ? (
+        <>
+          <Plot
+            bars
+            rows={(report.weeklySeries ?? report.overTime).map((b) => ({
+              date: friendlyDay(b.key),
+              ...Object.fromEntries(
+                providers.map((p) => [p, b.byPlatform.find((s) => s.provider === p)?.posts ?? 0]),
+              ),
+            }))}
+            series={providers.map((p) => ({
+              key: p,
+              label: platformLabel(p),
+              color: platformColor(p),
+            }))}
+            title={'Published posts per week by platform'}
+          />
+          <PlatformKey providers={providers} />
+        </>
       ) : (
-        <Table
-          caption="Descriptive provider cadence; accounts may be mixed"
-          dense
-          rows={rows}
-          rowKey={(r) => `${r.provider}:${r.min}`}
-          columns={[
-            { key: 'platform', header: 'Platform', cell: (r) => platformLabel(r.provider) },
-            {
-              key: 'band',
-              header: 'Posts / week',
-              cell: (r) => (r.max === null ? `${r.min}+` : `${r.min}–${r.max}`),
-            },
-            { key: 'weeks', header: 'Weeks', align: 'right', cell: (r) => formatNumber(r.weeks) },
-            { key: 'posts', header: 'Posts', align: 'right', cell: (r) => formatNumber(r.posts) },
-            {
-              key: 'rate',
-              header: 'Reported rate',
-              align: 'right',
-              cell: (r) => formatRate(r.engagementRate),
-            },
-          ]}
-        />
+        <Insufficient className="h-52" title="No posts published in this period" />
       )}
     </Section>
   );
 }
-
 export function EngagementAccumulation({ report }: { report: Report }) {
-  if (
-    !report.mapping.some((m) =>
-      ['likes', 'comments', 'shares', 'saves'].some((c) => m.concepts[c as 'likes'].length > 0),
-    )
-  )
-    return null;
   const points = report.accumulation.displayPoints ?? [];
   return (
-    <Section
-      title="Captured engagement by post age"
-      subtitle="Share of latest captured engagement observed by each age"
-    >
-      {!points.length ? (
-        <p className="text-sm text-muted">
-          {report.accounts.filter((a) => a.selected).length !== 1
-            ? 'Select one account'
-            : 'Needs 10 posts with early captures'}
-        </p>
+    <Section title="Engagement by post age" subtitle="Captured share of latest engagement">
+      {points.length >= 2 ? (
+        <Plot
+          percent
+          rows={points.map((p) => ({
+            date: p.untilHours < 24 ? `${p.untilHours}h` : `${p.untilHours / 24}d`,
+            value: p.pct,
+          }))}
+          series={[{ key: 'value', label: 'Captured engagement %', color: '#475569' }]}
+          title="Captured engagement share by post age"
+        />
       ) : (
-        <>
-          <div
-            role="img"
-            aria-label="Isolated shares by post age; changing samples are not a trajectory"
-            className="h-[180px] md:h-[220px]"
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
-                <CartesianGrid vertical={false} />
-                <XAxis type="number" dataKey="untilHours" name="Age in hours" />
-                <YAxis type="number" domain={[0, 100]} dataKey="pct" name="Share %" width={44} />
-                <Tooltip />
-                <Scatter data={points} fill={BLUE} isAnimationActive={false} />
-              </ScatterChart>
-            </ResponsiveContainer>
-          </div>
-          <ul className="flex flex-wrap gap-3 text-caption text-ink">
-            {points.map((p) => (
-              <li key={p.untilHours}>
-                {p.untilHours}h · {formatRate(p.pct)} · n={p.posts}
-              </li>
-            ))}
-          </ul>
-        </>
+        <Insufficient
+          className="h-52"
+          title="More early snapshots needed to show post-age engagement"
+        />
       )}
-      <Table
-        className="mt-2"
-        caption="All observed engagement-age points"
-        dense
-        rows={report.accumulation.points}
-        rowKey={(r) => String(r.untilHours)}
-        columns={[
-          { key: 'age', header: 'Age (hours)', cell: (r) => formatNumber(r.untilHours) },
-          { key: 'pct', header: 'Captured share', align: 'right', cell: (r) => formatRate(r.pct) },
-          {
-            key: 'n',
-            header: 'Contributing posts',
-            align: 'right',
-            cell: (r) => formatNumber(r.posts),
-          },
-        ]}
-      />
     </Section>
   );
 }

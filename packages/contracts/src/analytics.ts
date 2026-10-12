@@ -252,7 +252,55 @@ const platformSlice = z.object({
   engagementRate: engagementRateStat,
 });
 
+export const analyticsInsight = z.object({
+  kind: z.enum(['format', 'time', 'post', 'platform', 'delta']),
+  title: z.string(),
+  detail: z.string(),
+});
+
+const publicationBucket = z.object({
+  /** First local day of the bucket, `YYYY-MM-DD`. */
+  key: z.string(),
+  start: z.coerce.date(),
+  /** Intersection of this bucket with the selected publication window. */
+  window: z
+    .object({
+      from: z.coerce.date(),
+      to: z.coerce.date(),
+      partial: z.boolean(),
+    })
+    .optional(),
+  posts: z.number().int(),
+  totals: conceptValues,
+  engagementRate: nullableNumber,
+  byPlatform: z.array(
+    z.object({
+      provider: z.string(),
+      posts: z.number().int(),
+      totals: conceptValues,
+      engagementRate: nullableNumber.optional(),
+    }),
+  ),
+});
+
 export const analyticsReportView = z.object({
+  /** Ordered, sample-qualified descriptive findings; omitted by older servers. */
+  insights: z.array(analyticsInsight).optional(),
+  bestSlots: z
+    .array(
+      z.object({
+        weekday: z.number().int(),
+        hour: z.number().int(),
+        posts: z.number().int(),
+        average: z.number(),
+      }),
+    )
+    .optional(),
+  /** Five measured posts per comparable group, unequal rates; null without a winner. */
+  formatWinner: postFormat.nullable().optional(),
+  platformShares: z.array(z.object({ provider: z.string(), reachPct: nullableNumber })).optional(),
+  /** Last observed capture per account per Monday week, summed only with complete account coverage. */
+  followerTrend: z.array(z.object({ day: z.string(), value: nullableNumber })).optional(),
   generatedAt: z.coerce.date(),
   /** The zone the buckets below were cut in — the one asked for. */
   timezone: z.string(),
@@ -312,27 +360,9 @@ export const analyticsReportView = z.object({
    * Posts grouped by when they were PUBLISHED, each carrying its current all-time totals — not
    * growth measured on those dates. Oldest first, empty buckets included.
    */
-  overTime: z.array(
-    z.object({
-      /** First local day of the bucket, `YYYY-MM-DD`. */
-      key: z.string(),
-      start: z.coerce.date(),
-      /** Intersection of this bucket with the selected publication window. */
-      window: z
-        .object({
-          from: z.coerce.date(),
-          to: z.coerce.date(),
-          partial: z.boolean(),
-        })
-        .optional(),
-      posts: z.number().int(),
-      totals: conceptValues,
-      engagementRate: nullableNumber,
-      byPlatform: z.array(
-        z.object({ provider: z.string(), posts: z.number().int(), totals: conceptValues }),
-      ),
-    }),
-  ),
+  overTime: z.array(publicationBucket),
+  /** Monday publication weeks for dashboard plots, even when overTime uses daily buckets. */
+  weeklySeries: z.array(publicationBucket).optional(),
   /** Publish slots in `timezone`. Only slots with a post are listed. */
   bestTimes: z.object({
     /** What a slot is scored by: mean engagements per post, or mean views where none report any. */
@@ -344,6 +374,7 @@ export const analyticsReportView = z.object({
         weekday: z.number().int().min(0).max(6),
         hour: z.number().int().min(0).max(23),
         posts: z.number().int(),
+        postsCounted: z.number().int().optional(),
         /** Mean of `by` over the slot's posts that report it; null when none does. */
         average: nullableNumber,
         /** Descriptive ramp index, not a rank or recommendation. */
@@ -364,6 +395,7 @@ export const analyticsReportView = z.object({
   followerSeries: z.array(
     z.object({
       connectionId: z.string().uuid(),
+      change: nullableNumber.optional(),
       points: z.array(z.object({ day: z.string(), value: z.number() })),
       /** Calendar days, including null gaps; never forward-filled. */
       dailyPoints: z.array(z.object({ day: z.string(), value: nullableNumber })).optional(),

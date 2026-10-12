@@ -206,6 +206,7 @@ describe('best time to post', () => {
       weekday: 5,
       hour: 7,
       posts: 1,
+      postsCounted: 0,
       average: null,
       level: null,
     });
@@ -625,7 +626,12 @@ describe('buildAnalyticsReport', () => {
     expect(weekOf(ist).key).toBe('2026-10-05');
     expect(weekOf(utc)).toMatchObject({ totals: { likes: 7 }, engagementRate: 10 });
     expect(weekOf(utc).byPlatform).toEqual([
-      { provider: 'instagram', posts: 1, totals: { ...EMPTY_CONCEPTS, likes: 7, reach: 70 } },
+      {
+        provider: 'instagram',
+        posts: 1,
+        totals: { ...EMPTY_CONCEPTS, likes: 7, reach: 70 },
+        engagementRate: 10,
+      },
     ]);
     // Empty weeks are listed with nulls, not zeros.
     expect(utc.bucket).toBe('week');
@@ -787,5 +793,46 @@ describe('analytics v3 display facts', () => {
     expect(report.followerSeries[0]!.dailyPoints?.some((p) => p.value === null)).toBe(true);
     expect(report.accumulation.displayPoints).toEqual([]);
     expect(report.summary.totals.views.value).toBeNull();
+  });
+});
+
+describe('revision 2 optional report facts', () => {
+  it('always provides honest Monday weeks even for a short daily report', () => {
+    const report = buildAnalyticsReport(
+      input({
+        period: resolvePeriod({ days: 7 }, NOW),
+        posts: [post({ publishAt: at('2026-10-10T12:00:00Z'), native: { likes: 10, reach: 100 } })],
+      }),
+    );
+    expect(report.bucket).toBe('day');
+    expect(report.weeklySeries!.length).toBeLessThan(report.overTime.length);
+    expect(report.weeklySeries!.reduce((n, b) => n + b.posts, 0)).toBe(report.summary.posts.value);
+    expect(
+      report.weeklySeries!.flatMap((b) => b.byPlatform).find((p) => p.provider === 'instagram'),
+    ).toMatchObject({ engagementRate: 10 });
+    for (const b of report.weeklySeries!.filter((b) => b.posts === 0))
+      expect(b.totals).toEqual(EMPTY_CONCEPTS);
+  });
+  it('returns account change only with a prior-period capture', () => {
+    const period = resolvePeriod({ days: 30 }, NOW);
+    const report = buildAnalyticsReport(
+      input({
+        period,
+        accounts: [account(IG, 'instagram')],
+        followerPoints: [
+          { connectionId: IG, value: 100, capturedAt: new Date(period.start.getTime() - 1000) },
+          { connectionId: IG, value: 120, capturedAt: NOW },
+        ],
+      }),
+    );
+    expect(report.followerSeries[0]!.change).toBe(20);
+    const missing = buildAnalyticsReport(
+      input({
+        period,
+        accounts: [account(IG, 'instagram')],
+        followerPoints: [{ connectionId: IG, value: 120, capturedAt: NOW }],
+      }),
+    );
+    expect(missing.followerSeries[0]!.change).toBeNull();
   });
 });

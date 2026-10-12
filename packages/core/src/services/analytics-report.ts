@@ -13,6 +13,7 @@ import {
   type ReportAccount,
   type ReportPost,
 } from '@meegrow-social/contracts';
+import { analyticsDisplayFacts } from './analytics-insights.js';
 import { providerVisible } from '../providers/registry.js';
 import {
   allEngagementMetricNames,
@@ -303,11 +304,16 @@ export function bestTimes(
       weekday,
       hour,
       posts: n,
+      postsCounted: values.length,
       average: values.length > 0 ? mean(values) : null,
     }))
     .sort((a, b) => a.weekday - b.weekday || a.hour - b.hour);
   const top = cells
-    .flatMap((c) => (c.average !== null && c.average > 0 ? [{ ...c, average: c.average }] : []))
+    .flatMap((c) =>
+      c.average !== null && c.average > 0
+        ? [{ weekday: c.weekday, hour: c.hour, posts: c.posts, average: c.average }]
+        : [],
+    )
     .sort((a, b) => b.average - a.average || b.posts - a.posts)
     .slice(0, 3);
   const maximum = Math.max(0, ...cells.map((c) => c.average ?? 0));
@@ -357,6 +363,7 @@ export function followerSection(
     const daily = [...days].map(([day, v]) => ({ day, value: v }));
     followerSeries.push({
       connectionId: account.id,
+      change: before ? latest.value - before.value : null,
       points: daily,
       dailyPoints: followerCalendar(daily, period, zone),
     });
@@ -649,27 +656,36 @@ export function buildAnalyticsReport(input: ReportInput): AnalyticsReportView {
 
   // --- over time, by publish date ---
   const unit = bucketUnit(period);
-  const inBucket = new Map<string, Measured[]>();
-  for (const post of current) {
-    const key = bucketKey(post.publishAt, zone, unit);
-    inBucket.set(key, [...(inBucket.get(key) ?? []), post]);
-  }
-  const overTime = timeBuckets(period, zone, unit).map((bucket) => {
-    const own = inBucket.get(bucket.key) ?? [];
-    const values = own.map((p) => p.values);
-    return {
-      key: bucket.key,
-      start: bucket.start,
-      window: publicationWindow(bucket, period),
-      posts: own.length,
-      totals: sumConcepts(values),
-      engagementRate: engagementRate(values).rate,
-      byPlatform: [...new Set(own.map((p) => p.provider))].sort().map((provider) => {
-        const ofPlatform = own.filter((p) => p.provider === provider).map((p) => p.values);
-        return { provider, posts: ofPlatform.length, totals: sumConcepts(ofPlatform) };
-      }),
-    };
-  });
+  const publicationSeries = (unit: 'day' | 'week') => {
+    const inBucket = new Map<string, Measured[]>();
+    for (const post of current) {
+      const key = bucketKey(post.publishAt, zone, unit);
+      inBucket.set(key, [...(inBucket.get(key) ?? []), post]);
+    }
+    return timeBuckets(period, zone, unit).map((bucket) => {
+      const own = inBucket.get(bucket.key) ?? [];
+      const values = own.map((p) => p.values);
+      return {
+        key: bucket.key,
+        start: bucket.start,
+        window: publicationWindow(bucket, period),
+        posts: own.length,
+        totals: sumConcepts(values),
+        engagementRate: engagementRate(values).rate,
+        byPlatform: [...new Set(own.map((p) => p.provider))].sort().map((provider) => {
+          const ofPlatform = own.filter((p) => p.provider === provider).map((p) => p.values);
+          return {
+            provider,
+            posts: ofPlatform.length,
+            totals: sumConcepts(ofPlatform),
+            engagementRate: engagementRate(ofPlatform).rate,
+          };
+        }),
+      };
+    });
+  };
+  const overTime = publicationSeries(unit);
+  const weeklySeries = publicationSeries('week');
 
   const top = [...current].sort(byEngagement);
   const accumulation = accumulationSection(
@@ -677,7 +693,7 @@ export function buildAnalyticsReport(input: ReportInput): AnalyticsReportView {
     input.snapshots,
   );
 
-  return {
+  const report: AnalyticsReportView = {
     generatedAt: input.now,
     timezone: zone,
     period,
@@ -703,6 +719,7 @@ export function buildAnalyticsReport(input: ReportInput): AnalyticsReportView {
     },
     byPlatform,
     overTime,
+    weeklySeries,
     bestTimes: {
       by,
       ...bestTimes(
@@ -721,6 +738,7 @@ export function buildAnalyticsReport(input: ReportInput): AnalyticsReportView {
       displayPoints: engagementAgeDisplayPoints(accumulation.points, accounts.length),
     },
   };
+  return { ...report, ...analyticsDisplayFacts(report) };
 }
 
 // --- loading -------------------------------------------------------------------------------------
