@@ -19,6 +19,9 @@ import {
   type RangeKey,
   type Report,
   type ReportFilters,
+  type PostSortKey,
+  CONCEPTS,
+  readReportTableSort,
 } from '../lib/analyticsReport';
 import { Plugs } from '../lib/icons';
 import { importingAnalyticsNote } from '../lib/postImport';
@@ -56,11 +59,16 @@ const LOADING = { status: 'loading' } as const;
  * the data was last collected. The report on screen stays up while the next one loads, so changing
  * a filter dims the page instead of collapsing it to a skeleton.
  */
-function useAnalytics(filters: ReportFilters, timezone: string) {
+function useAnalytics(
+  filters: ReportFilters,
+  timezone: string,
+  sort: PostSortKey,
+  sortDir: 'asc' | 'desc',
+) {
   const [run, setRun] = useState(() => ({ attempt: 0, now: Date.now() }));
   const query = useMemo(
-    () => reportQuery(filters, timezone, new Date(run.now)),
-    [filters, timezone, run.now],
+    () => ({ ...reportQuery(filters, timezone, new Date(run.now)), sort, sortDir }),
+    [filters, timezone, run.now, sort, sortDir],
   );
   const key = `${run.attempt}|${JSON.stringify(query)}`;
   const [fetched, setFetched] = useState<{ key: string; load: Load<Report> }>({
@@ -130,7 +138,15 @@ export function Analytics() {
   const [params, setParams] = useSearchParams();
   const filters = useMemo(() => parseReportFilters(params), [params]);
   const timezone = useMemo(browserTimezone, []);
-  const data = useAnalytics(filters, timezone);
+  const postOrder = readReportTableSort(
+    params,
+    'posts',
+    [...CONCEPTS, 'publishAt', 'engagements', 'engagementRate'].map((value) => ({ value })),
+    'publishAt',
+  );
+  const postsSort = postOrder.key as PostSortKey;
+  const postsDir = postOrder.dir;
+  const data = useAnalytics(filters, timezone, postsSort, postsDir);
   const { load, report } = data;
 
   const workspace = me?.user.memberships.find((m) => m.workspaceId === me.activeWorkspaceId);
@@ -145,6 +161,17 @@ export function Analytics() {
   const wantedConcept = params.get('metric') ?? '';
   const write = (next: ReportFilters, concept: string) => {
     const out = reportFiltersToParams(next);
+    for (const key of [
+      'postsSort',
+      'postsDir',
+      'platformSort',
+      'platformDir',
+      'rawSort',
+      'rawDir',
+    ]) {
+      const value = params.get(key);
+      if (value) out.set(key, value);
+    }
     if (concept) out.set('metric', concept);
     setParams(out, { replace: true });
   };
@@ -413,7 +440,7 @@ export function Analytics() {
               <FrequencyVsEngagement report={report} />
               <EngagementAccumulation report={report} />
             </div>
-            <TopPosts key={params.toString()} report={report} concepts={concepts} absent={absent} />
+            <TopPosts report={report} concepts={concepts} absent={absent} />
             <PlatformTable report={report} concepts={concepts} absent={absent} />
             <details
               id="analytics-calculations"

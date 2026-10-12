@@ -55,6 +55,10 @@ export interface GroupFilters {
   order: 'desc' | 'asc';
 }
 
+/** Only supported URL sorts reach the existing validated API order enum. */
+export const readContentSort = (value: string | null): GroupFilters['order'] =>
+  value === 'oldest' ? 'asc' : 'desc';
+
 export const NO_GROUP_FILTERS: GroupFilters = {
   q: '',
   status: '',

@@ -175,7 +175,7 @@ export const comparedNumber = z.object({
 export type ComparedNumber = z.infer<typeof comparedNumber>;
 
 export const ANALYTICS_REPORT_MAX_DAYS = 366;
-/** Most rows of `topPosts`; the rest are counted in `postsOmitted`. */
+/** Legacy report cap retained for consumers; reports now return the complete matching set. */
 export const ANALYTICS_REPORT_MAX_POSTS = 1000;
 
 /**
@@ -183,8 +183,25 @@ export const ANALYTICS_REPORT_MAX_POSTS = 1000;
  * carry none, so weeks, days and the best-time grid are bucketed where the person reading sits.
  * `scope=all` adds up every workspace the session's user belongs to (session auth only).
  */
+export const analyticsPostSort = z.enum([
+  'publishAt',
+  'views',
+  'reach',
+  'likes',
+  'comments',
+  'shares',
+  'saves',
+  'clicks',
+  'follows',
+  'engagements',
+  'engagementRate',
+]);
+export type AnalyticsPostSort = z.infer<typeof analyticsPostSort>;
+
 export const analyticsReportQuery = z
   .object({
+    sort: analyticsPostSort.optional(),
+    sortDir: z.enum(['asc', 'desc']).optional(),
     days: z.coerce.number().int().min(1).max(ANALYTICS_REPORT_MAX_DAYS).optional(),
     from: z.coerce.date().optional(),
     to: z.coerce.date().optional(),
@@ -411,7 +428,7 @@ export const analyticsReportView = z.object({
       best: z.boolean(),
     }),
   ),
-  /** The period's posts, most engagements first. */
+  /** The complete period's posts in the requested sort (newest first by default). */
   topPosts: z.array(reportPost),
   postsOmitted: z.number().int(),
   /**

@@ -1,3 +1,6 @@
+import { clientSortOptions, sortClients, type ClientSort } from '../lib/listSort';
+import { SortSelect } from '../components/ui/SortSelect';
+import { useUrlSort } from '../lib/useUrlSort';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { OverviewView, ClientOverview } from '@meegrow-social/contracts';
@@ -18,6 +21,7 @@ import { Warning, WarningCircle, SquaresFour, CheckCircle, Plus } from '../lib/i
 export function Overview() {
   const { me, switchWorkspace } = useAuth();
   const navigate = useNavigate();
+  const [sort, setSort] = useUrlSort('sort', clientSortOptions, 'name');
   const [ov, setOv] = useState<OverviewView | null>(null);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
@@ -113,9 +117,14 @@ export function Overview() {
       )}
 
       {/* clients */}
-      <div className="mb-2 mt-5 flex items-center justify-between gap-3">
+      <div className="mb-2 mt-5 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-base font-semibold text-ink">Your clients</h2>
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <SortSelect
+            value={sort}
+            onChange={(v) => setSort(v as ClientSort)}
+            options={[...clientSortOptions]}
+          />
           <button
             type="button"
             className="min-h-11 text-sm text-muted underline underline-offset-4 hover:text-ink md:min-h-0"
@@ -134,7 +143,9 @@ export function Overview() {
       <Table
         caption="Your clients"
         dense
-        rows={ov?.clients ?? []}
+        rows={sortClients(ov?.clients ?? [], sort)}
+        sort={{ key: sort, dir: sort === 'name' ? 'asc' : 'desc' }}
+        onSort={(key) => setSort(key as ClientSort)}
         rowKey={(c) => c.workspaceId}
         onRowClick={(c) => void openClient(c)}
         empty={{
@@ -145,6 +156,7 @@ export function Overview() {
           {
             key: 'client',
             header: 'Client',
+            sortKey: 'name',
             cell: (c) => (
               <span className="flex items-center gap-2.5">
                 <span
@@ -173,6 +185,7 @@ export function Overview() {
           {
             key: 'accounts',
             header: 'Accounts',
+            sortKey: 'accounts',
             align: 'right',
             className: 'hidden sm:table-cell',
             cell: (c) => c.connectionCount,
@@ -180,6 +193,7 @@ export function Overview() {
           {
             key: 'published',
             header: 'Published this week',
+            sortKey: 'published',
             align: 'right',
             className: 'hidden whitespace-nowrap md:table-cell',
             cell: (c) => c.publishedThisWeek,
@@ -187,6 +201,7 @@ export function Overview() {
           {
             key: 'followers',
             header: 'Followers',
+            sortKey: 'followers',
             align: 'right',
             className: 'hidden lg:table-cell',
             cell: (c) =>

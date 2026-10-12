@@ -35,6 +35,7 @@ import {
   thumbRetryDelay,
   metricsToLoad,
   rangeBounds,
+  readContentSort,
   shortDateTime,
   topMetricNames,
   visibleGroup,
@@ -541,5 +542,17 @@ describe('imported posts', () => {
       { id: 'g', caption: '', media: [], status: 'published', posts: [p] },
     ];
     expect(metricsToLoad(groups, new Set())).toEqual([p.id]);
+  });
+});
+
+describe('Content URL sorting', () => {
+  it('defaults invalid values to newest and sends order before API paging', () => {
+    expect(readContentSort(null)).toBe('desc');
+    expect(readContentSort('invalid')).toBe('desc');
+    expect(readContentSort('newest')).toBe('desc');
+    expect(readContentSort('oldest')).toBe('asc');
+    expect(
+      groupQuery({ ...NO_GROUP_FILTERS, order: readContentSort('oldest') }, 0, 50),
+    ).toMatchObject({ order: 'asc', offset: 50 });
   });
 });

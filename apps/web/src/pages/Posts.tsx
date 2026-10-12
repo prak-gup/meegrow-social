@@ -3,7 +3,7 @@ import { ArticlePreview } from '../components/ArticlePreview';
 import { blogOptions } from '../lib/blog';
 import { WordPressArticleMeta } from '../components/WordPressArticleMeta';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import type {
   ConnectionView,
   PostGroupSummary,
@@ -19,6 +19,7 @@ import {
   GROUP_PAGE_SIZE,
   NO_GROUP_FILTERS,
   RANGES,
+  readContentSort,
   SOURCES,
   appendGroups,
   applyPosts,
@@ -61,6 +62,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorState } from '../components/ui/ErrorState';
 import { FilterBar, FilterSelect, ViewToggle } from '../components/ui/FilterBar';
 import { PageHeader } from '../components/ui/PageHeader';
+import { SortSelect } from '../components/ui/SortSelect';
 import { RowMenu, type RowMenuItem } from '../components/ui/RowMenu';
 import { Skeleton } from '../components/ui/Skeleton';
 import { StatusChip } from '../components/ui/StatusChip';
@@ -79,6 +81,8 @@ const MENU_WIDTH = 232;
  */
 export function Posts() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const sortOrder = readContentSort(searchParams.get('sort'));
   const [view, setView] = useState<ViewMode>(() => readViewMode());
   const [filters, setFilters] = useState<GroupFilters>(NO_GROUP_FILTERS);
   // What is in the search box; it becomes `filters.q` once typing pauses.
@@ -98,7 +102,8 @@ export function Posts() {
   const [latest, setLatest] = useState<LatestByPost>(new Map());
   const [metricsFailed, setMetricsFailed] = useState(false);
 
-  const { q, status, source, provider, connectionId, range, order } = filters;
+  const { q, status, source, provider, connectionId, range } = filters;
+  const order = sortOrder;
   // Which filter set (and retry) the loaded list belongs to, so a late "Load more" can be dropped,
   // and the instant its date range was resolved at, so every page uses the same bounds.
   const listKey = useRef('');
@@ -151,7 +156,9 @@ export function Posts() {
     setLoadingMore(true);
     setMoreError(null);
     try {
-      const res = await api.listPostGroups(groupQuery(filters, loadedAt.current, served));
+      const res = await api.listPostGroups(
+        groupQuery({ ...filters, order }, loadedAt.current, served),
+      );
       if (key !== listKey.current) return;
       setGroups((prev) => appendGroups(prev, visible(res.groups)));
       setServed((n) => n + res.groups.length);
@@ -310,15 +317,6 @@ export function Posts() {
               onChange={(v) => set({ range: v as RangeKey })}
               options={RANGES.map((r) => ({ value: r.value, label: r.label }))}
             />
-            <FilterSelect
-              label="Sort"
-              value={order}
-              onChange={(v) => set({ order: v as GroupFilters['order'] })}
-              options={[
-                { value: 'desc', label: 'Newest first' },
-                { value: 'asc', label: 'Oldest first' },
-              ]}
-            />
             {filtered && (
               <Button variant="ghost" size="sm" onClick={clearFilters}>
                 Clear filters
@@ -334,6 +332,22 @@ export function Posts() {
                 {metricsFailed && ' · some numbers could not be loaded'}
               </p>
             )}
+            <SortSelect
+              value={order}
+              onChange={(v) =>
+                setSearchParams(
+                  (params) => {
+                    params.set('sort', v === 'asc' ? 'oldest' : 'newest');
+                    return params;
+                  },
+                  { replace: true },
+                )
+              }
+              options={[
+                { value: 'desc', label: 'Newest first' },
+                { value: 'asc', label: 'Oldest first' },
+              ]}
+            />
             <ViewToggle
               label="View"
               value={view}

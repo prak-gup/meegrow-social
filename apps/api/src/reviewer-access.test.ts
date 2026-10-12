@@ -316,3 +316,24 @@ describe('viewer cannot mutate, including MCP and GET OAuth start', () => {
     expect((await inject(options)).statusCode).toBe(403);
   });
 });
+
+describe('Google OAuth testing API flag', () => {
+  it.each(['true', 'false', ''])(
+    'passes explicit expiry configuration for flag %s',
+    async (flag) => {
+      vi.stubEnv('GOOGLE_OAUTH_TESTING', flag);
+      try {
+        await inject({ method: 'GET', url: '/v1/connections' });
+        expect(core.listConnections).toHaveBeenCalledWith(A, {
+          googleOAuthTesting: flag === 'true',
+        });
+        await inject({ method: 'GET', url: `/v1/connections/${FOREIGN}/health` });
+        expect(core.getConnectionHealth).toHaveBeenCalledWith(A, FOREIGN, {
+          googleOAuthTesting: flag === 'true',
+        });
+      } finally {
+        vi.stubEnv('GOOGLE_OAUTH_TESTING', '');
+      }
+    },
+  );
+});

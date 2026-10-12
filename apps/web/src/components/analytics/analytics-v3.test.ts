@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { analyticsReportView, type ReportAccount } from '@meegrow-social/contracts';
@@ -60,7 +61,9 @@ const fixture = (patch: Partial<ReportInput> = {}) =>
     ...patch,
   });
 const render = (c: React.FunctionComponent<never>, props: unknown) =>
-  renderToStaticMarkup(React.createElement(c, props as never));
+  renderToStaticMarkup(
+    React.createElement(MemoryRouter, {}, React.createElement(c, props as never)),
+  );
 
 describe('analytics revision 2 markup', () => {
   it('shows five KPI cards, deltas and accessible sparkline values', () => {
