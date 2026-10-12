@@ -1,6 +1,7 @@
 import { db, schema } from '@meegrow-social/db';
 import { and, asc, eq, isNull } from 'drizzle-orm';
 import type { ApiKeyView, CreatedApiKeyView } from '@meegrow-social/contracts';
+import { requireWorkspaceRole } from './access.js';
 import { generateApiKey, hashKey } from './apikeys.js';
 
 /**
@@ -17,6 +18,7 @@ export interface AuthContext {
   /** Present when authed via a login session cookie (#10). */
   userId?: string;
   sessionId?: string;
+  role?: string;
 }
 
 /** Resolve a raw `sk_live_…` key to its workspace. Returns null if unknown/revoked/expired. */
@@ -110,4 +112,16 @@ export async function createApiKeyForWorkspace(
     .returning();
   if (!row) throw new Error('failed to create api key');
   return { id: row.id, name: row.name, secret: key.secret, prefix: key.prefix };
+}
+
+/** Session-authorized key management; low-level functions above are for trusted provisioning. */
+export async function manageWorkspaceApiKeys(
+  ctx: AuthContext,
+  action: 'list' | 'create' | 'revoke',
+  value?: string,
+) {
+  await requireWorkspaceRole(ctx, ctx.workspaceId, ['owner', 'admin']);
+  if (action === 'create') return createApiKeyForWorkspace(ctx.workspaceId, value!);
+  if (action === 'revoke') return revokeApiKey(ctx.workspaceId, value!);
+  return listApiKeys(ctx.workspaceId);
 }

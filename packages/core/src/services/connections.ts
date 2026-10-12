@@ -1,3 +1,4 @@
+import { AccessDeniedError } from './access.js';
 import { db, schema, withWorkspace } from '@meegrow-social/db';
 import { and, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
 import {
@@ -564,7 +565,7 @@ export async function finishConnect(
     .where(and(eq(schema.oauthFlows.id, flowId), eq(schema.oauthFlows.status, 'awaiting_account')))
     .limit(1);
   if (!flow) throw new Error('no account-selection flow for this id');
-  if (flow.workspaceId !== workspaceId) throw new Error('flow does not belong to this workspace');
+  if (flow.workspaceId !== workspaceId) throw new AccessDeniedError();
   if (flow.expiresAt.getTime() < Date.now()) throw new Error('connect flow expired');
 
   return (await connectChosenAccount(flow, externalId)).connectionId;

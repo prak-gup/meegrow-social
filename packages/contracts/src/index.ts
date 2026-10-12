@@ -13,3 +13,5 @@ export * from './invites.js';
 export * from './article-markdown.js';
 export * from './platform-text.js';
 export * from './imports.js';
+
+export * from './people.js';

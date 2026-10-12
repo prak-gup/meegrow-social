@@ -6,6 +6,7 @@ import type { OverviewView, ClientHealth, ProviderIdentifier } from '@meegrow-so
 import { computeHealth } from './connections.js';
 import { EXPIRING_WINDOW_MS } from './connections.js';
 import { systemClock, type Clock } from './queues.js';
+import { requireWorkspaceCreator } from './access.js';
 import { providerVisible } from '../providers/registry.js';
 
 /**
@@ -264,6 +265,7 @@ export async function createClientWorkspace(
   userId: string,
   name: string,
 ): Promise<{ workspaceId: string; name: string; slug: string }> {
+  await requireWorkspaceCreator(userId);
   const base =
     name
       .trim()

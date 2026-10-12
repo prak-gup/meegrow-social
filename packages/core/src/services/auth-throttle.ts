@@ -73,7 +73,7 @@ export class MemoryAttemptStore implements AttemptStore {
   }
 }
 
-export type AuthAttemptScope = 'login' | 'password' | 'connect';
+export type AuthAttemptScope = 'login' | 'password' | 'connect' | 'people';
 
 export interface AttemptLimit {
   /** Length of the fixed window, opened by a key's first counted attempt. */
@@ -101,6 +101,7 @@ export interface AttemptLimit {
  * every account, and the fixed window bounds each lockout at 15 minutes.
  */
 export const AUTH_ATTEMPT_LIMITS: Record<AuthAttemptScope, AttemptLimit> = {
+  people: { windowMs: 15 * 60 * 1000, perAccount: 10, perIp: 30 },
   login: { windowMs: 15 * 60 * 1000, perAccount: 10, perIp: 30 },
   password: { windowMs: 15 * 60 * 1000, perAccount: 5, perIp: 30 },
   // Credential connects (services/credential-connect.ts): each one makes this server present a

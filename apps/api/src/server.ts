@@ -8,6 +8,7 @@ import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import {
+  addClientPersonInput,
   analyticsReportQuery,
   overviewQuery,
   bulkPostMetricsInput,
@@ -41,11 +42,16 @@ import {
   validateMediaInput,
 } from '@meegrow-social/contracts';
 import {
+  AccessDeniedError,
+  PersonExistsError,
+  addClientPerson,
+  listClientPeople,
+  removeClientPerson,
+  manageWorkspaceApiKeys,
   aggregateEventLogs,
   authenticateApiKey,
   authenticateSession,
   buildUserView,
-  createApiKeyForWorkspace,
   createClientWorkspace,
   CONNECT_FLOW_MAX_AGE_MS,
   createConnectInvite,
@@ -84,7 +90,6 @@ import {
   handleCallback,
   ImportNotSupportedError,
   isWorkspaceMember,
-  listApiKeys,
   listConnectionHealth,
   listConnections,
   overviewForUser,
@@ -97,7 +102,6 @@ import {
   openCallbackOutcome,
   queryEventLogs,
   QueueInactiveError,
-  revokeApiKey,
   QueueNotFoundError,
   recordApiRequestLog,
   registerMediaFromUrl,
@@ -413,6 +417,11 @@ const PASSWORD_CONNECT_STATUS: Record<string, number> = {
 
 export async function buildServer(): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, trustProxy: trustProxySetting() });
+  app.setErrorHandler((error, _req, reply) => {
+    if (error instanceof AccessDeniedError) return reply.code(403).send({ error: error.message });
+    if (error instanceof PersonExistsError) return reply.code(409).send({ error: error.message });
+    return reply.send(error);
+  });
   await app.register(cors, { origin: true });
   await app.register(cookie);
   await app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES } });
@@ -456,6 +465,17 @@ export async function buildServer(): Promise<FastifyInstance> {
     }
     if (!ctx) return reply.code(401).send({ error: 'unauthenticated' });
     req.authContext = ctx;
+    // Viewers may read tenant data and change their own credentials, but may not mutate content.
+    if (
+      ctx.role === 'viewer' &&
+      (path === '/mcp' ||
+        path.startsWith('/v1/connections/invites') ||
+        (path.startsWith('/v1/connections/') && path.endsWith('/auth-url')) ||
+        (!['GET', 'HEAD'].includes(req.method) &&
+          !path.startsWith('/v1/auth/') &&
+          path !== '/v1/posts/metrics/latest'))
+    )
+      return reply.code(403).send({ error: 'viewer access is read-only' });
     if (ctx.sessionId && req.method !== 'GET' && req.method !== 'HEAD' && !originAllowed(req)) {
       return reply.code(403).send({ error: 'cross-origin request blocked' });
     }
@@ -544,6 +564,42 @@ export async function buildServer(): Promise<FastifyInstance> {
     const created = await createClientWorkspace(userId, parsed.data.name);
     return reply.code(201).send(created);
   });
+
+  // People management is owner-only in core, including the target workspace membership check.
+  app.get<{ Params: { workspaceId: string } }>(
+    '/v1/workspaces/:workspaceId/people',
+    async (req, reply) => {
+      const id = inviteIdParam.safeParse(req.params.workspaceId);
+      if (!id.success) return reply.code(404).send({ error: 'not found' });
+      reply.header('cache-control', 'no-store');
+      return { people: await listClientPeople(req.authContext!, id.data) };
+    },
+  );
+  app.post<{ Params: { workspaceId: string } }>(
+    '/v1/workspaces/:workspaceId/people',
+    async (req, reply) => {
+      const id = inviteIdParam.safeParse(req.params.workspaceId);
+      if (!id.success) return reply.code(404).send({ error: 'not found' });
+      const parsed = addClientPersonInput.safeParse(req.body);
+      if (!parsed.success)
+        return reply.code(400).send({ error: 'valid email and client role required' });
+      const result = await addClientPerson(req.authContext!, id.data, parsed.data, req.ip);
+      reply.header('cache-control', 'no-store');
+      if ('rateLimited' in result) return tooManyAttempts(reply, result.retryAfterSeconds);
+      return reply.code(201).send(result);
+    },
+  );
+  app.delete<{ Params: { workspaceId: string; userId: string } }>(
+    '/v1/workspaces/:workspaceId/people/:userId',
+    async (req, reply) => {
+      const id = inviteIdParam.safeParse(req.params.workspaceId);
+      const user = inviteIdParam.safeParse(req.params.userId);
+      if (!id.success || !user.success) return reply.code(404).send({ error: 'not found' });
+      const removed = await removeClientPerson(req.authContext!, id.data, user.data);
+      if (!removed) return reply.code(404).send({ error: 'not found or an owner' });
+      return { removed: true };
+    },
+  );
 
   // Rotate the session token (sliding renewal). Session-only.
   app.post('/v1/auth/session/rotate', async (req, reply) => {
@@ -1028,22 +1084,21 @@ export async function buildServer(): Promise<FastifyInstance> {
   // --- API keys (#8) ---------------------------------------------------------------------------
   // Deliberately NOT exposed over MCP: an agent that can mint or revoke credentials for its own
   // workspace is a footgun, and nothing in the agent flows needs it. Key management is a human
-  // action. (Role gating — only admins — arrives with memberships enforcement in M2; for now any
-  // valid key of the workspace can manage that workspace's keys, per the issue.)
+  // action. Core requires an owner/admin session; API keys cannot mint replacement credentials.
   app.post('/v1/api-keys', async (req, reply) => {
     const parsed = createApiKeyInput.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
-    const created = await createApiKeyForWorkspace(req.authContext!.workspaceId, parsed.data.name);
+    const created = await manageWorkspaceApiKeys(req.authContext!, 'create', parsed.data.name);
     // The only response that ever carries the secret — it is not stored and cannot be re-shown.
     return reply.code(201).send(created);
   });
 
   app.get('/v1/api-keys', async (req) => ({
-    apiKeys: await listApiKeys(req.authContext!.workspaceId),
+    apiKeys: await manageWorkspaceApiKeys(req.authContext!, 'list'),
   }));
 
   app.delete<{ Params: { id: string } }>('/v1/api-keys/:id', async (req, reply) => {
-    const ok = await revokeApiKey(req.authContext!.workspaceId, req.params.id);
+    const ok = await manageWorkspaceApiKeys(req.authContext!, 'revoke', req.params.id);
     if (!ok) return reply.code(404).send({ error: 'not found' });
     return { revoked: true };
   });

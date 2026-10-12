@@ -1,6 +1,9 @@
 import type {
   UpdateRemotePostInput,
   TrashRemotePostInput,
+  AddClientPersonInput,
+  ClientPersonView,
+  CreatedClientPersonView,
   ApiKeyView,
   AuthMeView,
   CalendarView,
@@ -98,6 +101,13 @@ export const api = {
     request<OverviewView>('GET', '/v1/overview', undefined, { timezone }),
   createWorkspace: (name: string) =>
     request<CreatedWorkspaceView>('POST', '/v1/workspaces', { name }),
+
+  listClientPeople: (workspaceId: string) =>
+    request<{ people: ClientPersonView[] }>('GET', `/v1/workspaces/${workspaceId}/people`),
+  addClientPerson: (workspaceId: string, input: AddClientPersonInput) =>
+    request<CreatedClientPersonView>('POST', `/v1/workspaces/${workspaceId}/people`, input),
+  removeClientPerson: (workspaceId: string, userId: string) =>
+    request<{ removed: true }>('DELETE', `/v1/workspaces/${workspaceId}/people/${userId}`),
 
   // --- Connections (#2) ---
   /** Platforms registered in this environment — fakes in dev, real providers in prod (#45). */

@@ -79,13 +79,14 @@ export function ClientSwitcher({
 
   const clients = useMemo(() => joinClients(memberships, overview), [memberships, overview]);
   const filtered = useMemo(() => filterSwitcherClients(clients, q), [clients, q]);
+  const canCreate = memberships.some((m) => m.role === 'owner');
   const options: Option[] = useMemo(
     () => [
       { kind: 'all' },
       ...filtered.map((client): Option => ({ kind: 'client', client })),
-      { kind: 'add' },
+      ...(canCreate ? [{ kind: 'add' } as Option] : []),
     ],
-    [filtered],
+    [filtered, canCreate],
   );
 
   const close = (restoreFocus: boolean) => {

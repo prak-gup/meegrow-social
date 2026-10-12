@@ -123,10 +123,12 @@ export function Overview() {
           >
             Manage all
           </button>
-          <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
-            <Plus size={14} weight="bold" />
-            Add client
-          </Button>
+          {me?.user.memberships.some((m) => m.role === 'owner') && (
+            <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
+              <Plus size={14} weight="bold" />
+              Add client
+            </Button>
+          )}
         </div>
       </div>
       <Table

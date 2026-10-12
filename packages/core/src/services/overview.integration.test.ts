@@ -202,6 +202,7 @@ describe('overviewForUser — test-only providers', () => {
 describe('createClientWorkspace', () => {
   it('creates a workspace, makes the caller owner, and it shows up in their overview', async () => {
     const { id: uid } = await createUser();
+    await member(uid, await createWorkspace('Operator'));
     const created = await createClientWorkspace(uid, 'Blossom Wellbeing');
 
     expect(created.slug).toBe('blossom-wellbeing');
@@ -220,6 +221,7 @@ describe('createClientWorkspace', () => {
 
   it('de-dupes slugs so two clients can share a display name', async () => {
     const { id: uid } = await createUser();
+    await member(uid, await createWorkspace('Operator'));
     const a = await createClientWorkspace(uid, 'Acme');
     const b = await createClientWorkspace(uid, 'Acme');
     expect(a.slug).toBe('acme');

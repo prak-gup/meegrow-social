@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { closeDb } from '@meegrow-social/db';
-import { createApiKeyForWorkspace } from '@meegrow-social/core';
+import { createApiKeyForWorkspace as provisionKey, createSession } from '@meegrow-social/core';
 import {
   createWorkspace,
+  createUser,
+  createMembership,
   resetDb,
   useRecordingScheduler,
   useTestDatabaseEnv,
@@ -33,7 +35,21 @@ beforeAll(async () => {
 });
 afterAll(async () => app?.close());
 
-const auth = (key: string) => ({ authorization: `Bearer ${key}` });
+const ownerCookies = new Map<string, string>();
+beforeEach(() => ownerCookies.clear());
+// Key management is now a human owner/admin action. Usage still authenticates with the key.
+async function createApiKeyForWorkspace(workspaceId: string, name: string) {
+  const key = await provisionKey(workspaceId, name);
+  const user = await createUser();
+  await createMembership(user.id, workspaceId, 'owner');
+  const session = await createSession(user.id);
+  ownerCookies.set(key.secret, `mg_sid=${session.token}`);
+  return key;
+}
+const auth = (key: string) =>
+  ownerCookies.has(key)
+    ? { cookie: ownerCookies.get(key)!, origin: 'http://localhost:8990' }
+    : { authorization: `Bearer ${key}` };
 
 describe('POST /v1/api-keys', () => {
   it('returns the full secret exactly once, and it authenticates', async () => {
@@ -223,6 +239,11 @@ describe('lastUsedAt', () => {
     const ws = await createWorkspace();
     const { secret } = await createApiKeyForWorkspace(ws, 'bootstrap');
 
+    await app.inject({
+      method: 'GET',
+      url: '/v1/connections',
+      headers: { authorization: `Bearer ${secret}` },
+    });
     const before = (
       await app.inject({ method: 'GET', url: '/v1/api-keys', headers: auth(secret) })
     ).json().apiKeys[0];
@@ -234,13 +255,21 @@ describe('lastUsedAt', () => {
     const ws = await createWorkspace();
     const { secret } = await createApiKeyForWorkspace(ws, 'bootstrap');
 
-    await app.inject({ method: 'GET', url: '/v1/connections', headers: auth(secret) });
+    await app.inject({
+      method: 'GET',
+      url: '/v1/connections',
+      headers: { authorization: `Bearer ${secret}` },
+    });
     const first = (
       await app.inject({ method: 'GET', url: '/v1/api-keys', headers: auth(secret) })
     ).json().apiKeys[0].lastUsedAt;
 
     for (let i = 0; i < 3; i++) {
-      await app.inject({ method: 'GET', url: '/v1/connections', headers: auth(secret) });
+      await app.inject({
+        method: 'GET',
+        url: '/v1/connections',
+        headers: { authorization: `Bearer ${secret}` },
+      });
     }
     const after = (
       await app.inject({ method: 'GET', url: '/v1/api-keys', headers: auth(secret) })
@@ -264,5 +293,18 @@ describe('unauthenticated', () => {
       headers: auth('sk_live_not-a-real-key'),
     });
     expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('API keys cannot manage credentials', () => {
+  it('403s list, create and revoke even for its own workspace', async () => {
+    const key = await provisionKey(await createWorkspace(), 'test-key');
+    const headers = { authorization: `Bearer ${key.secret}` };
+    for (const request of [
+      { method: 'GET' as const, url: '/v1/api-keys' },
+      { method: 'POST' as const, url: '/v1/api-keys', payload: { name: 'replacement' } },
+      { method: 'DELETE' as const, url: `/v1/api-keys/${key.id}` },
+    ])
+      expect((await app.inject({ ...request, headers })).statusCode).toBe(403);
   });
 });

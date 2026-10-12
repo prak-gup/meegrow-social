@@ -1,33 +1,44 @@
 # Meta App Review — paste-ready resubmission pack (issue #53)
 
-Date drafted: 2026-10-11. App "Meegrow Social", App ID `2214641422606935`, business portfolio
+Date drafted: 2026-10-11; code walkthrough updated: 2026-10-12. App "Meegrow Social", App ID `2214641422606935`, business portfolio
 Meegrowlabs.com (`785314568581019`), verified as Meegrow.com Private Limited on 2025-12-18. App
-mode: Development. Graph version pinned in code: `v21.0`.
+mode recorded in the earlier pack: Development (current dashboard state unverified). Graph version pinned in code: `v21.0`.
 
-Everything in `[SQUARE BRACKETS]` is a fact only Prakhar has. Fill those in before submitting.
+Remaining `[SQUARE BRACKETS]` are unknowns to fill before submitting. Credentials belong only in Meta’s form, never in this repo. The screen labels below were checked against the current web code; deployment state and live data were not checked.
 
-**Decide one thing first:** whether `business_management` is in this submission (§3). Everything
-marked **(BM)** below applies only if it is.
+**Recommended submission: eight permissions, including `business_management` (§3).** A real client’s business-owned Page could not connect without it on 2026-10-11. Keep the BM text and shots unless the narrower route is independently proven before recording.
 
 ## Facts needed before you start
 
-| Placeholder                 | What it is                                                                                           |
-| --------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `[REVIEWER_EMAIL]`          | An operator login on `social.meegrowlabs.com` created only for Meta's reviewer                       |
-| `[REVIEWER_PASSWORD]`       | Its password. Goes in Meta's form only, never in this repo                                           |
-| `[REVIEW_WORKSPACE]`        | The client workspace that login opens — a demo client, no real client's name                         |
-| `[TEST_PAGE_NAME]`          | The Facebook Page you record with, already connected in `[REVIEW_WORKSPACE]`                         |
-| `[TEST_IG_HANDLE]`          | The Instagram Business account linked to that Page                                                   |
-| `[TEST_BUSINESS_NAME]`      | **(BM)** The Meta Business portfolio that owns `[TEST_PAGE_NAME]`                                    |
-| `[OLD_POST_CAPTION]`        | First words of an already-published post on each account that has insight numbers                    |
-| `[PRIVACY_URL]`             | Privacy policy URL in App settings → Basic (the Google pack used `https://meegrowlabs.com/privacy/`) |
-| `[TERMS_URL]`               | Terms of service URL in App settings → Basic                                                         |
-| `[DATA_DELETION_URL]`       | Data deletion instructions URL (or callback) in App settings → Basic                                 |
-| `[SUPPORT_EMAIL]`           | Contact address the reviewer can write to                                                            |
-| `[FB_SCREENCAST]`           | The recorded file for the Facebook Page flow (§6)                                                    |
-| `[IG_SCREENCAST]`           | The recorded file for the Instagram flow (§6)                                                        |
-| `[SUBMISSION_DATE]`         | Logged on issue #53 when you press submit                                                            |
-| `[BM_NARROW_ROUTE_OUTCOME]` | Result of the `debug_token` granular-scopes change: proven / not proven (§3)                         |
+| Fact                                   | Value / action before submitting                                                                                             |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Reviewer email                         | `[REVIEWER_EMAIL]` — create a new app login as a **member**, never owner/admin                                               |
+| Reviewer password                      | `[REVIEWER_PASSWORD]` — generated once, then changed privately; goes in Meta’s form only                                     |
+| Review workspace                       | **Meegrow Review** — dedicated demo workspace recommended below; provisioning and test-account connections remain unverified |
+| Test Facebook Page                     | **Meegrow Labs - Zero to AI Hero**                                                                                           |
+| Test Instagram                         | **@meegrowlabs** — linked Business account status must be checked before recording                                           |
+| Test Business portfolio                | `[TEST_BUSINESS_NAME]` — the portfolio owning the test Page; unknown                                                         |
+| Earlier posts with real insight values | `[OLD_FB_POST_CAPTION]` and `[OLD_IG_POST_CAPTION]` — choose separately after checking values                                |
+| Privacy                                | https://meegrowlabs.com/privacy                                                                                              |
+| Terms                                  | https://meegrowlabs.com/terms                                                                                                |
+| Data deletion                          | https://meegrowlabs.com/data-deletion                                                                                        |
+| Support address                        | `[SUPPORT_EMAIL]` — unknown                                                                                                  |
+| Screencasts                            | `[FB_SCREENCAST]`, `[IG_SCREENCAST]`                                                                                         |
+| Submission date                        | `[SUBMISSION_DATE]` — log on issue #53 when submitted                                                                        |
+| Narrower BM route outcome              | `[BM_NARROW_ROUTE_OUTCOME]` — unknown / not proven here                                                                      |
+
+Use **Meegrow Review**, rather than the operational **Meegrow** workspace, so the recording and
+reviewer see only demo content. This workspace has not been provisioned by this code change. After
+deployment, an existing owner uses **Clients → Add client** to create it, then its row’s actions
+menu → **Add a person to this client**. Enter a fresh reviewer email and choose **Member**. Save the
+temporary password privately when it is shown once; sign in with it and use the account menu’s
+**Change password** before submitting the final credential. The people panel also lists access and
+lets the owner **Remove** a non-owner, with **Remove person** confirmation and session revocation.
+A member can publish and connect accounts but cannot create clients, manage people, or manage API
+keys. No migration is required. There is no forced first-login password change or expiry for the
+temporary password; changing it before sharing the final reviewer credential is an operator step.
+Connect the named test accounts to the demo workspace and verify only its membership appears in
+**Clients**, the client switcher and Analytics, including a direct `scope=all` request.
 
 ---
 
@@ -59,17 +70,17 @@ Do all of this before pressing record. A gap here is a re-record.
 
 **App dashboard** (`developers.facebook.com/apps/2214641422606935`)
 
-| Check                         | Expected                                                                              |
-| ----------------------------- | ------------------------------------------------------------------------------------- |
-| App icon                      | Uploaded (done). Confirm it is the one shown in the consent dialog                    |
-| Privacy policy URL            | `[PRIVACY_URL]` — opens without login, mentions Facebook/Instagram data               |
-| Terms of service URL          | `[TERMS_URL]` — opens without login                                                   |
-| Data deletion                 | `[DATA_DELETION_URL]` — opens without login and says how a client gets data removed   |
-| App domains                   | `meegrowlabs.com` / `social.meegrowlabs.com`                                          |
-| Valid OAuth redirect URI      | `https://social.meegrowlabs.com/connect/callback` (the value in `docs/dev/DEPLOY.md`) |
-| Login for Business config     | "Meegrow Social — Pages + Insta", ID `1379559764274124`, user access token            |
-| Permissions in that config    | Exactly the set you are submitting — seven, or eight with `business_management`       |
-| Each permission's call status | Shows a recent successful call (see below)                                            |
+| Check                         | Expected                                                                                              |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------- |
+| App icon                      | Uploaded (done). Confirm it is the one shown in the consent dialog                                    |
+| Privacy policy URL            | `https://meegrowlabs.com/privacy` — opens without login, mentions Facebook/Instagram data             |
+| Terms of service URL          | `https://meegrowlabs.com/terms` — opens without login                                                 |
+| Data deletion                 | `https://meegrowlabs.com/data-deletion` — opens without login and says how a client gets data removed |
+| App domains                   | `meegrowlabs.com` / `social.meegrowlabs.com`                                                          |
+| Valid OAuth redirect URI      | `https://social.meegrowlabs.com/connect/callback` (the value in `docs/dev/DEPLOY.md`)                 |
+| Login for Business config     | "Meegrow Social — Pages + Insta", ID `1379559764274124`, user access token                            |
+| Permissions in that config    | Eight, including `business_management`; change only after proving the narrower route                  |
+| Each permission's call status | Shows a recent successful call (see below)                                                            |
 
 Meta's submission guide says to "Make at least 1 successful API call using each permission for which
 you are requesting advanced access." Running the full flow in §6 once as a rehearsal, a day or two
@@ -78,21 +89,21 @@ before recording, covers every permission and also produces the post that will h
 **Accounts and data**
 
 - A Facebook account that has a role on the app (the app is in Development mode) and manages
-  `[TEST_PAGE_NAME]`. Not a personal account you mind showing on video.
-- `[TEST_IG_HANDLE]` is a Business account linked to `[TEST_PAGE_NAME]`.
-- **(BM)** `[TEST_PAGE_NAME]` is owned by `[TEST_BUSINESS_NAME]`, so the "Choose the Businesses"
+  `Meegrow Labs - Zero to AI Hero`. Not a personal account you mind showing on video.
+- `@meegrowlabs` is a Business account linked to `Meegrow Labs - Zero to AI Hero`.
+- **(BM)** `Meegrow Labs - Zero to AI Hero` is owned by `[TEST_BUSINESS_NAME]`, so the "Choose the Businesses"
   step appears and is doing real work.
 - One published post on the Page and one on Instagram, each at least a day or two old
-  (`[OLD_POST_CAPTION]`), made through Meegrow Social. A post published during the recording will
+  (`[OLD_FB_POST_CAPTION]` / `[OLD_IG_POST_CAPTION]`), made through Meegrow Social. A post published during the recording will
   not have insights yet.
 - An image ready to upload for the new post (JPEG; Instagram has no text-only posts).
-- `[REVIEWER_EMAIL]` exists, opens `[REVIEW_WORKSPACE]` only, and that workspace already has
-  `[TEST_PAGE_NAME]` and `[TEST_IG_HANDLE]` connected.
+- `[REVIEWER_EMAIL]` exists, opens `Meegrow Review` only, and that workspace already has
+  `Meegrow Labs - Zero to AI Hero` and `@meegrowlabs` connected.
 
 **Analytics must show real numbers — check before recording**
 
-Open Analytics in `[REVIEW_WORKSPACE]`, filter Platform to Facebook, and look at the
-`[OLD_POST_CAPTION]` row under "Posts published in this period".
+Open Analytics in `Meegrow Review`, select the **Facebook Page** platform chip, and look at the
+`[OLD_FB_POST_CAPTION]` row under **Top posts**. Use **Period** to include its publish date, the **Facebook Page** platform chip, **Account** to select the test Page, and **Source → All sources** (or **Published here** if showing only this app’s posts).
 
 - We request five Facebook post metrics: `post_media_view`, `post_total_media_view_unique`,
   `post_reactions_like_total`, `post_clicks`, `post_video_views`. Only the last two have ever been
@@ -104,18 +115,34 @@ Open Analytics in `[REVIEW_WORKSPACE]`, filter Platform to Facebook, and look at
   `post_video_views`.
 - Compare the numbers on screen with the same post in Meta Business Suite. They should agree or be
   explainably close.
-- The operator view carries a badge, "Preview — numbers not yet validated". It will be on camera. It
-  is removed by the `VITE_ANALYTICS_UI=true` build flag. Only flip it if the comparison above holds;
-  otherwise leave it and say so in the notes (§5 has a line for it). Do not crop it out.
+- The operator view carries a badge, "Preview — numbers not yet validated". It will be on camera. The current `Analytics.tsx` renders it unconditionally; no build flag removes it. Leave it visible and explain it in §5. Do not crop it out.
 - Repeat for Instagram: the six media metrics (`views`, `reach`, `total_interactions`, `likes`,
   `comments`, `saved`) are also marked "confirm at live bring-up" in `instagram.ts`.
+
+**Known risks before recording**
+
+- **Facebook insights remain unconfirmed with real data:** `post_media_view`,
+  `post_total_media_view_unique`, `post_reactions_like_total`. The operator reported that a Facebook
+  post published on 11 Oct still showed dashes for views and reach on 12 Oct. A dash is missing
+  data, not proof of zero or just collection delay. In the Page’s Analytics view select the correct
+  account and period, inspect **Top posts**, **Platform breakdown**, and **How these numbers are calculated → Platform metrics, as collected**. Check the data timestamp/status and compare the same post in Meta Business Suite.
+  During an authorized live rehearsal, check each named metric’s Graph response independently
+  (`facebook.ts:POST_METRICS` / `postAnalytics`); distinguish an unsupported metric from empty data,
+  permissions failure, a wrong post id or missing collection. Record no tokens. If values remain
+  absent, fix the metric mapping/collection or choose a genuinely measured earlier post; postpone
+  the insight shot instead of showing dashes as proof. Do not invent replacement metric names or
+  mark Preview validated. No live checks were performed for this update.
+- **Instagram container readiness:** the bug is being fixed separately. The current provider only
+  polls readiness in its video path; image/carousel publishing must be checked after that separate
+  fix. Rehearse image creation through **Published** and the live permalink before recording; the
+  success panel alone does not establish publication. This task does not fix that provider bug.
 
 **Screen hygiene**
 
 - Facebook, Instagram and the browser set to **English**.
 - Use a clean browser profile: no bookmarks bar, no other tabs, no extensions with badges.
 - Hide: other clients' names (the client switcher and the Clients screen — record with a login that
-  sees only `[REVIEW_WORKSPACE]`), the API keys screen, access tokens, email inboxes, notification
+  sees only `Meegrow Review`), the API keys screen, access tokens, email inboxes, notification
   pop-ups, 2FA codes.
 - The Facebook password field is masked, but do not paste it from a visible password manager.
 
@@ -126,34 +153,34 @@ Open Analytics in `[REVIEW_WORKSPACE]`, filter Platform to Facebook, and look at
 The Login for Business configuration is shared, so the Facebook and Instagram invite links show the
 **same** Meta dialog. Shot numbers refer to §6 (F = Facebook recording, I = Instagram recording).
 
-| Permission                     | What our code does with it                                                                                                                                                         | Where the reviewer sees it                                                                           | Shot    |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------- |
-| `pages_show_list`              | `GET me/accounts?fields=id,name,access_token` with the user token, during connect only                                                                                             | `/i/finish/:flowId` — "Confirm the account to connect", the Page's name with a Connect button        | F5      |
-| `pages_read_engagement`        | `GET /{page-id}?fields=followers_count` with the Page token; also a dependency of the publish and insights calls                                                                   | Analytics → "Followers over time", Facebook line                                                     | F11     |
-| `pages_manage_posts`           | `POST /{page-id}/feed` (text, multi-photo), `POST /{page-id}/photos` (one photo), `POST /{page-id}/videos` (video)                                                                 | Composer → Publish now; then the post live on the Facebook Page                                      | F7–F9   |
-| `read_insights`                | `GET /{post-id}/insights?metric=<name>`, one call per metric, five names (§2)                                                                                                      | Analytics → "Posts published in this period", metric columns for the Facebook post                   | F10     |
-| `instagram_basic`              | `instagram_business_account{id,username}` on `me/accounts`; `GET /{ig-user-id}?fields=followers_count`; `GET /{ig-media-id}?fields=permalink`                                      | `/i/finish/:flowId` shows `@handle`; Content → "View post on Instagram" link; followers in Analytics | I5, I9  |
-| `instagram_content_publish`    | `POST /{ig-user-id}/media` (container), `GET /{container-id}?fields=status_code,status` (video only), `POST /{ig-user-id}/media_publish`                                           | Composer → Publish now; then the post live on the Instagram profile                                  | I7–I9   |
-| `instagram_manage_insights`    | `GET /{ig-media-id}/insights?metric=<name>`, one call per metric: `views`, `reach`, `total_interactions`, `likes`, `comments`, `saved`                                             | Analytics → "Posts published in this period", metric columns for the Instagram post                  | I10     |
-| `business_management` **(BM)** | **No Graph call of its own.** With it granted, `me/accounts` returns Pages owned through a Business portfolio; without it that list came back empty for such a client (2026-10-11) | Meta's "Choose the Businesses" step, then the portfolio-owned Page appearing at `/i/finish/:flowId`  | F3b, F5 |
+| Permission                     | What our code does with it                                                                                                                                                         | Where the reviewer sees it                                                                                | Shot    |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------- |
+| `pages_show_list`              | `GET me/accounts?fields=id,name,access_token` with the user token, during connect only                                                                                             | `/i/finish/:flowId` — "Confirm the account to connect", the Page's name with a Connect button             | F5      |
+| `pages_read_engagement`        | `GET /{page-id}?fields=followers_count` with the Page token; also a dependency of the publish and insights calls                                                                   | Analytics → Followers KPI and Follower growth card for the selected Page                                  | F11     |
+| `pages_manage_posts`           | `POST /{page-id}/feed` (text, multi-photo), `POST /{page-id}/photos` (one photo), `POST /{page-id}/videos` (video)                                                                 | Create post side panel → Now → Publish now → confirmation; then the post live on the Facebook Page        | F7–F9   |
+| `read_insights`                | `GET /{post-id}/insights?metric=<name>`, one call per metric, five names (§2)                                                                                                      | Analytics → Top posts and Platform breakdown, metric columns for the Facebook post                        | F10     |
+| `instagram_basic`              | `instagram_business_account{id,username}` on `me/accounts`; `GET /{ig-user-id}?fields=followers_count`; `GET /{ig-media-id}?fields=permalink`                                      | `/i/finish/:flowId` shows `@handle`; Content card’s actions → "View on Instagram"; followers in Analytics | I5, I9  |
+| `instagram_content_publish`    | `POST /{ig-user-id}/media` (container), `GET /{container-id}?fields=status_code,status` (video only), `POST /{ig-user-id}/media_publish`                                           | Create post side panel → Now → Publish now → confirmation; then the post live on the Instagram profile    | I7–I9   |
+| `instagram_manage_insights`    | `GET /{ig-media-id}/insights?metric=<name>`, one call per metric: `views`, `reach`, `total_interactions`, `likes`, `comments`, `saved`                                             | Analytics → Top posts and Platform breakdown, metric columns for the Instagram post                       | I10     |
+| `business_management` **(BM)** | **No Graph call of its own.** With it granted, `me/accounts` returns Pages owned through a Business portfolio; without it that list came back empty for such a client (2026-10-11) | Meta's "Choose the Businesses" step, then the portfolio-owned Page appearing at `/i/finish/:flowId`       | F3b, F5 |
 
 ### The `business_management` decision
 
-- **If `[BM_NARROW_ROUTE_OUTCOME]` = proven** (the `debug_token` granular-scopes route returns the
-  portfolio-owned Page without the permission): remove `business_management` from the Login
-  configuration, re-run the connect once to confirm the Page is still offered, submit **seven**, and
-  skip everything marked (BM). This is the better outcome.
-- **If not proven by the time you record:** submit **eight**, record with a portfolio-owned Page,
-  and use the (BM) text and shots.
+Recommend submitting **eight**, keeping the BM permission, justification and F3b/F5 shots. The
+2026-10-11 client report is direct evidence of a connection failure for a business-owned Page
+without it. There is no dedicated Business Manager API call in our provider code: the permission
+supports discovery through `me/accounts` for that ownership arrangement. Do not describe business
+asset management that the product does not perform.
 
-Why dropping it is better: Meta's permissions reference describes the allowed usage of
-`business_management` as "Manage business assets such as an ad account" and "Claim ad accounts". We
-do neither; we need it only as a side effect on `me/accounts`. A reviewer could reasonably say our
-use does not match. That is a reading of the reference, not an observed rejection.
+`[BM_NARROW_ROUTE_OUTCOME]` remains unknown. If a narrower `debug_token` granular-scopes route is
+later proven against the same business-owned Page without BM, remove BM from the Login
+configuration, repeat the entire connection successfully, and then submit seven and omit the BM
+text and shots. Until that proof exists, do not assume the other seven are enough for every client.
 
-Do not record until this is decided: the consent screens differ between the two outcomes, and the
-video must show exactly the permissions submitted — no more, no fewer.
-
+The earlier permissions-reference reading described BM allowed usage as "Manage business assets
+such as an ad account" and "Claim ad accounts". Our discovery use may receive scrutiny; this is a
+risk inferred from that reading, not an observed rejection. Re-check allowed usage in the request
+form before pasting. The consent and recording must match the final submitted permission set.
 ---
 
 ## 4. "How the app uses this permission" — paste-ready, one per permission
@@ -175,8 +202,8 @@ shot, change its text.
 ### `pages_read_engagement`
 
 > After a client has connected their Facebook Page, we read that Page's own metadata with
-> `GET /{page-id}?fields=followers_count`, once a day, and plot it in the "Followers over time"
-> chart on our Analytics screen. The agency operator and the client use that chart to see whether
+> `GET /{page-id}?fields=followers_count`, once a day, and plot it in the "Follower growth"
+> card on our Analytics screen; the latest count also appears in the Followers KPI band. The agency operator and the client use that chart to see whether
 > the Page's audience is growing while we publish for it. We read only the Page the client
 > connected. We do not read followers' names, profiles or any other person's data. The permission
 > is also required by the Page publishing and insights calls described under `pages_manage_posts`
@@ -184,9 +211,8 @@ shot, change its text.
 
 ### `pages_manage_posts`
 
-> Our operator writes a post for a client in the Composer screen: they pick the client's connected
-> Facebook Page under "Post to", type a caption, optionally add photos or one video, and choose
-> "Publish now" or a scheduled time. We then create that post on the client's Page with
+> Our operator opens the Create post side panel for a client: they pick the client's connected
+> Facebook Page under "Post to", type a caption, optionally add photos or one video, choose **Now** under "When to post", click "Publish now", then confirm the "Publish now?" dialog, or choose **Schedule** and a date/time. We then create that post on the client's Page with
 > `POST /{page-id}/feed` (text or several photos), `POST /{page-id}/photos` (one photo) or
 > `POST /{page-id}/videos` (video). The published post appears in our Content screen with a link
 > that opens it on Facebook. Publishing to the client's Page on their behalf is the core service
@@ -197,27 +223,22 @@ shot, change its text.
 
 > For each post we published to a client's Page, we call `GET /{post-id}/insights` to read that
 > post's performance — views, unique viewers, like reactions, clicks and video views — and show the
-> numbers in the "Posts published in this period" table on our Analytics screen, next to the post's
+> numbers in the "Top posts" table on our Analytics screen, next to the post's
 > caption and a link to it on Facebook. The client and the operator use this table as the
-> performance report for the content we published for them. Insights are shown only inside that
-> client's own workspace; we do not combine them across clients, sell them or share them with
-> anyone else.
+> performance report for the content we published for them. The single-client scope shows that client’s data. All clients scope is limited to the signed-in user’s memberships; a one-client reviewer sees only their demo client. We do not sell these insights or expose another client’s data to a non-member.
 
 ### `instagram_basic`
 
 > When a client signs in with Facebook from our Instagram invite link, we read the Instagram
 > Business account linked to the Page they selected — its id and username — and show it as
 > "@username" on our "Confirm the account to connect" screen so they can confirm it is the right
-> account. After they connect it, we read that account's `followers_count` for the "Followers over
-> time" chart in Analytics, and the `permalink` of each post we published so that the "View post on
-> Instagram" link in our Content screen opens the real post. We read only the account the client
+> account. After they connect it, we read that account's `followers_count` for the "Follower growth" chart in Analytics, and the `permalink` of each post we published so that the "View on Instagram" action in our Content screen opens the real post. We read only the account the client
 > connected.
 
 ### `instagram_content_publish`
 
-> Our operator creates an Instagram post for a client in the Composer screen: they select the
-> client's connected Instagram account, write the caption, attach an image, a video or up to ten
-> items for a carousel, and choose "Publish now" or a scheduled time. We create a media container
+> Our operator creates an Instagram post for a client in the Create post side panel: they select the
+> client's connected Instagram account, write the caption, attach an image, a video or up to ten items for a carousel, and choose **Now** under "When to post", then **Publish now** and confirm **Publish now?**, or choose **Schedule** and a date/time. We create a media container
 > with `POST /{ig-user-id}/media`, wait for it to finish processing if it is a video, and publish it
 > with `POST /{ig-user-id}/media_publish`. The post then appears on the client's Instagram profile
 > and in our Content screen. This is the service the client engaged us for: posting to their
@@ -226,13 +247,11 @@ shot, change its text.
 ### `instagram_manage_insights`
 
 > For each Instagram post we published for a client, we call `GET /{ig-media-id}/insights` to read
-> views, reach, total interactions, likes, comments and saves, and show those numbers in the "Posts
-> published in this period" table on our Analytics screen, filtered to Instagram. Clicking a row
-> shows how each number changed since the post went out. The client sees how the posts we made for
+> views, reach, total interactions, likes, comments and saves, and show those numbers in the "Top posts" table on our Analytics screen, filtered to Instagram. The columns show the latest reported counts; the metric chips above change the trend chart, and Platform breakdown shows totals. There is no per-row expansion. The client sees how the posts we made for
 > them performed; the operator uses the same table to decide what to publish next. We read insights
 > only for media we published on the account the client connected.
 
-### `business_management` — conditional (BM): include only if it is in the submission
+### `business_management` — recommended for this eight-permission submission
 
 > Many of our clients hold their Facebook Page inside a Meta Business portfolio rather than on a
 > personal profile. For those clients, `GET /me/accounts` returned an empty list after they signed
@@ -263,57 +282,85 @@ below is for our own product, not a Meta account.
 > - Email: `[REVIEWER_EMAIL]`
 > - Password: `[REVIEWER_PASSWORD]`
 >
-> This is an operator account limited to one demo client workspace, `[REVIEW_WORKSPACE]`.
+> This is a **member** account limited to the dedicated demo client **Meegrow Review**. It can
+> publish and connect accounts; it cannot add clients, manage people or manage API keys.
 >
 > **Reproduce the Facebook Page flow**
 >
-> 1. In the left menu open **Connections**. Under "Add an account", on the Facebook Page card, click
->    **Invite client**, then **Copy link**. The link looks like
->    `https://social.meegrowlabs.com/i/<token>`. (Clicking **Connect** instead runs the same Facebook
->    login in a pop-up.)
-> 2. Open the link in a new tab. The page reads "Connect your Facebook Page". Click **Continue with
->    Facebook**.
-> 3. Sign in to Facebook. Choose the Page(s) to share, [choose the Business that owns the Page,]
->    choose the Instagram account(s), review the access request and click **Save**, then **Got it**.
->    The dialog asks about Instagram accounts as well because our Facebook and Instagram connections
->    share one Facebook Login for Business configuration.
-> 4. You return to our page "Confirm the account to connect", which lists the Pages you selected
->    (`pages_show_list`[, `business_management`]). Click **Connect**. The page reads "Connected".
-> 5. Back in the first tab, click **Refresh** on Connections. The Page is listed under "Connected
->    accounts".
-> 6. Click **Create post** (or open **Composer**). Under "Post to" select the Page, type a caption,
->    optionally add a photo, choose **Publish now** and confirm (`pages_manage_posts`).
-> 7. Open **Content**. The post is listed as published; the link icon on its row opens it on
->    Facebook.
-> 8. Open **Analytics** and set Platform to Facebook. "Followers over time" shows the Page's
->    follower count (`pages_read_engagement`). "Posts published in this period" shows insight numbers
->    per post (`read_insights`). Insights take time to arrive, so a post you published a minute ago
->    will be empty; the row beginning "`[OLD_POST_CAPTION]`" on the already-connected Page
->    `[TEST_PAGE_NAME]` shows them.
+> 1. In the left menu open **Connections**. Scroll to **Add an account**. On the **Facebook Page**
+>    platform card, click **Invite client**, then **Copy link** in the **Invite link — Facebook Page**
+>    dialog. The link is `https://social.meegrowlabs.com/i/<token>`. **Connect** instead starts the
+>    same Facebook consent in a popup for an account you can authorize yourself. Outstanding links
+>    appear under **Invite links that still work**, where they can be copied or cancelled.
+> 2. Open the link in a new tab in the same browser. The page reads **Connect your Facebook Page**,
+>    names the requesting workspace, explains access in bullets, and has **Continue with Facebook**.
+>    Click it.
+> 3. Sign in to Facebook. Choose the Page(s), the Business portfolio owning the Page and the linked
+>    Instagram account(s), then review access and complete consent. A returning-user flow observed
+>    on 2026-10-11 used **Edit settings**, **Next**, **Save**, then **Got it**. First-time order and
+>    labels remain unverified. Instagram selection appears because the two providers share one
+>    Facebook Login for Business configuration.
+> 4. You return to `/i/finish/<flowId>`. With one account, the heading is **Confirm the account to
+>    connect**; with several it is **Choose the account to connect**. The subtitle says nothing is
+>    connected yet. Click **Connect** beside the intended Page (`pages_show_list`,
+>    `business_management`). Wait for **Connected**, naming the account and workspace.
+> 5. Back in the first tab, click **Refresh** on Connections. Find the Page in the connected-account
+>    table. Desktop columns include **Status**, **Token expiry**, and **Connected**. **Never expires**
+>    appears only if expiry is absent. **Disconnect** is in that account’s actions menu.
+> 6. Click the sidebar’s **Create post**. A side panel opens. If a WordPress account is connected,
+>    the **Post / Article** switch is visible; select **Post** (otherwise only post mode appears).
+>    Under **Post to**, the account picker is grouped by platform: select the Page under **Facebook Page**.
+>    Write the caption, optionally add a photo under **Media**, then under **When to post** choose
+>    **Now** from **Draft / Now / Schedule / Queue**. Click **Publish now**, check the Page named in
+>    **Publish now?**, and click **Publish now** again (`pages_manage_posts`). For multiple selected
+>    accounts the button includes “to N accounts”; select only the intended Page for this test.
+> 7. Read the success panel’s **Status:** line; an accepted request is not proof of a live post.
+>    Click **View content**. Content is a card grid (select **Grid** if needed), with status chips
+>    and **Source → All sources**. Find the caption and **Published** chip. Open the card’s actions
+>    menu → **View on Facebook Page**, and check the live Page post.
+> 8. Open **Analytics**, use the **Facebook Page** platform chip and **Account** filter for the Page,
+>    and set **Period** to include an earlier measured post. The top KPI band contains
+>    **Engagement rate**, **Reach**, **Views**, **Followers**, **Posts published**, and prior-period
+>    deltas. Below it are an insights row, a trend chart with **Views / Reach / Likes / Comments /
+>    Saves / Engagement rate** chips, and a card grid. **Follower growth** shows this Page’s
+>    follower captures and net change (`pages_read_engagement`); use **Follower account** if there
+>    is more than one selected account. Scroll to **Top posts** for latest per-post counts and
+>    **Platform breakdown** for totals (`read_insights`). The earlier post beginning
+>    `[OLD_FB_POST_CAPTION]` on **Meegrow Labs - Zero to AI Hero** must have verified numeric
+>    values before submission. Missing counts appear as dashes, not zero. There is no row expansion.
 >
 > **Reproduce the Instagram flow**
 >
-> 1. Connections → Instagram card → **Invite client** → **Copy link**, open it, **Continue with
->    Facebook**, and go through the same Facebook screens, ticking the Page and the Instagram
->    Business account linked to it.
-> 2. Our page lists the Instagram account as "@username" (`instagram_basic`). Click **Connect**.
-> 3. Composer → select the Instagram account, add a caption and an image (Instagram has no text-only
->    posts), **Publish now** (`instagram_content_publish`).
-> 4. Content → the link icon on the post opens it on Instagram.
-> 5. Analytics → Platform: Instagram. The posts table shows views, reach, likes, comments and saves
->    (`instagram_manage_insights`); the row beginning "`[OLD_POST_CAPTION]`" on `[TEST_IG_HANDLE]`
->    already has numbers.
+> 1. Connections → **Add an account** → Instagram → **Invite client** → **Copy link**. Open the
+>    link in the same browser. The heading is **Connect your Instagram**; click **Continue with
+>    Facebook** and complete consent, selecting the Page and its linked Instagram Business account.
+> 2. At `/i/finish/<flowId>`, confirm or choose the listed Instagram account **@meegrowlabs**
+>    (`instagram_basic`). Click **Connect** and wait for **Connected**. Return to Connections and
+>    click **Refresh** to see its connected-account row.
+> 3. **Create post** → **Post** if the switch is present → **Post to** → Instagram group → select
+>    the account. Write a caption and add an image under **Media** (Instagram has no text-only
+>    posts). **When to post → Now** → **Publish now** → **Publish now?** → **Publish now**
+>    (`instagram_content_publish`). Read the success panel’s **Status:** line.
+> 4. **View content** → the post’s **Published** card → actions menu → **View on Instagram**. Check
+>    the live post and caption on the Instagram profile.
+> 5. Analytics → **Instagram** platform chip → **Account** → **@meegrowlabs** → **Period** including
+>    the earlier post. Scroll to **Top posts**: the `[OLD_IG_POST_CAPTION]` row should have verified
+>    numbers for the reported views, reach, likes, comments and saves (`instagram_manage_insights`).
+>    **Platform breakdown** shows totals. The KPI band and metric chips above offer the same
+>    summary and trend controls as Facebook; rows do not expand.
 >
-> **Notes.** An invite link works once; make a new one from Connections if you need to repeat a
-> step. If Facebook shows "Continue as …?", choose **Edit settings** to see the Page list again. To
-> remove access, click **Disconnect** on the account's card in Connections. [The Analytics screen
-> carries a "Preview" badge because we are still cross-checking some Facebook metric names against
-> Meta Business Suite; the numbers shown are the values the Graph API returned.] Questions:
-> `[SUPPORT_EMAIL]`.
+> **Notes.** An invite link lasts up to 14 days, until cancelled or until it successfully connects
+> an account; an abandoned consent or account pick can be retried. Create a new link after a
+> successful connection if repeating the flow. A finish page works only in the browser where that
+> invite flow started. If Facebook offers “Continue as …?”, choose **Edit settings** to review the
+> account list again. To remove access in our product use the account’s **Disconnect** menu item in
+> Connections. Analytics currently displays **Preview — numbers not yet validated** unconditionally;
+> the Facebook metric names are still being checked against real data and Meta Business Suite.
+> Questions: `[SUPPORT_EMAIL]`.
 
-Before pasting: delete the square-bracketed (BM) fragments in steps 3 and 4 if you submit seven, and
-delete the "Preview" sentence if the badge is gone.
-
+Before pasting: fill both earlier-post captions only after numeric values have been checked. Keep
+the Preview note while the badge exists. If the narrower BM route is proven and the submission is
+changed to seven, remove the Business selection and BM references and re-record the matching flow.
 ---
 
 ## 6. Screencast shot list
@@ -331,39 +378,39 @@ after choosing Edit settings.
 
 ### Facebook Page recording
 
-| #   | What must be visible                                                                                                                                         | Caption to overlay                                                                              | Proves                                    |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| F1  | `social.meegrowlabs.com/login`, "Sign in to Meegrow Social"; sign in; Connections → Facebook Page card → Invite client → Copy link                           | "Agency operator creates an invite link for a client. The app is invite-only."                  | App login without Meta (Meta asks for it) |
-| F2  | New tab, the `/i/<token>` page: "Connect your Facebook Page", the three bullet points, **Continue with Facebook**. Click it                                  | "The client opens the invite link and starts Facebook Login."                                   | Start of Meta login                       |
-| F3  | Facebook's login form, logged out. Type email and password, log in. Then "Choose the Pages you want Meegrow Social to access": tick `[TEST_PAGE_NAME]`, Next | "Complete Facebook login from logged-out. The client chooses which Pages to share."             | Meta login; `pages_show_list`             |
-| F3b | **(BM)** "Choose the Businesses…": tick `[TEST_BUSINESS_NAME]`, Next                                                                                         | "business_management: the client selects the Business portfolio that owns the Page."            | `business_management`                     |
-| F3c | "Choose the Instagram accounts…": tick `[TEST_IG_HANDLE]`, Next                                                                                              | "Same dialog serves our Instagram connection."                                                  | —                                         |
-| F4  | "Review Meegrow Social's access request" — scroll slowly so **every** permission line is readable. Click **Save**. "…has been connected…" → **Got it**       | "The client grants: pages_show_list, pages_read_engagement, pages_manage_posts, read_insights…" | The grant, all Facebook permissions       |
-| F5  | Our page `/i/finish/…`: "Confirm the account to connect", `[TEST_PAGE_NAME]` with a Connect button. Pause two seconds. Click **Connect** → "Connected"       | "pages_show_list: the Page the client selected, read from /me/accounts."                        | `pages_show_list` (and BM)                |
-| F6  | First tab: Connections → Refresh. `[TEST_PAGE_NAME]` under "Connected accounts", "Token never expires", the Disconnect button                                | "The Page is now connected to this client's workspace. Disconnect removes it."                  | End of connect                            |
-| F7  | Composer: select `[TEST_PAGE_NAME]` under "Post to", type a caption with today's date in it, add a photo, choose **Publish now**                             | "pages_manage_posts: the operator writes a post for the client's Page."                         | `pages_manage_posts`                      |
-| F8  | The "Publish now?" confirmation naming the Page; confirm; the success card with its Status line                                                              | "Published to the Page through POST /{page-id}/photos."                                         | `pages_manage_posts`                      |
-| F9  | Content: the post marked published; click its link; **the post live on facebook.com** on `[TEST_PAGE_NAME]` with the same caption and date                   | "The post is live on the client's Facebook Page."                                               | `pages_manage_posts`                      |
-| F10 | Analytics, Platform = Facebook. "Posts published in this period": the `[OLD_POST_CAPTION]` row with **numbers** in the metric columns. Expand the row        | "read_insights: per-post insights from /{post-id}/insights. Shown for an earlier post."         | `read_insights`                           |
-| F11 | Same screen, "Followers over time" with the Facebook line; hover a point to show the value                                                                   | "pages_read_engagement: Page follower count from /{page-id}?fields=followers_count."            | `pages_read_engagement`                   |
+| #   | What must be visible                                                                                                                                                                                                                                            | Caption to overlay                                                                                                   | Proves                                  |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| F1  | `social.meegrowlabs.com/login`, **Sign in to Meegrow Social**, Email / Password / **Sign in**; Connections → **Add an account** → Facebook Page → **Invite client** → **Copy link**                                                                             | The reviewer signs in with a member login confined to the demo client, then creates a client connection link.        | App login without Meta                  |
+| F2  | New tab `/i/<token>`: **Connect your Facebook Page**, requesting workspace and access bullets, **Continue with Facebook**. Click it                                                                                                                             | The client opens the invite and starts Facebook Login.                                                               | Start of Meta login                     |
+| F3  | Facebook login from logged-out, then observed returning-user **Choose the Pages…**: tick **Meegrow Labs - Zero to AI Hero**, **Next**. First-time sequence must be verified                                                                                     | The client logs in and chooses the Page to share.                                                                    | Meta login; `pages_show_list`           |
+| F3b | Recommended BM flow: **Choose the Businesses…** → `[TEST_BUSINESS_NAME]` → **Next**; verify the actual sequence before recording                                                                                                                                | business_management: the client selects the portfolio owning the Page.                                               | `business_management`                   |
+| F3c | **Choose the Instagram accounts…** → **@meegrowlabs** → **Next**, as observed for returning consent                                                                                                                                                             | The shared configuration also serves Instagram.                                                                      | —                                       |
+| F4  | **Review Meegrow Social’s access request**: every permission line readable; **Save** → **Got it**, for the observed returning-user sequence                                                                                                                     | The client grants pages_show_list, pages_read_engagement, pages_manage_posts, read_insights and business_management. | Grant of requested Facebook permissions |
+| F5  | `/i/finish/<flowId>`: **Confirm the account to connect** (one) or **Choose the account to connect** (several), Page name, **Connect** → **Connected** naming account/workspace                                                                                  | pages_show_list: choose the returned Page. business_management enables discovery for the business-owned Page.        | `pages_show_list`; BM                   |
+| F6  | First tab: Connections → **Refresh**. Page in connected-account table; **Status**, **Token expiry** (actual value), **Connected**; account actions menu → **Disconnect** visible                                                                                | The Page is connected to the demo workspace; Disconnect removes the app connection.                                  | End of connect                          |
+| F7  | Sidebar **Create post** → side panel; **Post** if Post / Article switch is visible; **Post to** grouped **Facebook Page** picker → Page; caption/date; **Media** → photo; **When to post → Now** → **Publish now**                                              | pages_manage_posts: compose for the client’s Page and choose Now.                                                    | `pages_manage_posts`                    |
+| F8  | **Publish now?** lists the Page; **Publish now** to confirm; success panel’s **Status:** line, **View content / View calendar / Create another / Done**                                                                                                         | Publishing a single photo uses POST /{page-id}/photos. Verify the returned status and live post.                     | `pages_manage_posts`                    |
+| F9  | **View content** → Content **Grid**, **All sources**, matching caption and **Published** chip; card actions → **View on Facebook Page** → live post with matching caption/date on the test Page                                                                 | The post is live on the client’s Facebook Page.                                                                      | `pages_manage_posts`                    |
+| F10 | Analytics → **Facebook Page** chip, Page **Account**, appropriate **Period**; KPI band with deltas, insights row, metric-chip trend chart; scroll to **Top posts** → `[OLD_FB_POST_CAPTION]` with verified numbers; **Platform breakdown** totals. No expansion | read_insights: latest reported per-post values from /{post-id}/insights, plus platform totals.                       | `read_insights`                         |
+| F11 | Same filtered Analytics screen: **Followers** KPI value; **Follower growth** card with Page subtitle and net change; **Follower account** when present; hover chart point to read capture/value                                                                 | pages_read_engagement: Page followers from /{page-id}?fields=followers_count.                                        | `pages_read_engagement`                 |
 
 Match the caption in F8 to the post type you actually publish: `/feed` for text, `/photos` for one
 photo, `/videos` for a video.
 
 ### Instagram recording
 
-| #   | What must be visible                                                                                                                                         | Caption to overlay                                                                           | Proves                      |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- | --------------------------- |
-| I1  | Log in to Meegrow Social; Connections → Instagram card → Invite client → Copy link                                                                           | "Agency operator creates an Instagram invite link for a client."                             | App login without Meta      |
-| I2  | The `/i/<token>` page: "Connect your Instagram", **Continue with Facebook**. Click it                                                                        | "Instagram Business accounts connect through Facebook Login."                                | Start of Meta login         |
-| I3  | Facebook login from logged-out; "Choose the Pages…" tick `[TEST_PAGE_NAME]`; **(BM)** "Choose the Businesses…"; "Choose the Instagram accounts…" tick handle | "The client chooses the Page and the Instagram Business account linked to it."               | Meta login                  |
-| I4  | "Review Meegrow Social's access request" — scroll so every Instagram permission line is readable. **Save** → **Got it**                                      | "The client grants: instagram_basic, instagram_content_publish, instagram_manage_insights…"  | The grant                   |
-| I5  | `/i/finish/…`: "Confirm the account to connect" listing `@[TEST_IG_HANDLE]`. Pause. **Connect** → "Connected"                                                | "instagram_basic: the Instagram account's username, read from the linked Page."              | `instagram_basic`           |
-| I6  | Connections → Refresh; the Instagram account under "Connected accounts"                                                                                      | "The Instagram account is connected to this client's workspace."                             | End of connect              |
-| I7  | Composer: select the Instagram account, caption with today's date, add an image, **Publish now**                                                             | "instagram_content_publish: the operator creates a post for the client's Instagram account." | `instagram_content_publish` |
-| I8  | "Publish now?" confirmation; confirm; success card                                                                                                           | "Published through /{ig-user-id}/media then /media_publish."                                 | `instagram_content_publish` |
-| I9  | Content: the post marked published; click its link; **the post live on instagram.com** on the profile                                                        | "Live on Instagram. The link uses the permalink read with instagram_basic."                  | Publish; `instagram_basic`  |
-| I10 | Analytics, Platform = Instagram. The `[OLD_POST_CAPTION]` row with numbers for views, reach, likes, comments, saves. Expand the row                          | "instagram_manage_insights: per-post insights from /{ig-media-id}/insights."                 | `instagram_manage_insights` |
+| #   | What must be visible                                                                                                                                                                                                                                     | Caption to overlay                                                                          | Proves                       |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------- |
+| I1  | App **Sign in**; Connections → **Add an account** → Instagram → **Invite client** → **Copy link**                                                                                                                                                        | The reviewer creates an Instagram connection invite for the demo client.                    | App login without Meta       |
+| I2  | `/i/<token>`: **Connect your Instagram**, requesting workspace and access bullets, **Continue with Facebook**                                                                                                                                            | Instagram Business accounts connect through Facebook Login.                                 | Start of Meta login          |
+| I3  | Facebook login from logged-out; Page **Meegrow Labs - Zero to AI Hero**, Business `[TEST_BUSINESS_NAME]`, Instagram **@meegrowlabs** selections; verify exact first-time screens                                                                         | The client selects the Page, owning portfolio and linked Instagram account.                 | Meta login; BM when selected |
+| I4  | Access request: every Instagram permission line readable; observed returning consent **Save** → **Got it**                                                                                                                                               | The client grants instagram_basic, instagram_content_publish and instagram_manage_insights. | Grant                        |
+| I5  | `/i/finish/<flowId>`: **Confirm the account to connect** / **Choose the account to connect**, **@meegrowlabs**, **Connect** → **Connected**                                                                                                              | instagram_basic: the linked Instagram account’s username is shown before connection.        | `instagram_basic`            |
+| I6  | Connections → **Refresh**; Instagram in connected-account table with **Status**, **Token expiry** and **Connected** columns                                                                                                                              | The Instagram account is connected to the demo client.                                      | End of connect               |
+| I7  | **Create post** side panel → **Post** if switch visible → **Post to** Instagram group → account; caption/date, image under **Media**; **When to post → Now** → **Publish now**                                                                           | instagram_content_publish: compose the image post for the connected account.                | `instagram_content_publish`  |
+| I8  | **Publish now?** names Instagram account; confirm **Publish now**; success panel **Status:** and **View content**. Verify after separate readiness fix                                                                                                   | Publish uses /{ig-user-id}/media then /media_publish.                                       | `instagram_content_publish`  |
+| I9  | Content **Grid**, **All sources**, matching **Published** card; actions → **View on Instagram** → live post/profile with matching caption                                                                                                                | The live-post link uses the permalink read with instagram_basic.                            | Publish; `instagram_basic`   |
+| I10 | Analytics → **Instagram** chip, account and period; KPI band/deltas, insights row, metric-chip trend chart; **Top posts** → `[OLD_IG_POST_CAPTION]` with verified reported views/reach/likes/comments/saves; **Platform breakdown** totals. No expansion | instagram_manage_insights: per-media insight values in Top posts and platform totals.       | `instagram_manage_insights`  |
 
 ### Recording practicalities
 
@@ -401,8 +448,8 @@ Our own recommendations (not Meta rules):
 
 ## 7. After submitting
 
-1. Comment on issue #53 with `[SUBMISSION_DATE]`, which permissions were submitted (seven or eight)
-   and the `[BM_NARROW_ROUTE_OUTCOME]`.
+1. Comment on issue #53 with `[SUBMISSION_DATE]`, which permissions were submitted (eight recommended)
+   and the `[BM_NARROW_ROUTE_OUTCOME]` (unknown unless actually tested).
 2. **Check the Tech Provider / access verification panel.** On 2026-07-16 nothing in the dashboard
    offered a way to start it; the panel only said it is "only required for Tech Providers". The
    hypothesis is that it activates once Advanced Access has been requested. Look again right after
@@ -410,7 +457,7 @@ Our own recommendations (not Meta rules):
    has not activated after an approval, Meta support is the next step. The "Become a Tech Provider"
    doc that search finds is WhatsApp-only — wrong door.
 3. Do not change the Login configuration, the redirect URI, the reviewer login or the connected test
-   accounts while the review is open. Keep `[REVIEW_WORKSPACE]` working: a reviewer who cannot log
+   accounts while the review is open. Keep `Meegrow Review` working: a reviewer who cannot log
    in is a rejection.
 4. When the result arrives, log each permission's outcome on #53: approved, or rejected with Meta's
    exact reason text.
@@ -424,7 +471,7 @@ Our own recommendations (not Meta rules):
 - `read_insights` or `instagram_manage_insights` rejected with empty-looking numbers → fix the
   metric set first (§2), then re-record.
 - `business_management` rejected on allowed usage → that is the signal to finish the narrower
-  `debug_token` route and resubmit without it. The other seven do not depend on it.
+  `debug_token` route and resubmit without it. Re-prove discovery against the affected ownership arrangement; do not assume dropping BM preserves every client’s connection flow.
 - Approved permissions stay approved; resubmit only the rejected ones, each with its own text.
   (Unverified: we have not been through a partial approval on this app.)
 
@@ -432,7 +479,7 @@ Our own recommendations (not Meta rules):
 
 ## 8. Open questions and unverified claims
 
-Read from Meta's documentation on 2026-10-11, not observed:
+Sources recorded in the earlier pack as read on 2026-10-11; preserved here without making any new Meta calls. Dashboard state and the guidance itself were not re-verified in this update:
 
 - **Screen-recording requirements** quoted in §6 —
   https://developers.facebook.com/docs/app-review/submission-guide/screen-recordings
@@ -455,12 +502,12 @@ Not confirmed by anyone yet:
   returning-user sequence was observed.
 - Whether a Meta reviewer's own test account can complete Facebook Login while the app is in
   Development mode, or whether the app must be switched to Live first. Meta's guide says reviewers
-  "will test your app using our own test accounts" but we have not found a statement on app mode.
-  Check the dashboard's submission checklist; if it is silent, the pre-connected `[TEST_PAGE_NAME]`
-  in `[REVIEW_WORKSPACE]` still lets a reviewer see publishing and Analytics.
+  "will test your app using our own test accounts" but app-mode requirements remain unverified here.
+  Check the dashboard's submission checklist; if it is silent, the pre-connected `Meegrow Labs - Zero to AI Hero`
+  in `Meegrow Review` still lets a reviewer see publishing and Analytics.
 - Whether the form accepts one screencast per permission or one for the whole submission. §6 covers
   both.
-- That the values in App settings → Basic (`[PRIVACY_URL]`, `[TERMS_URL]`, `[DATA_DELETION_URL]`,
+- That the values in App settings → Basic (`https://meegrowlabs.com/privacy`, `https://meegrowlabs.com/terms`, `https://meegrowlabs.com/data-deletion`,
   app domains, redirect URI) are what §2 expects. Not inspected for this document.
 - How long after publishing our Analytics screen first shows insights for a post. "A day or two" in
   §2 is a safe margin, not a measured figure.
