@@ -2,6 +2,31 @@ import { describe, expect, it } from 'vitest';
 import { validateMedia } from './validate.js';
 
 describe('validateMedia (pure — injected metadata, no ffprobe/DB)', () => {
+  describe('YouTube documentation-built video metadata', () => {
+    it('accepts landscape and vertical videos without restricting codecs', () => {
+      expect(
+        validateMedia(
+          'video',
+          {
+            container: 'webm',
+            codec: 'vp9',
+            width: 1920,
+            height: 1080,
+            bytes: 100,
+            durationSeconds: 43200,
+          },
+          'youtube',
+        ),
+      ).toEqual({ valid: true });
+    });
+    it('rejects empty, oversized and overlong videos', () => {
+      expect(validateMedia('video', { bytes: 0 }, 'youtube').valid).toBe(false);
+      expect(validateMedia('video', { bytes: 256 * 1024 ** 3 + 1 }, 'youtube').valid).toBe(false);
+      expect(validateMedia('video', { durationSeconds: 43201 }, 'youtube').reason).toContain(
+        '12 hours',
+      );
+    });
+  });
   describe('instagram images', () => {
     it('accepts an in-spec JPEG (4:5 portrait, under 8MB)', () => {
       const result = validateMedia(

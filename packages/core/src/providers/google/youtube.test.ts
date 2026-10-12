@@ -536,8 +536,9 @@ describe('YouTubeProvider — upload', () => {
         { description: 'Full walkthrough.', tags: ['planning', 'social media'], categoryId: '22' },
       ),
     ]);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       externalPostId: VIDEO_ID,
+      options: { remote: { privacyStatus: 'public' } },
       releaseUrl: `https://www.youtube.com/watch?v=${VIDEO_ID}`,
     });
 
@@ -864,6 +865,10 @@ describe('YouTubeProvider — status read-back', () => {
     const result = await yt.post(tokens, [detail()]);
     expect(result.externalPostId).toBe(VIDEO_ID);
     expect(result.notice).toMatch(/Requested public, but YouTube set this video to private/);
+    expect(result.options).toMatchObject({
+      privacyStatus: 'public',
+      remote: { privacyStatus: 'private' },
+    });
     expect(result.notice).toMatch(/compliance audit/);
   });
 
@@ -917,6 +922,7 @@ describe('YouTubeProvider — status read-back', () => {
     const result = await yt.post(tokens, [detail()]);
     expect(result.notice).toMatch(/did not return the uploaded video/);
     expect(result.notice).toMatch(/did not report the video’s visibility/);
+    expect(result.options?.kind === 'youtube' && result.options.remote).toBeUndefined();
   });
 
   it('a rejected upload fails the post permanently, with YouTube’s reason', async () => {
@@ -1527,5 +1533,176 @@ describe('YouTubeProvider — accountAnalytics', () => {
       },
     ]);
     await expect(dead.yt.accountAnalytics(tokens)).rejects.toBeInstanceOf(ProviderAuthError);
+  });
+});
+
+// Documentation-built Data API fixtures, never recorded from Google.
+describe('YouTube upload inventory', () => {
+  const channelReply = {
+    items: [{ id: CHANNEL, contentDetails: { relatedPlaylists: { uploads: 'fixture-uploads' } } }],
+  };
+  const videoReply = {
+    items: [
+      {
+        id: 'fixture-video',
+        snippet: {
+          channelId: CHANNEL,
+          title: 'Fixture #Shorts',
+          description: 'Fixture description',
+          publishedAt: '2026-10-10T10:00:00Z',
+          thumbnails: { high: { url: 'https://example.com/fixture-thumbnail.jpg' } },
+          categoryId: '22',
+          tags: ['fixture'],
+        },
+        status: { privacyStatus: 'private', selfDeclaredMadeForKids: true },
+        contentDetails: { duration: 'PT1M30S' },
+        statistics: { viewCount: '99' },
+      },
+    ],
+  };
+  it('imports metadata and thumbnail without storing statistics as post facts; reuses the playlist cursor', async () => {
+    const { yt, calls } = build([
+      TOKEN_ROUTE,
+      { match: '/channels?', replies: [{ body: channelReply }] },
+      {
+        match: '/playlistItems?',
+        replies: [
+          {
+            body: {
+              items: [
+                {
+                  contentDetails: {
+                    videoId: 'fixture-video',
+                    videoPublishedAt: '2026-10-10T10:00:00Z',
+                  },
+                },
+              ],
+              nextPageToken: 'fixture-page',
+            },
+          },
+        ],
+      },
+      { match: '/videos?', replies: [{ body: videoReply }] },
+    ]);
+    const query = { since: new Date('2026-10-01'), limit: 100 };
+    const page = await yt.listPublishedPosts(tokens, query);
+    expect(page.items[0]).toMatchObject({
+      externalPostId: 'fixture-video',
+      caption: 'Fixture description',
+      mediaKind: 'video',
+      mediaCount: 1,
+      thumbnailUrl: 'https://example.com/fixture-thumbnail.jpg',
+      options: {
+        title: 'Fixture #Shorts',
+        privacyStatus: 'private',
+        durationSeconds: 90,
+        madeForKids: true,
+        shortsHint: true,
+      },
+    });
+    expect(page.items[0]).not.toHaveProperty('statistics');
+    expect(calls.find((call) => call.url.includes('/playlistItems?'))?.url).toContain(
+      'maxResults=50',
+    );
+    await yt.listPublishedPosts(tokens, { ...query, cursor: page.nextCursor! });
+    expect(calls.filter((call) => call.url.includes('/channels?'))).toHaveLength(1);
+    expect(calls.at(-2)?.url).toContain('pageToken=fixture-page');
+  });
+  it('stops at the date boundary and skips missing, foreign and malformed resources', async () => {
+    const { yt } = build([
+      TOKEN_ROUTE,
+      { match: '/channels?', replies: [{ body: channelReply }] },
+      {
+        match: '/playlistItems?',
+        replies: [
+          {
+            body: {
+              items: [
+                {
+                  contentDetails: {
+                    videoId: 'fixture-video',
+                    videoPublishedAt: '2020-01-01T00:00:00Z',
+                  },
+                },
+              ],
+              nextPageToken: 'old-page',
+            },
+          },
+        ],
+      },
+      {
+        match: '/videos?',
+        replies: [
+          {
+            body: {
+              items: [
+                {
+                  ...videoReply.items[0],
+                  snippet: { ...videoReply.items[0]!.snippet, channelId: 'foreign' },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+    expect(
+      await yt.listPublishedPosts(tokens, { since: new Date('2026-10-01'), limit: 25 }),
+    ).toEqual({ items: [], nextCursor: null, usage: null });
+    await expect(
+      yt.listPublishedPosts(tokens, { since: NOW, limit: 25, cursor: 'bad' }),
+    ).rejects.toThrow('Invalid YouTube import cursor');
+  });
+  it.each([
+    { video: videoReply, channel: channelReply, expected: 'present' },
+    { video: { items: [] }, channel: channelReply, expected: 'gone' },
+    { video: { items: [] }, channel: { items: [] }, expected: 'unknown' },
+  ])('presence is $expected only with owner evidence', async ({ video, channel, expected }) => {
+    const { yt } = build([
+      TOKEN_ROUTE,
+      { match: '/videos?', replies: [{ body: video }] },
+      { match: '/channels?', replies: [{ body: channel }] },
+    ]);
+    expect(await yt.publishedPostPresence(tokens, 'fixture-video')).toBe(expected);
+  });
+  it('a failed read never means deletion', async () => {
+    const { yt } = build([
+      TOKEN_ROUTE,
+      {
+        match: '/videos?',
+        replies: [{ status: 403, body: { error: { message: 'fixture denied' } } }],
+      },
+    ]);
+    expect(await yt.publishedPostPresence(tokens, 'fixture-video')).toBe('unknown');
+  });
+});
+
+// Documentation-built upload limits: Google is never contacted.
+describe('YouTube stored video preflight', () => {
+  it.each([
+    { total: 256 * 1024 ** 3 + 1, contentType: 'video/mp4', error: '256 GiB' },
+    { total: 1, contentType: 'text/plain', error: 'video MIME type' },
+  ])('rejects $error before opening an upload session', async ({ total, contentType, error }) => {
+    const { fetchImpl, calls } = google([]);
+    const yt = new YouTubeProvider(
+      { clientId: 'fixture-client', clientSecret: 'fixture-not-a-secret', fetchImpl },
+      {
+        fetchMedia: async () => ({
+          ok: true,
+          status: 206,
+          headers: {
+            get: (name) =>
+              name === 'content-range'
+                ? `bytes 0-${Math.min(total, 8 * 1024 * 1024) - 1}/${total}`
+                : name === 'content-type'
+                  ? contentType
+                  : null,
+          },
+          arrayBuffer: async () => new ArrayBuffer(Math.min(total, 8 * 1024 * 1024)),
+        }),
+      },
+    );
+    await expect(yt.post(tokens, [detail()])).rejects.toThrow(error);
+    expect(calls).toHaveLength(0);
   });
 });

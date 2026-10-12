@@ -424,6 +424,11 @@ describe('how an article reads in lists', () => {
     expect(postHeadline(post({ options: { kind: 'meta', format: 'feed' }, caption: 'Hi' }))).toBe(
       'Hi',
     );
+    expect(
+      postHeadline(
+        post({ options: { kind: 'youtube', title: 'Video title' }, caption: 'Video description' }),
+      ),
+    ).toBe('Video title');
     expect(postHeadline(undefined)).toBe('');
   });
 

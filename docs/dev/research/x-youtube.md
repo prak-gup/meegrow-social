@@ -248,6 +248,123 @@ Nothing below has been observed. Each is a place where the provider trusts the d
 
 ---
 
+## B9. Live bring-up checklist (2026-10-12)
+
+Documentation review only. No Google/YouTube API, database, Redis, or deployment was accessed in
+this build. The provider has still never run against Google. `docs/dev/GOOGLE-APPROVALS.md` is not
+present in this checkout; this section is the operational checklist.
+
+### Google Cloud setup
+
+1. Select the Cloud project that owns the shared Google OAuth client (also used by GBP). In
+   **APIs & Services → Library**, enable **YouTube Data API v3** and **YouTube Analytics API**.
+   The Reporting API is not used. No API key is required for these OAuth requests.
+2. In **Google Auth Platform → Branding**, configure the app name, support/developer contact,
+   public homepage, privacy policy and terms links. Add the authorized domain `meegrowlabs.com`
+   and verify ownership through Search Console using a project owner/editor account. Prepare a
+   consent-flow demonstration showing each scope's use.
+3. In **Audience**, choose **External** for clients outside the Cloud organization. Start in
+   **Testing**, add the owner's Google account as a test user, and use that account to connect.
+   Testing is limited to 100 listed test users and these grants/refresh tokens expire after seven
+   days. Switching to **In production** avoids that testing expiry; it does not complete scope
+   verification. Unapproved sensitive scopes still show Google's warning and normally impose a
+   lifetime cap of 100 new users. See [Google's audience documentation](https://support.google.com/cloud/answer/15549945).
+4. In **Data Access**, add exactly `youtube.upload`, `youtube.readonly` and
+   `yt-analytics.readonly` (each prefixed `https://www.googleapis.com/auth/`). These authorize
+   uploading videos, reading the selected channel/videos, and reading channel/video analytics.
+   Submit sensitive-scope verification with justifications and the demo. Approval removes the
+   warning/cap for approved scopes; it does not increase Data API quota. See
+   [sensitive-scope verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification).
+5. In **Clients → Create client → Web application**, set the exact authorized redirect URI to
+   `https://social.meegrowlabs.com/connect/callback`. This is confirmed by `callbackUri` in
+   `packages/core/src/services/connections.ts` and the API's `GET /connect/callback` route.
+   Keep `APP_URL=https://social.meegrowlabs.com` on the API; the callback is not `/v1/connect/callback`.
+6. Separately, use the [YouTube API Services Audit and Quota Extension Form](https://support.google.com/youtube/contact/yt_api_form)
+   for compliance review and additional quota when needed. Supply the project number, actual
+   upload/import/analytics use, retention behavior, access instructions and demo. This is separate
+   from OAuth scope verification. [YouTube's audit guide](https://developers.google.com/youtube/v3/guides/quota_and_compliance_audits)
+   currently describes it as the gate for additional quota, not an unconditional public-upload gate.
+
+**Visibility discrepancy:** the approved brief assumed every unaudited upload is forced Private.
+The current [videos.insert reference](https://developers.google.com/youtube/v3/docs/videos/insert)
+explicitly says unverified API projects are not restricted to private viewing. Therefore the UI
+defaults to Private and advises planning for Private before the audit, without promising a forced
+lock. Requested and actual visibility are different facts: the provider reads status back and stores
+`options.remote.privacyStatus`; the success message and Content/Calendar chips use that fact.
+Confirm this project's actual behavior before relying on Public or Unlisted.
+
+### Application configuration and first journey
+
+- Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` to the actual web OAuth client's values through
+  the deployment's secret configuration; this document deliberately includes no example credential.
+  Set `YOUTUBE_ENABLED=true` in both API and worker runtimes. Optional
+  `YOUTUBE_DAILY_UPLOAD_LIMIT` is a positive integer; omit it for the provider's 100/day in-process
+  allowance. The shared Google credentials also register GBP. Restart those runtimes after setting
+  configuration. No new dependencies or schema migration are required: options use existing JSONB,
+  imports use existing post/media rows and connection import state.
+- In Connections, connect YouTube, choose the correct personal/Brand channel at Google's chooser,
+  approve all three scopes and complete the app's channel picker. Check the displayed channel. A
+  second channel requires a second connect. The existing invite flow also supports YouTube: create
+  an invite in Connections, share `/invite/:token`, let the client authorize and choose their channel.
+- Confirm automatic import status, or use **Import past posts**. Check a known older video on Content
+  and Calendar: title, thumbnail stored on our media host, actual visibility, publish date and watch
+  link. Private videos must be readable only through the owner's grant; test removal and a failed
+  grant separately before trusting deletion detection.
+- In Post mode select only that channel, attach one small MP4/MOV, enter a title, confirm description,
+  choose Private and explicitly answer Made for kids. Save a draft, then publish a test video. Check
+  the provider's actual returned visibility on Content and the success panel. With explicit owner
+  authorization, subsequently test Public and Unlisted and compare with YouTube Studio. Wait for
+  processing; do not mistake a successful upload for finished processing.
+- Select only YouTube in Analytics. Expect views, interactions and subscribers (not reach), with
+  engagement rate divided by views. Likes/comments/views are available from Data API statistics;
+  shares and subscribersGained require Analytics results and may lag. Confirm after roughly 48 h.
+
+### Import quota and retention
+
+`channels.list?mine=true&part=contentDetails` finds the uploads playlist (1 unit). Each page uses
+`playlistItems.list` plus a batched `videos.list` for snippet/status/statistics/contentDetails (1 unit
+each, up to 50 ids; the existing importer requests 25). Thus the first nonempty page costs 3 units,
+each later page 2, and a channel run costs at most **1 + 2P**. Existing bounds are 40 pages/run and
+500 returned posts: **81 units maximum for listing**, typically 41 units for 500 in-window videos.
+Filtered pages still cost quota. Removal checks are limited to 20 candidates and cost 1 unit when
+present or 2 when absent (the second verifies channel ownership), adding at most 40 units. No
+`search.list`, per-video Analytics request, or thumbnail write is used by imports. Thumbnail downloads
+go to our storage through the existing copy path and do not consume Data API units. Statistics are
+requested but not seeded into metric rows; the regular analytics sweep supplies those.
+
+In Cloud Console **APIs & Services → YouTube Data API v3 → Quotas & System Limits**, watch the
+10,000-unit shared read pool and separate upload/search buckets. Review quotas and error rates after
+the first import/upload and daily during onboarding. The provider's upload ledger is per-process,
+resets at Pacific midnight and undercounts restarts/other workers; Google's limits are authoritative.
+Quota costs follow the [current calculator](https://developers.google.com/youtube/v3/determine_quota_cost).
+
+Imported YouTube posts are already published and are never scheduled again. Their metric snapshots
+receive the same retention as app-created YouTube posts: `metrics-retention.ts` deletes by **storage
+creation time**, with a 30-day policy less one day and one six-hour sweep of margin (cutoff 28.75 days).
+This does not delete the imported video/post or local thumbnail. Existing metadata imports recognize
+matching posts rather than refresh all their stored metadata; the 30-day refresh/delete obligations
+for stored title/status/thumbnail data therefore still need an operational compliance review. Metric
+retention alone does not establish compliance for every retained API-derived field.
+
+### Remaining unverified assumptions
+
+All B8 items remain unverified. New import assumptions are uploads-playlist ordering/pagination,
+private/unlisted visibility through the selected grant, channel ownership on missing-video reads,
+actual publish dates, thumbnail CDN/storage behavior, quota accounting and duration shapes. Shorts
+have no cheap authoritative API flag: imports retain duration and a `#Shorts` editorial hint only;
+this is not proof of Shorts classification. The Composer notes square/vertical videos up to three
+minutes as eligible, leaving classification to YouTube.
+
+Title remains 100 characters; descriptions now consistently enforce **5,000 UTF-8 bytes** in the
+contract and provider. Tags count commas and two extra characters for tags containing spaces, with
+a 500-character combined limit, per the [video resource reference](https://developers.google.com/youtube/v3/docs/videos).
+The small category selector uses standard common ids and defaults to People & Blogs (`22`, also
+used by Google's upload sample). The [category reference](https://developers.google.com/youtube/v3/docs/videoCategories/list)
+defines a region-dependent dynamic catalogue but does not publish a complete static id/name table;
+regional assignability of the fixed list remains unverified without a permitted live list read.
+The app's upload endpoint has a stricter **1200 MiB** limit than YouTube's 256 GiB/12-hour maximum.
+Documentation-built fixtures are explicitly marked; they establish offline logic, not live behavior.
+
 ## Build recommendation (one-liner each)
 - **X:** Viable but **metered** — architect for pay-per-use credit accounting per client, minimize link-posts ($0.20 each), OAuth 2.0-only (no more OAuth 1.0a media dance), 2h access token + rotating single-use refresh token.
 - **YouTube:** Viable and **quota-generous now** (~100 uploads/day free) — but **OAuth verification is mandatory** before real clients (7-day token expiry in testing kills unattended posting); prefer the **Brand Account Manager** model over per-client OAuth; expect a 48h analytics delay.

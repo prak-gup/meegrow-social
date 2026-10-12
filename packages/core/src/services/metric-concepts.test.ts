@@ -178,6 +178,29 @@ describe('toConcepts', () => {
   });
 });
 
+describe('YouTube provider metrics', () => {
+  it('maps documentation-built counters and Analytics totals, leaving reach unavailable', () => {
+    // Documentation-built fixture: youtube.ts emits these native metric names; no live channel data.
+    const concepts = toConcepts('youtube', {
+      viewCount: 1000,
+      views: 950,
+      likeCount: 20,
+      likes: 18,
+      commentCount: 5,
+      comments: 4,
+      shares: 5,
+      subscribersGained: 2,
+    });
+    expect(concepts).toEqual(
+      values({ views: 1000, likes: 20, comments: 5, shares: 5, follows: 2 }),
+    );
+    expect(postEngagementRate(concepts)).toEqual({ rate: 3, basis: 'views' });
+    expect(engagementRate([concepts]).basis).toBe('views');
+    expect(unmappedMetrics('youtube', { followers: 100 })).toEqual({ followers: 100 });
+    expect(followerSources('youtube')).toEqual(['followers']);
+  });
+});
+
 describe('unknown and unmapped metrics', () => {
   it('are preserved, not dropped', () => {
     expect(

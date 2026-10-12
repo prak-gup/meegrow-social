@@ -77,6 +77,8 @@ export interface PostResult {
    */
   externalPostId?: string;
   releaseUrl?: string;
+  /** Provider read-back facts to persist alongside the submitted platform options. */
+  options?: PostOptions;
   /**
    * Set when the post went out but not as asked — YouTube forcing an upload to private, a thumbnail
    * it refused. The post is still published (failing it would invite a retry that publishes twice);
