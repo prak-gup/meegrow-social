@@ -1,5 +1,5 @@
 import { db, schema } from '@meegrow-social/db';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { hashPassword, newPasswordProblem, verifyPassword } from './password.js';
 import { keepOnlySession } from './sessions.js';
 import { beginAuthAttempt, type AttemptResult } from './auth-throttle.js';
@@ -17,7 +17,7 @@ export async function findUserByEmail(email: string) {
   const [row] = await db()
     .select()
     .from(schema.users)
-    .where(eq(schema.users.email, email))
+    .where(sql`lower(${schema.users.email}) = ${email.trim().toLowerCase()}`)
     .limit(1);
   return row ?? null;
 }

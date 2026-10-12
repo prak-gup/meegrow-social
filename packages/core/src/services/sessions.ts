@@ -10,6 +10,7 @@ export interface SessionContext {
   workspaceId: string;
   userId: string;
   sessionId: string;
+  role?: string;
 }
 
 export interface CreatedSession {
@@ -89,7 +90,12 @@ export async function authenticateSession(token: string): Promise<SessionContext
     )
     .limit(1);
   if (!membership) return null;
-  return { workspaceId: row.activeWorkspaceId, userId: row.userId, sessionId: row.id };
+  return {
+    workspaceId: row.activeWorkspaceId,
+    userId: row.userId,
+    sessionId: row.id,
+    role: membership.role,
+  };
 }
 
 /** Revoke a session server-side (logout). No-op if already gone. */
@@ -168,6 +174,6 @@ export async function switchActiveWorkspace(
   await db()
     .update(schema.sessions)
     .set({ activeWorkspaceId: workspaceId })
-    .where(eq(schema.sessions.id, sessionId));
+    .where(and(eq(schema.sessions.id, sessionId), eq(schema.sessions.userId, userId)));
   return true;
 }

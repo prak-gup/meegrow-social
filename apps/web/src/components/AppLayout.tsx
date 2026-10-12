@@ -130,52 +130,61 @@ function SidebarContent({
       </Tooltip>
 
       <nav aria-label="Main" className="flex flex-col gap-0.5">
-        {tabs.map(({ to, label, Icon, badge }) => {
-          const n = badge ? badges[badge] : 0;
-          const words = n > 0 && badge ? `${formatBadge(n)} ${BADGE_WORDS[badge](n)}` : '';
-          return (
-            <Tooltip
-              key={to}
-              label={collapsed ? (words ? `${label} · ${words}` : label) : undefined}
-            >
-              <NavLink
-                to={to}
-                onClick={onNavigate}
-                aria-label={collapsed ? (words ? `${label}, ${words}` : label) : undefined}
-                className={({ isActive }) => navClass(isActive, collapsed)}
+        {tabs
+          .filter(
+            (tab) =>
+              tab.to !== '/settings/api-keys' ||
+              me?.user.memberships.some(
+                (m) =>
+                  m.workspaceId === me.activeWorkspaceId && ['owner', 'admin'].includes(m.role),
+              ),
+          )
+          .map(({ to, label, Icon, badge }) => {
+            const n = badge ? badges[badge] : 0;
+            const words = n > 0 && badge ? `${formatBadge(n)} ${BADGE_WORDS[badge](n)}` : '';
+            return (
+              <Tooltip
+                key={to}
+                label={collapsed ? (words ? `${label} · ${words}` : label) : undefined}
               >
-                {({ isActive }) => (
-                  <>
-                    <span className="relative flex-none">
-                      <Icon size={18} weight={isActive ? 'fill' : 'regular'} aria-hidden="true" />
-                      {collapsed && n > 0 && (
+                <NavLink
+                  to={to}
+                  onClick={onNavigate}
+                  aria-label={collapsed ? (words ? `${label}, ${words}` : label) : undefined}
+                  className={({ isActive }) => navClass(isActive, collapsed)}
+                >
+                  {({ isActive }) => (
+                    <>
+                      <span className="relative flex-none">
+                        <Icon size={18} weight={isActive ? 'fill' : 'regular'} aria-hidden="true" />
+                        {collapsed && n > 0 && (
+                          <span
+                            aria-hidden="true"
+                            className={cn(
+                              'absolute -right-1 -top-1 h-2 w-2 rounded-full ring-2 ring-canvas',
+                              badge === 'content' ? 'bg-status-bad' : 'bg-status-warn',
+                            )}
+                          />
+                        )}
+                      </span>
+                      {!collapsed && <span className="min-w-0 flex-1 truncate">{label}</span>}
+                      {!collapsed && n > 0 && (
                         <span
-                          aria-hidden="true"
                           className={cn(
-                            'absolute -right-1 -top-1 h-2 w-2 rounded-full ring-2 ring-canvas',
+                            'tnum grid h-4 min-w-4 flex-none place-items-center rounded-full px-1 text-micro font-semibold text-white',
                             badge === 'content' ? 'bg-status-bad' : 'bg-status-warn',
                           )}
-                        />
+                        >
+                          <span aria-hidden="true">{formatBadge(n)}</span>
+                          <span className="sr-only">{words}</span>
+                        </span>
                       )}
-                    </span>
-                    {!collapsed && <span className="min-w-0 flex-1 truncate">{label}</span>}
-                    {!collapsed && n > 0 && (
-                      <span
-                        className={cn(
-                          'tnum grid h-4 min-w-4 flex-none place-items-center rounded-full px-1 text-micro font-semibold text-white',
-                          badge === 'content' ? 'bg-status-bad' : 'bg-status-warn',
-                        )}
-                      >
-                        <span aria-hidden="true">{formatBadge(n)}</span>
-                        <span className="sr-only">{words}</span>
-                      </span>
-                    )}
-                  </>
-                )}
-              </NavLink>
-            </Tooltip>
-          );
-        })}
+                    </>
+                  )}
+                </NavLink>
+              </Tooltip>
+            );
+          })}
       </nav>
 
       <div className="mt-auto flex flex-col gap-1 border-t border-hairline-soft pt-2">

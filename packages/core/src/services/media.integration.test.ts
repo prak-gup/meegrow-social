@@ -88,7 +88,7 @@ describe('registerMediaFromUrl', () => {
     const fetchImpl = async () => new Response('not found', { status: 404 });
     await expect(
       registerMediaFromUrl(ws, { url: 'https://example.com/missing.jpg' }, { fetchImpl }),
-    ).rejects.toThrow(/HTTP 404/);
+    ).rejects.toThrow(/could not fetch media/);
   });
 });
 

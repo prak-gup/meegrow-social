@@ -8,6 +8,7 @@ import { clientChip, type ChipStatus } from '../lib/statusChip';
 import { filterClients, nextPublishLabel } from '../lib/clientRows';
 import { providerVisible } from '../lib/devProviders';
 import { platformMeta } from '../lib/platforms';
+import { ClientPeopleModal } from '../components/ClientPeopleModal';
 import { AddClientModal } from '../components/AddClientModal';
 import { InviteLinkRow, useInviteLinks } from '../components/InviteLinks';
 import { Button } from '../components/ui/Button';
@@ -136,9 +137,13 @@ function HealthChip({ c, className }: { c: ClientOverview; className?: string })
 }
 
 export function Clients() {
-  const { switchWorkspace } = useAuth();
+  const { me, switchWorkspace } = useAuth();
   const navigate = useNavigate();
   const [ov, setOv] = useState<OverviewView | null>(null);
+  const [peopleClient, setPeopleClient] = useState<ClientOverview | null>(null);
+  const canCreate = me?.user.memberships.some((m) => m.role === 'owner');
+  const owns = (id: string) =>
+    me?.user.memberships.some((m) => m.workspaceId === id && m.role === 'owner');
   const [adding, setAdding] = useState(false);
   const [openInvite, setOpenInvite] = useState<string | null>(null);
   const [providers, setProviders] = useState<ProviderView[] | null>(null);
@@ -184,10 +189,12 @@ export function Clients() {
         title="Clients"
         subtitle={`${ov?.clients.length ?? '…'} clients · connect accounts yourself, or send a client a link to connect their own`}
         actions={
-          <Button onClick={() => setAdding(true)}>
-            <Plus size={14} weight="bold" />
-            Add client
-          </Button>
+          canCreate ? (
+            <Button onClick={() => setAdding(true)}>
+              <Plus size={14} weight="bold" />
+              Add client
+            </Button>
+          ) : undefined
         }
       />
 
@@ -338,6 +345,15 @@ export function Clients() {
                 <RowMenu
                   label={`Actions for ${c.name}`}
                   items={[
+                    ...(owns(c.workspaceId)
+                      ? [
+                          {
+                            label: 'Add a person to this client',
+                            icon: <UsersThree size={14} />,
+                            onSelect: () => setPeopleClient(c),
+                          },
+                        ]
+                      : []),
                     {
                       label: 'Open content',
                       icon: <SquaresFour size={14} />,
@@ -356,6 +372,13 @@ export function Clients() {
         />
       )}
 
+      {peopleClient && (
+        <ClientPeopleModal
+          workspaceId={peopleClient.workspaceId}
+          name={peopleClient.name}
+          onClose={() => setPeopleClient(null)}
+        />
+      )}
       {adding && <AddClientModal onClose={() => setAdding(false)} />}
     </div>
   );

@@ -223,6 +223,7 @@ describe('beginAuthAttempt — scopes and defaults', () => {
 
   it('uses the documented defaults when no limit is passed', async () => {
     expect(AUTH_ATTEMPT_LIMITS).toEqual({
+      people: { windowMs: 15 * MINUTE, perAccount: 10, perIp: 30 },
       login: { windowMs: 15 * MINUTE, perAccount: 10, perIp: 30 },
       password: { windowMs: 15 * MINUTE, perAccount: 5, perIp: 30 },
       connect: { windowMs: 15 * MINUTE, perAccount: 10, perIp: 30 },

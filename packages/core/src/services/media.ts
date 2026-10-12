@@ -1,3 +1,4 @@
+import { safeFetch, SsrfBlockedError } from '../net/safe-fetch.js';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
@@ -105,7 +106,53 @@ export async function uploadMedia(
 }
 
 export interface RegisterMediaFromUrlDeps {
+  /** Tests only. Without it the fetch goes through `safeFetch`, the SSRF guard. */
   fetchImpl?: typeof fetch;
+}
+
+/** The address given to register-from-URL was refused or did not answer. Safe to show (→ 400). */
+export class MediaSourceError extends Error {}
+
+/** Largest remote file we will pull in to probe. */
+const REMOTE_MEDIA_MAX_BYTES = 200 * 1024 * 1024;
+
+/**
+ * The URL is caller-supplied, and any member (or API key) can call this, so it must not be able to
+ * reach anything private: https only, public addresses only, redirects re-validated per hop. The
+ * error never echoes the upstream status or body — that would make this a probe of our network.
+ */
+async function fetchRemoteMedia(
+  url: string,
+  deps: RegisterMediaFromUrlDeps,
+): Promise<{ contentType: string; buffer: Buffer }> {
+  if (deps.fetchImpl) {
+    const res = await deps.fetchImpl(url);
+    if (!res.ok) throw new MediaSourceError('could not fetch media from that address');
+    return {
+      contentType: res.headers.get('content-type') ?? 'application/octet-stream',
+      buffer: Buffer.from(await res.arrayBuffer()),
+    };
+  }
+  let res;
+  try {
+    res = await safeFetch(url, {
+      timeoutMs: 60_000,
+      maxResponseBytes: REMOTE_MEDIA_MAX_BYTES,
+      maxRedirects: 3,
+    });
+  } catch (err) {
+    if (err instanceof SsrfBlockedError) {
+      throw new MediaSourceError('that address is not allowed: use a public https address');
+    }
+    throw new MediaSourceError('could not fetch media from that address');
+  }
+  if (res.status < 200 || res.status >= 300) {
+    throw new MediaSourceError('could not fetch media from that address');
+  }
+  return {
+    contentType: res.headers['content-type'] ?? 'application/octet-stream',
+    buffer: res.body,
+  };
 }
 
 /**
@@ -120,11 +167,7 @@ export async function registerMediaFromUrl(
   deps: RegisterMediaFromUrlDeps = {},
 ): Promise<MediaView> {
   const input = registerMediaFromUrlSchema.parse(rawInput);
-  const fetchImpl = deps.fetchImpl ?? fetch;
-  const res = await fetchImpl(input.url);
-  if (!res.ok) throw new Error(`failed to fetch media from ${input.url}: HTTP ${res.status}`);
-  const contentType = res.headers.get('content-type') ?? 'application/octet-stream';
-  const buffer = Buffer.from(await res.arrayBuffer());
+  const { contentType, buffer } = await fetchRemoteMedia(input.url, deps);
   const { kind: detectedKind, container } = classify(contentType);
   const kind = input.kind ?? detectedKind;
   const probed = await probeBuffer(buffer, input.url);
