@@ -48,7 +48,10 @@ function recorder(responses: Recorded[]): { fetchImpl: FetchLike; calls: Call[] 
 }
 
 function provider(responses: Recorded[]): { ig: InstagramProvider; calls: Call[] } {
-  const { fetchImpl, calls } = recorder(responses);
+  const { fetchImpl, calls } = recorder([
+    ...responses,
+    { match: 'status_code', body: { status_code: 'FINISHED' } },
+  ]);
   const ig = new InstagramProvider(
     new MetaClient({
       appId: '2214641422606935',
@@ -241,8 +244,9 @@ describe('post — single image', () => {
     expect(calls[0]!.body).toContain('caption=hello');
     // No media_type for a plain image — Meta defaults to IMAGE.
     expect(calls[0]!.body).not.toContain('media_type');
-    expect(calls[1]!.url).toContain('media_publish');
-    expect(calls[1]!.body).toContain('creation_id=CONTAINER_1');
+    expect(calls[1]!.url).toContain('status_code');
+    expect(calls[2]!.url).toContain('media_publish');
+    expect(calls[2]!.body).toContain('creation_id=CONTAINER_1');
   });
 });
 
@@ -342,15 +346,17 @@ describe('post — carousel', () => {
     const result = await ig.post(IG_TOKENS, [{ caption: 'album', media: [IMG, IMG2] }]);
 
     expect(result.externalPostId).toBe('IG_CAROUSEL_1');
-    expect(calls[0]!.body).toContain('is_carousel_item=true');
-    expect(calls[1]!.body).toContain('is_carousel_item=true');
-    const parent = calls[2]!.body!;
+    const writes = calls.filter((c) => c.method === 'POST');
+    expect(writes).toHaveLength(4);
+    expect(writes[0]!.body).toContain('is_carousel_item=true');
+    expect(writes[1]!.body).toContain('is_carousel_item=true');
+    const parent = writes[2]!.body!;
     expect(parent).toContain('media_type=CAROUSEL');
     expect(parent).toContain('children=CHILD_1%2CCHILD_2');
     // Caption belongs on the parent, not the children.
     expect(parent).toContain('caption=album');
     expect(calls[0]!.body).not.toContain('caption=album');
-    expect(calls[3]!.body).toContain('creation_id=PARENT');
+    expect(writes[3]!.body).toContain('creation_id=PARENT');
   });
 
   it('rejects more than 10 items without calling Meta', async () => {
@@ -439,5 +445,153 @@ describe('token model', () => {
     expect(ig.isBetweenSteps).toBe(true);
     expect(ig.tokenModel).toBe('one-time');
     await expect(ig.refreshToken()).rejects.toBeInstanceOf(ProviderAuthError);
+  });
+});
+
+describe('readiness for every container', () => {
+  it.each(['ERROR', 'EXPIRED'])('preserves %s status text for images', async (status_code) => {
+    const { ig, calls } = provider([
+      { match: '/media', body: { id: 'IMAGE_CONTAINER' } },
+      { match: 'status_code', body: { status_code, status: 'fixture processing detail' } },
+    ]);
+    await expect(ig.post(IG_TOKENS, [{ caption: 'x', media: [IMG] }])).rejects.toThrow(
+      `instagram container IMAGE_CONTAINER ${status_code}: fixture processing detail`,
+    );
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1);
+  });
+
+  it('waits for pending image children and parent before publishing', async () => {
+    const { ig, calls } = provider([
+      { match: '/media_publish', body: { id: 'ALBUM' } },
+      { match: '/media', body: {}, sequence: [{ id: 'A' }, { id: 'B' }, { id: 'P' }] },
+      {
+        match: 'status_code',
+        body: {},
+        sequence: [
+          { status_code: 'IN_PROGRESS' },
+          { status_code: 'FINISHED' },
+          { status_code: 'FINISHED' },
+          { status_code: 'IN_PROGRESS' },
+          { status_code: 'FINISHED' },
+        ],
+      },
+    ]);
+    await ig.post(IG_TOKENS, [{ caption: 'x', media: [IMG, IMG2] }]);
+    expect(
+      calls.filter((c) => c.method === 'POST' && !c.url.includes('media_publish')),
+    ).toHaveLength(3);
+    expect(
+      calls
+        .filter((c) => c.url.includes('status_code'))
+        .map((c) => new URL(c.url).pathname.split('/').at(-1)),
+    ).toEqual(['A', 'A', 'B', 'P', 'P']);
+  });
+
+  it('rechecks after 9007 and retries only media_publish with the same container', async () => {
+    const calls: Call[] = [];
+    let publishes = 0;
+    let checks = 0;
+    const ig = new InstagramProvider(
+      {
+        appId: 'fixture-app',
+        appSecret: 'fixture-secret',
+        fetchImpl: async (url, init) => {
+          calls.push({ url, method: init?.method ?? 'GET', body: init?.body });
+          const race = url.includes('media_publish') && publishes++ === 0;
+          const body = race
+            ? { error: { code: 9007, error_subcode: 2207027, message: 'not ready' } }
+            : url.includes('media_publish')
+              ? { id: 'POST' }
+              : url.includes('status_code')
+                ? { status_code: ++checks === 2 ? 'IN_PROGRESS' : 'FINISHED' }
+                : url.includes('permalink')
+                  ? { permalink: 'https://www.instagram.com/p/fixture/' }
+                  : { id: 'ONLY_CONTAINER' };
+          return { ok: !race, status: race ? 400 : 200, json: async () => body };
+        },
+      },
+      { sleep: async () => undefined, statusAttempts: 5 },
+    );
+    await ig.post(IG_TOKENS, [{ caption: 'x', media: [IMG] }]);
+    const writes = calls.filter((c) => c.method === 'POST');
+    expect(writes).toHaveLength(3);
+    expect(writes.slice(1).every((c) => c.body?.includes('creation_id=ONLY_CONTAINER'))).toBe(true);
+    expect(checks).toBe(3);
+  });
+
+  it('exhausts a wall-clock budget with bounded backoff for an image', async () => {
+    let now = 0;
+    const delays: number[] = [];
+    const { fetchImpl, calls } = recorder([
+      { match: '/media', body: { id: 'PENDING' } },
+      { match: 'status_code', body: { status_code: 'IN_PROGRESS' } },
+    ]);
+    const ig = new InstagramProvider(
+      { appId: 'fixture-app', appSecret: 'fixture-secret', fetchImpl },
+      {
+        now: () => now,
+        sleep: async (ms) => {
+          delays.push(ms);
+          now += ms;
+        },
+      },
+    );
+    await expect(ig.post(IG_TOKENS, [{ caption: 'x', media: [IMG] }])).rejects.toBeInstanceOf(
+      ProviderTransientError,
+    );
+    expect(now).toBe(60_000);
+    expect(delays.slice(0, 4)).toEqual([1000, 2000, 4000, 5000]);
+    expect(Math.max(...delays)).toBe(5000);
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1);
+  });
+});
+
+describe('readiness retry bounds', () => {
+  it('polls a single image until ready without recreating it', async () => {
+    const { ig, calls } = provider([
+      { match: '/media_publish', body: { id: 'IMAGE' } },
+      { match: '/media', body: { id: 'CONTAINER' } },
+      {
+        match: 'status_code',
+        body: {},
+        sequence: [
+          { status_code: 'IN_PROGRESS' },
+          { status_code: 'IN_PROGRESS' },
+          { status_code: 'FINISHED' },
+        ],
+      },
+    ]);
+    await ig.post(IG_TOKENS, [{ caption: 'x', media: [IMG] }]);
+    expect(calls.filter((c) => c.url.includes('status_code'))).toHaveLength(3);
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(2);
+  });
+
+  it('bounds repeated 9007 races even when every status check says FINISHED', async () => {
+    const { ig, calls } = provider([
+      {
+        match: '/media_publish',
+        status: 400,
+        body: { error: { code: 9007, error_subcode: 2207027 } },
+      },
+      { match: '/media', body: { id: 'ONLY_CONTAINER' } },
+    ]);
+    await expect(ig.post(IG_TOKENS, [{ caption: 'x', media: [IMG] }])).rejects.toBeInstanceOf(
+      ProviderTransientError,
+    );
+    expect(calls.filter((c) => c.url.includes('media_publish'))).toHaveLength(5);
+    expect(
+      calls.filter((c) => c.method === 'POST' && !c.url.includes('media_publish')),
+    ).toHaveLength(1);
+  });
+
+  it('does not publish a container already marked PUBLISHED', async () => {
+    const { ig, calls } = provider([
+      { match: '/media', body: { id: 'DONE' } },
+      { match: 'status_code', body: { status_code: 'PUBLISHED' } },
+    ]);
+    await expect(ig.post(IG_TOKENS, [{ caption: 'x', media: [IMG] }])).rejects.toThrow(
+      'already PUBLISHED',
+    );
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1);
   });
 });

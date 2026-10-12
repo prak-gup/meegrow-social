@@ -178,8 +178,8 @@ Instagram has **no direct upload** — media must be fetched by Meta from a **pu
 - Optional: `user_tags`, `location_id`, `alt_text` (image alt text added Mar 24 2025), `product_tags`
 - Returns a **container id** (`creation_id`).
 
-**Step 1b — for video/Reels, poll status:**
-`GET /v25.0/{container-id}?fields=status_code,status` → wait until `status_code = FINISHED` (states: `IN_PROGRESS`, `FINISHED`, `ERROR`, `EXPIRED`). Containers **expire after 24 hrs** if unpublished.
+**Step 1b — for every container (images, reels, carousel children and parent), poll status:**
+`GET /v25.0/{container-id}?fields=status_code,status` → wait until `status_code = FINISHED` (states: `IN_PROGRESS`, `FINISHED`, `ERROR`, `EXPIRED`, `PUBLISHED`). Containers **expire after 24 hrs** if unpublished.
 
 **Step 2 — publish:**
 `POST /v25.0/{ig-user-id}/media_publish?creation_id={container-id}` → returns the published **IG media id**.
@@ -291,7 +291,7 @@ Sources (read 2026-10-11):
 ## 6. Gotchas / failure modes (read before building the publish worker)
 
 1. **The public-URL requirement is the #1 gotcha for IG.** Instagram never accepts a binary upload for feed/reels — it **fetches** `image_url`/`video_url` from your server. The URL must be publicly reachable (no auth, no signed-cookie), correct `Content-Type`, and stay alive until publish completes. Architecture: upload user media to **S3/CloudFront (or a signed but public-readable URL)** and hand Meta that URL. FB Pages *can* take a real upload, but mirroring the "stage to public URL" pattern keeps both paths uniform.
-2. **Reel processing is async** — you MUST poll `status_code` until `FINISHED` before `media_publish`, or you get `ERROR`/"media not ready". Containers **expire in 24 h**.
+2. **Container processing is async** — you MUST poll `status_code` until `FINISHED` before `media_publish`, or you get `ERROR`/"media not ready". Containers **expire in 24 h**.
 3. **App Review + Business Verification is the real project risk**, not the code. Without Advanced Access nothing works for real customers. Screencasts must show each permission in use. Start review early.
 4. **Rate limits are per-account and per-app.** IG: 100 posts/24h/account (carousels = 1). Plus app-level BUC limits. Build a queue with per-account throttling and read the usage headers.
 5. **Business vs Creator matters:** publishing historically required **Business** IG accounts (Creator unsupported on some paths); comment/insight coverage also differs. Detect account type at connect time and warn Creator users. Personal accounts can't use the API at all.
@@ -504,3 +504,40 @@ Against the hospital's Page and Instagram account, watching `event_logs` (`kind 
 - IG media insights: https://developers.facebook.com/docs/instagram-platform/reference/instagram-media/insights
 - Rate limits and usage headers: https://developers.facebook.com/docs/graph-api/overview/rate-limiting/
 - Paginated results: https://developers.facebook.com/docs/graph-api/results/
+
+## Container readiness fix (2026-10-12)
+
+Single images previously skipped status polling; reels and video carousel children polled,
+but image children and the carousel parent did not. All containers now poll
+`GET /{container-id}?fields=status_code,status` before their next step. Children must finish
+before creating the parent; the parent must finish before publishing. Meta's publishing flow:
+https://developers.facebook.com/docs/instagram-platform/content-publishing/
+and container status reference:
+https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-container/
+Public documentation retrieval returned HTTP 429 during this change; the existing research
+and documented status flow above informed implementation, without any Graph API calls.
+
+Each container has a 60-second readiness budget (preserving the previous video budget),
+with delays of 1s, 2s, 4s, then at most 5s, and at most 20 checks. HTTP time counts toward
+the deadline, although an in-flight HTTP request is not cancelled at the deadline.
+ERROR and EXPIRED fail permanently with Meta's status text. IN_PROGRESS or an unknown
+status keeps waiting; exhaustion is transient. PUBLISHED stops permanently for manual
+reconciliation because the status response does not supply the published media id.
+
+A media_publish 9007/2207027 race waits, rechecks status and retries publishing the same
+container within the same readiness budget. No second container is created during that
+provider call. Other failures propagate through the existing taxonomy.
+
+Cross-job exactly-once publishing is **not established**: PostDetails has no checkpoint
+or stable job id, the provider retains no container state, and publishPost rolls back its
+transaction on a transient exception. Rate-limit waits commit only their retry metadata,
+not a container id. No durable container checkpoint was added and no migration was added.
+A later queue attempt creates new containers; normally an unpublished orphan does not
+duplicate a post, but a successful remote publish with a lost response or a local rollback
+can duplicate it. Durable checkpoints and reconciliation would be needed to close that gap.
+
+The FOR UPDATE guard and provider call remain in the same transaction. Image waits can
+now hold the row lock for roughly 60 seconds; a carousel can wait roughly 60 seconds per
+child plus 60 seconds for its parent, in addition to HTTP time. Video waits retain the old
+rough budget. Moving waits outside the transaction requires a durable ownership/checkpoint
+design to preserve the current cancel/edit and concurrent-job guard.

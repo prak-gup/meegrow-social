@@ -69,6 +69,9 @@ const TRANSIENT_CODES = new Set([1, 2]);
  * Unknown 4xx is treated as bad_request (retrying a malformed call never helps); unknown 5xx as
  * transient.
  */
+/** A publish race, identified by numeric codes rather than Meta's changing wording. */
+export class MetaContainerNotReadyError extends ProviderTransientError {}
+
 export function mapMetaError(
   status: number,
   body: unknown,
@@ -91,6 +94,7 @@ export function mapMetaError(
   const message = err?.message ?? `Meta Graph request failed (HTTP ${status})`;
   const detail = `${message}${code !== undefined ? ` [code ${code}${subcode ? `/${subcode}` : ''}]` : ''}`;
 
+  if (code === 9007 && subcode === 2207027) return new MetaContainerNotReadyError(detail);
   if (subcode !== undefined && AUTH_SUBCODES.has(subcode)) return new ProviderAuthError(detail);
   if (code !== undefined && AUTH_CODES.has(code)) return new ProviderAuthError(detail);
   if (code !== undefined && RATE_LIMIT_CODES.has(code))

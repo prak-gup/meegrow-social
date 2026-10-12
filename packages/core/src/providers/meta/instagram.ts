@@ -20,7 +20,13 @@ import type {
   PublishedPostPresence,
   PublishedPostQuery,
 } from '../published-posts.js';
-import { cursorParams, MetaClient, nextPageCursor, type MetaClientConfig } from './client.js';
+import {
+  cursorParams,
+  MetaClient,
+  MetaContainerNotReadyError,
+  nextPageCursor,
+  type MetaClientConfig,
+} from './client.js';
 
 /**
  * Instagram Business provider via Facebook Login (issue #13). Shares MetaClient with the Facebook
@@ -32,7 +38,7 @@ import { cursorParams, MetaClient, nextPageCursor, type MetaClientConfig } from 
  *  2. **Container → publish, never a direct upload.** Meta FETCHES the media from a public URL we
  *     hand it (RESEARCH meta.md gotcha #1), so `resolveMediaRefs` must have populated `url` by
  *     publish time. Containers expire after 24h.
- *  3. **Video/reels process asynchronously.** The container must reach `status_code=FINISHED`
+ *  3. **All containers can process asynchronously.** The container must reach `status_code=FINISHED`
  *     before `media_publish`, or Meta answers "media not ready" (gotcha #2).
  *
  * Identity: the connection stores the **IG user id** as externalId (that's what /media and
@@ -56,9 +62,9 @@ const MEDIA_METRICS = [
   'saved',
 ] as const;
 
-/** Video containers are async; poll this many times before giving up (RESEARCH gotcha #2). */
+/** Safety cap in addition to the per-container wall-clock readiness budget. */
 const DEFAULT_STATUS_ATTEMPTS = 20;
-const DEFAULT_STATUS_DELAY_MS = 3000;
+const DEFAULT_STATUS_DELAY_MS = 1000;
 
 const PAGE_FIELDS = 'id,name,access_token,instagram_business_account{id,username}';
 
@@ -118,6 +124,8 @@ export interface InstagramProviderOptions {
   sleep?: (ms: number) => Promise<void>;
   statusAttempts?: number;
   statusDelayMs?: number;
+  statusBudgetMs?: number;
+  now?: () => number;
 }
 
 export class InstagramProvider implements SocialProvider {
@@ -133,12 +141,16 @@ export class InstagramProvider implements SocialProvider {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly statusAttempts: number;
   private readonly statusDelayMs: number;
+  private readonly statusBudgetMs: number;
+  private readonly now: () => number;
 
   constructor(config: MetaClientConfig | MetaClient, opts: InstagramProviderOptions = {}) {
     this.client = config instanceof MetaClient ? config : new MetaClient(config);
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.statusAttempts = opts.statusAttempts ?? DEFAULT_STATUS_ATTEMPTS;
     this.statusDelayMs = opts.statusDelayMs ?? DEFAULT_STATUS_DELAY_MS;
+    this.statusBudgetMs = opts.statusBudgetMs ?? 60_000;
+    this.now = opts.now ?? Date.now;
   }
 
   async generateAuthUrl(params: { redirectUri: string; state: string }): Promise<GenerateAuthUrl> {
@@ -330,7 +342,6 @@ export class InstagramProvider implements SocialProvider {
       params.image_url = requireUrl(item);
     }
     const res = await this.client.graphPost<{ id: string }>(`${igUserId}/media`, params);
-    if (item.kind === 'video') await this.awaitContainerReady(tokens, res.id);
     return res.id;
   }
 
@@ -354,7 +365,7 @@ export class InstagramProvider implements SocialProvider {
         params.image_url = requireUrl(item);
       }
       const child = await this.client.graphPost<{ id: string }>(`${igUserId}/media`, params);
-      if (item.kind === 'video') await this.awaitContainerReady(tokens, child.id);
+      await this.awaitContainerReady(tokens, child.id, this.newBudget());
       childIds.push(child.id);
     }
 
@@ -372,23 +383,50 @@ export class InstagramProvider implements SocialProvider {
    * produces the same result on the same media); running out of attempts is transient, so BullMQ
    * retries the publish job.
    */
-  private async awaitContainerReady(tokens: AuthTokens, containerId: string): Promise<void> {
-    for (let attempt = 0; attempt < this.statusAttempts; attempt++) {
+  private newBudget() {
+    return { deadline: this.now() + this.statusBudgetMs, checks: 0, waits: 0 };
+  }
+
+  private timeout(containerId: string): never {
+    throw new ProviderTransientError(
+      `instagram container ${containerId} still processing: readiness budget exhausted`,
+    );
+  }
+
+  private async wait(containerId: string, budget: ReturnType<InstagramProvider['newBudget']>) {
+    const remaining = budget.deadline - this.now();
+    if (remaining <= 0 || budget.checks >= this.statusAttempts) this.timeout(containerId);
+    const delay = Math.min(5000, this.statusDelayMs * 2 ** Math.min(budget.waits++, 16));
+    await this.sleep(Math.min(delay, remaining));
+  }
+
+  private async awaitContainerReady(
+    tokens: AuthTokens,
+    containerId: string,
+    budget: ReturnType<InstagramProvider['newBudget']>,
+  ): Promise<void> {
+    while (budget.checks < this.statusAttempts && this.now() < budget.deadline) {
+      budget.checks++;
       const res = await this.client.graphGet<{ status_code?: string; status?: string }>(
         containerId,
         { fields: 'status_code,status', access_token: tokens.accessToken },
       );
-      if (res.status_code === 'FINISHED') return;
       if (res.status_code === 'ERROR' || res.status_code === 'EXPIRED') {
         throw new ProviderBadRequestError(
           `instagram container ${containerId} ${res.status_code}: ${res.status ?? 'no detail'}`,
         );
       }
-      await this.sleep(this.statusDelayMs);
+      if (res.status_code === 'PUBLISHED') {
+        // The media id is unknown. Never submit an already-published container again.
+        throw new ProviderBadRequestError(
+          `instagram container ${containerId} already PUBLISHED: ${res.status ?? 'media id unavailable; reconcile on Instagram'}`,
+        );
+      }
+      if (this.now() >= budget.deadline) this.timeout(containerId);
+      if (res.status_code === 'FINISHED') return;
+      await this.wait(containerId, budget);
     }
-    throw new ProviderTransientError(
-      `instagram container ${containerId} still processing after ${this.statusAttempts} checks`,
-    );
+    this.timeout(containerId);
   }
 
   private async publishContainer(
@@ -396,11 +434,21 @@ export class InstagramProvider implements SocialProvider {
     igUserId: string,
     containerId: string,
   ): Promise<string> {
-    const res = await this.client.graphPost<{ id: string }>(`${igUserId}/media_publish`, {
-      creation_id: containerId,
-      access_token: tokens.accessToken,
-    });
-    return res.id;
+    // Poll and publish-race retries share one budget and the same creation_id.
+    const budget = this.newBudget();
+    for (;;) {
+      await this.awaitContainerReady(tokens, containerId, budget);
+      try {
+        const res = await this.client.graphPost<{ id: string }>(`${igUserId}/media_publish`, {
+          creation_id: containerId,
+          access_token: tokens.accessToken,
+        });
+        return res.id;
+      } catch (err) {
+        if (!(err instanceof MetaContainerNotReadyError)) throw err;
+        await this.wait(containerId, budget);
+      }
+    }
   }
 
   /**
