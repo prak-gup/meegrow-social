@@ -25,6 +25,50 @@ import {
  * so it is unit-testable in node (apps/web vitest has no DOM).
  */
 
+export type ContentMode = 'post' | 'article';
+
+export function modeConnections(
+  connections: readonly ConnectionView[],
+  mode: ContentMode,
+): ConnectionView[] {
+  return connections.filter((c) => isArticleProvider(c.provider) === (mode === 'article'));
+}
+
+export function initialContentMode(
+  background: string,
+  posts: readonly Pick<PostView, 'provider'>[] = [],
+): ContentMode {
+  return /^\/blog(?:[/?]|$)/.test(background) || posts.some((p) => isArticleProvider(p.provider))
+    ? 'article'
+    : 'post';
+}
+
+/** Text is shared without truncation; selections are remembered independently in each mode. */
+export interface ComposerModes {
+  contentMode: ContentMode;
+  selections: Record<ContentMode, string[]>;
+}
+
+export function switchContentMode(state: ComposerModes, mode: ContentMode): ComposerModes {
+  return { ...state, contentMode: mode };
+}
+
+/** Empty requirements wait for interaction. Connection health is meaningful even before typing. */
+export function visibleAccountProblems(
+  connections: readonly ConnectionView[],
+  issues: readonly PostValidationIssue[],
+  selectedIds: readonly string[],
+  entered: boolean,
+  attempted: boolean,
+): Map<string, AccountWarning> {
+  const selected = selectedConnections(connections, selectedIds);
+  const ids = new Set(selectedIds);
+  return accountWarnings(
+    selected,
+    entered || attempted ? issues.filter((i) => i.connectionId && ids.has(i.connectionId)) : [],
+  );
+}
+
 export type ScheduleMode = 'draft' | 'now' | 'at' | 'queue';
 
 export const SCHEDULE_MODES: readonly ScheduleMode[] = ['draft', 'now', 'at', 'queue'];
@@ -464,9 +508,8 @@ export function setGroupSelected(
 }
 
 /**
- * The body of a dry run that asks about EVERY account, selected or not, so an account that cannot
- * take this post is marked before it is picked. Always a draft: a dry run must not depend on a
- * time or a queue.
+ * The body of a dry run over the supplied accounts (the UI passes current selections).
+ * Always a draft: content checks must not depend on a time or a queue.
  */
 export function buildValidationInput(
   form: Pick<ComposerForm, 'caption' | 'media' | 'article'>,

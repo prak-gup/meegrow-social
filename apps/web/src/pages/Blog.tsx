@@ -1,3 +1,4 @@
+import { PublishWaitingNote } from '../components/PublishWaitingNote';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { ConnectionView, PostView } from '@meegrow-social/contracts';
@@ -77,9 +78,12 @@ export function Blog() {
       sortKey: 'title',
       className: 'min-w-60 max-w-80',
       cell: (p) => (
-        <Link className="block break-words font-medium underline" to={`/blog/${p.id}`}>
-          {blogTitle(p)}
-        </Link>
+        <>
+          <Link className="block break-words font-medium underline" to={`/blog/${p.id}`}>
+            {blogTitle(p)}
+          </Link>
+          <PublishWaitingNote posts={[p]} />
+        </>
       ),
     },
     {

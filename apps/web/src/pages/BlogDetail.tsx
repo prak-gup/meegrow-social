@@ -1,3 +1,4 @@
+import { PublishWaitingNote } from '../components/PublishWaitingNote';
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { ConnectionView, PostView } from '@meegrow-social/contracts';
@@ -95,6 +96,7 @@ export function BlogDetail() {
               </>
             }
           />
+          <PublishWaitingNote posts={[post]} />
           {post.platformRemovedAt && (
             <p className="text-sm text-muted">
               Removed on the site. The stored copy remains here for reference.

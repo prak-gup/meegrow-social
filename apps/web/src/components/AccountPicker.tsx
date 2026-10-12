@@ -109,27 +109,16 @@ function AccountRow({
             <span
               id={reasonId}
               className={cn(
-                'line-clamp-2 break-words text-micro',
-                warning.kind === 'reconnect' ? 'text-status-bad' : 'text-status-warn',
+                'mt-1 flex items-start gap-1 rounded-xs bg-surface-soft px-1.5 py-1 text-caption text-error',
               )}
             >
+              <WarningCircle size={14} className="mt-0.5 flex-none" aria-hidden="true" />
               {warning.reason}
             </span>
           ) : (
             <span className="truncate text-micro text-muted">{platformLabel(conn.provider)}</span>
           )}
         </span>
-        {warning && (
-          <WarningCircle
-            size={16}
-            weight="fill"
-            aria-hidden="true"
-            className={cn(
-              'flex-none',
-              warning.kind === 'reconnect' ? 'text-status-bad' : 'text-status-warn',
-            )}
-          />
-        )}
       </span>
     </label>
   );
@@ -190,7 +179,7 @@ export function AccountPicker({
       )}
       {groups.length === 0 && (
         <p className="text-sm text-muted" role="status">
-          No accounts match “{query}”.
+          {query ? `No accounts match “${query}”.` : 'No accounts are available for this mode.'}
         </p>
       )}
       {groups.map(({ provider, accounts }) => {
@@ -220,7 +209,7 @@ export function AccountPicker({
                   key={c.id}
                   conn={c}
                   selected={picked.has(c.id)}
-                  warning={warnings.get(c.id)}
+                  warning={picked.has(c.id) ? warnings.get(c.id) : undefined}
                   onToggle={() => toggle(c.id)}
                   describedBy={describedBy}
                 />

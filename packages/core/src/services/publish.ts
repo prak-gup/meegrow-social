@@ -4,13 +4,20 @@ import { parseStoredOptions, type MediaRef } from '@meegrow-social/contracts';
 import { getProvider } from '../providers/registry.js';
 import type { AuthTokens, PostDetails } from '../providers/types.js';
 import { decryptToken } from '../crypto.js';
-import { ProviderAuthError, ProviderBadRequestError } from '../errors.js';
+import { ProviderAuthError, ProviderBadRequestError, ProviderRateLimitError } from '../errors.js';
 import { resolveMediaRefs } from './media.js';
+import {
+  nextRateLimitWait,
+  readRateLimitWait,
+  rateLimitWaitMessage,
+  rateLimitFailureMessage,
+} from './publish-rate-limit.js';
 
 export interface PublishOutcome {
   postId: string;
   /** `skipped`: the job was refused and nothing was sent or written to the post (see `skipped`). */
-  status: 'published' | 'failed' | 'skipped';
+  status: 'published' | 'failed' | 'skipped' | 'waiting';
+  retryAt?: Date;
   releaseUrl?: string;
   error?: string;
   /** Why a `skipped` job did nothing. */
@@ -88,7 +95,7 @@ function refusalMessage(
 export async function publishPost(
   workspaceId: string,
   postId: string,
-  now: Date = new Date(),
+  now?: Date,
 ): Promise<PublishOutcome> {
   return withWorkspace(workspaceId, async (tx) => {
     const [post] = await tx
@@ -103,7 +110,28 @@ export async function publishPost(
     if (post.status === 'published' && post.source !== 'imported') {
       return { postId, status: 'published', releaseUrl: post.releaseUrl ?? undefined };
     }
-    const refusal = publishRefusal(post, now);
+    const checkedAt = now ?? new Date();
+    const wait = readRateLimitWait(post.error);
+    if (post.status === PUBLISHABLE_STATUS && post.source !== 'imported' && wait) {
+      if (checkedAt.getTime() >= wait.deadline.getTime()) {
+        const message = rateLimitFailureMessage(post.provider);
+        await tx
+          .update(schema.posts)
+          .set({ status: 'failed', error: message })
+          .where(eq(schema.posts.id, postId));
+        await tx.insert(schema.eventLogs).values({
+          workspaceId,
+          kind: 'publish',
+          status: 'failed',
+          platform: post.provider,
+          message,
+        });
+        return { postId, status: 'failed', error: message };
+      }
+      if (checkedAt.getTime() < wait.retryAt.getTime())
+        return { postId, status: 'waiting', retryAt: wait.retryAt };
+    }
+    const refusal = publishRefusal(post, checkedAt);
     if (refusal) {
       const [account] = await tx
         .select({ displayName: schema.connections.displayName })
@@ -178,6 +206,33 @@ export async function publishPost(
       });
       return { postId, status: 'published', releaseUrl: result.releaseUrl };
     } catch (err) {
+      if (err instanceof ProviderRateLimitError) {
+        // The wait starts when the response arrives, after any upload or lock wait.
+        const next = nextRateLimitWait(
+          err,
+          post.publishAt ?? post.createdAt,
+          wait,
+          now ?? new Date(),
+        );
+        const message = next
+          ? rateLimitWaitMessage(post.provider, next)
+          : rateLimitFailureMessage(post.provider);
+        await tx
+          .update(schema.posts)
+          .set({ status: next ? 'scheduled' : 'failed', error: message })
+          .where(eq(schema.posts.id, postId));
+        await tx.insert(schema.eventLogs).values({
+          workspaceId,
+          kind: 'publish',
+          status: next ? 'rate_limited' : 'failed',
+          platform: post.provider,
+          account: conn.displayName,
+          message,
+        });
+        return next
+          ? { postId, status: 'waiting', retryAt: next.retryAt }
+          : { postId, status: 'failed', error: message };
+      }
       if (err instanceof ProviderAuthError) {
         await tx
           .update(schema.connections)

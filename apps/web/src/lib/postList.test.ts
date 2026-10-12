@@ -1,3 +1,4 @@
+import { publishWaitingTime } from './postList';
 import { describe, expect, it } from 'vitest';
 import type { PostView } from '@meegrow-social/contracts';
 import {
@@ -88,5 +89,17 @@ describe('view preference', () => {
   it('works when storage is unavailable', () => {
     expect(readViewMode(blocked)).toBe('grid');
     expect(() => writeViewMode('list', blocked)).not.toThrow();
+  });
+});
+
+describe('publishWaitingTime', () => {
+  it('shows a truthful timer only for deliberately waiting scheduled posts', () => {
+    const error =
+      'Waiting for telegram rate limit, retrying at 2026-10-12T02:00:00.000Z. Pause 1; deadline 2026-10-12T12:00:00.000Z.';
+    expect(publishWaitingTime({ status: 'scheduled', error })).toEqual(
+      new Date('2026-10-12T02:00:00Z'),
+    );
+    expect(publishWaitingTime({ status: 'failed', error })).toBeNull();
+    expect(publishWaitingTime({ status: 'scheduled', error: 'Other failure' })).toBeNull();
   });
 });

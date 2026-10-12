@@ -110,9 +110,15 @@ webhook delivery) · E. Antidote cutover · F. Dashboard completion + approval g
     - **Publish retries are few and fast: 3 attempts, exponential backoff from 2 minutes (≈2 min,
       then ≈4 min), transient errors only** — `PUBLISH_ATTEMPTS` / `PUBLISH_BACKOFF_MS` in
       `core/services/publish-queue.ts`. A social post is tied to its time; one that cannot go out
-      within minutes is marked `failed` (+ a `jobs_dlq` row) for a person to retry. This is _not_
-      the webhook schedule in D3 — a webhook delivery is worth retrying for 12 hours, a 9am post
-      is not.
+      within minutes is marked `failed` (+ a `jobs_dlq` row) for a person to retry.
+      **Rate limits are the exception:** a typed `ProviderRateLimitError` carries the platform wait
+      (30 seconds–6 hours), or uses an escalating fallback. The worker delays the same job without
+      spending an ordinary attempt, up to 12 hours after the original due time. The post stays
+      `scheduled`, with a visible waiting note in `error` and a `rate_limited` event log. `publishAt`
+      keeps the original due time. The waiting note persists the retry time, pause count and fixed
+      deadline. The sweep
+      leaves live waiting jobs alone and restores lost waiting timers, including after its usual
+      30-minute requeue window. No schema migration is required.
     - A `scheduled` post with nothing that will publish it is resolved by the worker's sweep
       (`core/services/publish-sweep.ts`, every 5 min): queued again if it was never attempted and is
       at most 30 minutes late, otherwise marked `failed`. It never re-runs a job that died.
@@ -704,3 +710,15 @@ i18n. This spec builds the five of those that matter (§5, §6, §8-F2) in about
 skips the rest on purpose.
 
 **Recommendation: keep building. Merge #60 today.**
+
+## Composer modes (2026-10-12)
+
+The dashboard composer creates either a Post (non-WordPress connections) or an Article (WordPress
+sites). Blog opens Article; otherwise Post is the default. Article is hidden without a WordPress
+connection. Switching keeps the shared caption/body without truncation, and remembers each mode's
+account selections and the article settings. Core and API still accept mixed groups.
+
+Only selected accounts show validation problems. Empty content requirements wait until typing or
+submit; reconnect problems remain immediately actionable. Provider validation issues are blocking
+errors, not cautions. The semantic error red and warning amber both have text contrast on neutral
+surfaces. Browser rendering and real platform timing need separate verification.

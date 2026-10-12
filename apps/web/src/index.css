@@ -16,7 +16,7 @@
     --rausch: 342 89% 46%; /* #de0d44, white text 4.9:1 (the old #ff385c was 3.5:1) */
     --rausch-active: 342 89% 38%; /* hover/pressed */
     --rausch-disabled: 348 100% 91%; /* #ffd1da */
-    --error: 16 76% 42%; /* #c13515 */
+    --error: 0 68% 42%; /* blocking error red */
 
     --ink: 0 0% 13%; /* #222 — never pure black */
     --body-ink: 0 0% 25%; /* #3f3f3f */
@@ -34,8 +34,8 @@
     /* semantic status (separate from Rausch accent) */
     /* all three read >= 4.5:1 as text on white and on their own 10% tint (chips) */
     --status-ok: 140 60% 28%; /* healthy / published */
-    --status-warn: 34 100% 27%; /* expiring / warning */
-    --status-bad: 16 80% 38%; /* failed / reconnect */
+    --status-warn: 43 100% 24%; /* expiring / warning */
+    --status-bad: 0 68% 38%; /* failed / reconnect */
     --status-idle: 0 0% 57%; /* draft / cancelled */
 
     --scrim: 0 0% 0%;
