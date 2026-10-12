@@ -1,3 +1,4 @@
+import { safeFetch, type SafeFetchOptions, type SafeResponse } from '../net/safe-fetch.js';
 import { and, desc, eq, gt, inArray, isNotNull, isNull, lt, or } from 'drizzle-orm';
 import { db, schema, withWorkspace, type Tx } from '@meegrow-social/db';
 import type {
@@ -64,6 +65,8 @@ export interface ImportDeps {
   sleep?: (ms: number) => Promise<void>;
   /** Fetches a thumbnail's bytes from the platform's CDN. */
   fetchImpl?: typeof fetch;
+  /** The guarded transport used for WordPress thumbnails; fixtures only override this. */
+  safeFetchImpl?: (url: string, options: SafeFetchOptions) => Promise<SafeResponse>;
 }
 
 /** Can this provider list an account's existing posts? Unregistered counts as no. */
@@ -77,11 +80,14 @@ export function connectionImportView(conn: {
   importState: unknown;
   lastImportAt: Date | null;
 }): ConnectionImportView {
-  return toImportView(
+  const view = toImportView(
     parseImportState(conn.importState),
     conn.lastImportAt,
     providerImportsPosts(conn.provider),
   );
+  if (tryGetProvider(conn.provider as ProviderIdentifier)?.importsWholeHistory)
+    view.windowDays = null;
+  return view;
 }
 
 /** What a new connection's `import_state` starts as: a queued first backfill, where supported. */
@@ -290,12 +296,17 @@ export async function runConnectionImport(
   const since = new Date(state.since);
   // Nothing newer than this is read: see IMPORT_SETTLE_MS.
   const settled = new Date(clock.now().getTime() - IMPORT_SETTLE_MS);
-  const read = await readImportWindow(state, state.until ? new Date(state.until) : settled, {
-    list: (query) => provider.listPublishedPosts!(tokens, query),
-    apply: (items) => applyImportPage(workspaceId, conn, items, deps),
-    sleep,
-    now: () => clock.now(),
-  });
+  const read = await readImportWindow(
+    state,
+    !provider.importsWholeHistory && state.until ? new Date(state.until) : settled,
+    {
+      list: (query) => provider.listPublishedPosts!(tokens, query),
+      apply: (items) => applyImportPage(workspaceId, conn, items, deps),
+      sleep,
+      now: () => clock.now(),
+      wholeHistory: provider.importsWholeHistory,
+    },
+  );
   state = read.state;
   const authFailed = read.authFailed;
 
@@ -420,6 +431,7 @@ export async function applyImportPage(
         releaseUrl: schema.posts.releaseUrl,
         publishAt: schema.posts.publishAt,
         caption: schema.posts.caption,
+        options: schema.posts.options,
         platformRemovedAt: schema.posts.platformRemovedAt,
       })
       .from(schema.posts)
@@ -437,7 +449,10 @@ export async function applyImportPage(
 
   const thumbnails = new Map<string, StoredThumbnail>();
   for (const item of plan.inserts) {
-    const stored = await copyThumbnail(workspaceId, item, deps.fetchImpl);
+    const stored =
+      conn.provider === 'wordpress'
+        ? await copyWordPressThumbnail(workspaceId, item, deps.safeFetchImpl)
+        : await copyThumbnail(workspaceId, item, deps.fetchImpl);
     if (stored) thumbnails.set(item.externalPostId, stored);
   }
 
@@ -514,6 +529,7 @@ async function insertImportedPost(
       status: 'published',
       source: 'imported',
       caption: item.caption,
+      options: item.options ?? null,
       media,
       publishAt: item.publishedAt,
       releaseUrl: item.permalink,
@@ -612,16 +628,27 @@ async function markRemovedPosts(
           isNull(schema.posts.platformRemovedAt),
           // Coarse: a post created before the window can still have been published inside it, and
           // `removalCandidates` applies the real bounds.
-          or(
-            and(gt(schema.posts.publishAt, window.since), lt(schema.posts.publishAt, window.until)),
-            and(isNull(schema.posts.publishAt), gt(schema.posts.createdAt, window.since)),
-          ),
+          provider.importsWholeHistory
+            ? undefined
+            : or(
+                and(
+                  gt(schema.posts.publishAt, window.since),
+                  lt(schema.posts.publishAt, window.until),
+                ),
+                and(isNull(schema.posts.publishAt), gt(schema.posts.createdAt, window.since)),
+              ),
         ),
       )
       .orderBy(desc(schema.posts.publishAt)),
   );
   const gone: string[] = [];
-  for (const post of removalCandidates(known, recognised, window)) {
+  for (const post of removalCandidates(
+    known,
+    recognised,
+    window,
+    undefined,
+    provider.importsWholeHistory,
+  )) {
     if ((await provider.publishedPostPresence(tokens, post.externalPostId!)) === 'gone') {
       gone.push(post.id);
     }
@@ -634,4 +661,23 @@ async function markRemovedPosts(
       .where(and(inArray(schema.posts.id, gone), isNull(schema.posts.platformRemovedAt))),
   );
   return gone.length;
+}
+
+/** Every WordPress featured-image URL is untrusted and uses the site's SSRF guard. */
+export async function copyWordPressThumbnail(
+  workspaceId: string,
+  item: Pick<PublishedPostItem, 'thumbnailUrl' | 'mediaKind'>,
+  fetchImpl: (url: string, options: SafeFetchOptions) => Promise<SafeResponse> = safeFetch,
+): Promise<StoredThumbnail | null> {
+  return copyThumbnail(workspaceId, item, async (url) => {
+    const response = await fetchImpl(String(url), {
+      timeoutMs: THUMBNAIL_TIMEOUT_MS,
+      maxResponseBytes: THUMBNAIL_MAX_BYTES,
+      maxRedirects: 3,
+    });
+    return new Response(new Uint8Array(response.body), {
+      status: response.status,
+      headers: response.headers,
+    });
+  });
 }

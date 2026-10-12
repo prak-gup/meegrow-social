@@ -100,6 +100,8 @@ export interface SocialProvider {
   readonly isBetweenSteps: boolean;
   readonly tokenModel: TokenModel;
   readonly maxConcurrentJobs: number;
+  /** Article inventories include old drafts and future site schedules outside social windows. */
+  readonly importsWholeHistory?: boolean;
   /**
    * What must be asked BEFORE the person can be sent anywhere (see `generateAuthUrl`'s `siteUrl`).
    * Absent for OAuth platforms.

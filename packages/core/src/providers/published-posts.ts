@@ -1,3 +1,4 @@
+import type { PostOptions } from '@meegrow-social/contracts';
 /**
  * Reading back what an account already has on the platform — the optional half of the provider
  * contract behind "import past posts" (`services/post-import.ts`). Kept out of `types.ts` so that
@@ -9,7 +10,7 @@ export interface PublishedPostQuery {
   since: Date;
   /** Newest publish time wanted. Absent = up to now. */
   until?: Date;
-  /** `nextCursor` of the previous page, within one run. Never stored: platforms expire them. */
+  /** `nextCursor` of the previous page, within one run. Social cursors are never stored; WordPress numeric page/offset may resume a run. */
   cursor?: string;
   /** Items per page. Kept modest by the caller; the provider clamps it to the platform's maximum. */
   limit: number;
@@ -31,6 +32,8 @@ export interface PublishedPostItem {
    */
   knownUrls: string[];
   caption: string;
+  /** Article metadata, retained on the existing options JSON column. */
+  options?: PostOptions;
   /** The platform's own publish time. */
   publishedAt: Date;
   permalink: string | null;

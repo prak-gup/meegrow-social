@@ -75,6 +75,8 @@ export interface StoredImportState {
    * from. A cursor is never kept — the platform expires them.
    */
   until: string | null;
+  /** Stable numeric page/offset for whole-blog transports only (not expiring social cursors). */
+  inventoryCursor?: string;
   requestedAt: string;
   startedAt: string | null;
   finishedAt: string | null;
@@ -110,6 +112,9 @@ export function parseImportState(value: unknown): StoredImportState | null {
     windowDays: count(v.windowDays) || IMPORT_BACKFILL_DAYS,
     since,
     until: text(v.until),
+    ...(typeof v.inventoryCursor === 'string' && /^\d+$/.test(v.inventoryCursor)
+      ? { inventoryCursor: v.inventoryCursor }
+      : {}),
     requestedAt,
     startedAt: text(v.startedAt),
     finishedAt: text(v.finishedAt),
@@ -255,6 +260,7 @@ export interface ReadWindowDeps {
   ): Promise<{ imported: number; matched: number; recognised: string[] }>;
   sleep(ms: number): Promise<void>;
   now(): Date;
+  wholeHistory?: boolean;
 }
 
 export interface ReadWindowResult {
@@ -306,14 +312,18 @@ export async function readImportWindow(
   const later = () => new Date(deps.now().getTime() + IMPORT_PAUSE_MS);
 
   try {
-    let cursor: string | undefined;
+    let cursor: string | undefined = deps.wholeHistory ? state.inventoryCursor : undefined;
     for (let page = 0; ; page++) {
       if (page >= IMPORT_MAX_PAGES_PER_RUN) {
         return paused(later(), 'Paused after a long read; it continues by itself.');
       }
       const listed = await deps.list({ since, until: ceiling, cursor, limit: IMPORT_PAGE_SIZE });
-      const inWindow = listed.items.filter(
-        (i) => i.publishedAt >= since && i.publishedAt <= ceiling,
+      const inWindow = listed.items.filter((i) =>
+        deps.wholeHistory
+          ? (i.options?.kind === 'wordpress' &&
+              (i.options.remote?.status ?? i.options.status) !== 'publish') ||
+            i.publishedAt <= ceiling
+          : i.publishedAt >= since && i.publishedAt <= ceiling,
       );
       const room = Math.max(IMPORT_MAX_POSTS_PER_RUN - state.seen, 0);
       const taken = inWindow.slice(0, room);
@@ -327,17 +337,20 @@ export async function readImportWindow(
         seen: state.seen + taken.length,
         imported: state.imported + applied.imported,
         matched: state.matched + applied.matched,
+        ...(deps.wholeHistory ? { inventoryCursor: listed.nextCursor ?? undefined } : {}),
       };
 
       // The provider may not honour `since`; a page wholly older than the window ends the read.
       const pastWindow =
-        listed.items.length > 0 && listed.items.every((i) => i.publishedAt < since);
+        !deps.wholeHistory &&
+        listed.items.length > 0 &&
+        listed.items.every((i) => i.publishedAt < since);
       const more = Boolean(listed.nextCursor) && !pastWindow;
       if (taken.length < inWindow.length || (state.seen >= IMPORT_MAX_POSTS_PER_RUN && more)) {
         state = {
           ...state,
           capped: true,
-          message: `Stopped at ${IMPORT_MAX_POSTS_PER_RUN} posts, the most one import reads. Older posts in this window were not imported.`,
+          message: `Stopped at ${IMPORT_MAX_POSTS_PER_RUN} posts, the most one import reads. ${deps.wholeHistory ? 'Remaining articles were not imported.' : 'Older posts in this window were not imported.'}`,
         };
         return { state, recognised, complete: true, authFailed: false };
       }
@@ -392,6 +405,7 @@ export interface KnownPost {
   releaseUrl: string | null;
   publishAt: Date | null;
   caption: string;
+  options?: unknown;
   platformRemovedAt: Date | null;
 }
 
@@ -399,6 +413,7 @@ export interface PostPatch {
   publishAt?: Date;
   externalPostId?: string;
   caption?: string;
+  options?: PublishedPostItem['options'];
   releaseUrl?: string;
   platformRemovedAt?: null;
 }
@@ -468,6 +483,8 @@ export function planImportPage(
     const patch: PostPatch = {};
     if (match.source === 'imported') {
       if (match.caption !== item.caption) patch.caption = item.caption;
+      if (item.options && JSON.stringify(match.options) !== JSON.stringify(item.options))
+        patch.options = item.options;
       if (item.permalink && match.releaseUrl !== item.permalink) patch.releaseUrl = item.permalink;
       if (match.publishAt?.getTime() !== item.publishedAt.getTime()) {
         patch.publishAt = item.publishedAt;
@@ -502,6 +519,7 @@ export function removalCandidates<
   recognised: ReadonlySet<string>,
   window: { since: Date; until: Date },
   limit = IMPORT_MAX_REMOVAL_CHECKS,
+  wholeHistory = false,
 ): P[] {
   const at = (p: P & { createdAt: Date }) => (p.publishAt ?? p.createdAt).getTime();
   return known
@@ -511,8 +529,7 @@ export function removalCandidates<
         p.externalPostId !== null &&
         p.platformRemovedAt === null &&
         !recognised.has(p.id) &&
-        at(p) > window.since.getTime() &&
-        at(p) < window.until.getTime(),
+        (wholeHistory || (at(p) > window.since.getTime() && at(p) < window.until.getTime())),
     )
     .sort((a, b) => at(b) - at(a))
     .slice(0, limit);

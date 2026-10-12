@@ -1,3 +1,4 @@
+import type { ChipStatus } from './statusChip';
 import type {
   PostGroupSummary,
   PostMediaView,
@@ -184,10 +185,18 @@ export function groupRemoval(posts: readonly (Sourced & Pick<PostView, 'status'>
  * What a group's chip says: its status, except that a group whose published variants are ALL gone
  * from their platform reads "Removed on platform" rather than "Published".
  */
-export function groupChip(
-  group: Pick<PostGroup, 'status' | 'posts'>,
-): PostGroup['status'] | 'removed' {
-  return group.status === 'published' && groupRemoval(group.posts).all ? 'removed' : group.status;
+export function groupChip(group: Pick<PostGroup, 'status' | 'posts'>): ChipStatus {
+  if (group.status === 'published' && groupRemoval(group.posts).all) return 'removed';
+  const post = group.posts.length === 1 ? group.posts[0] : undefined;
+  if (
+    post?.provider === 'wordpress' &&
+    post.status === 'published' &&
+    post.options?.kind === 'wordpress'
+  ) {
+    const status = post.options.remote?.status ?? post.options.status;
+    if (status !== 'publish') return `site_${status}`;
+  }
+  return group.status;
 }
 
 /** A day's or a page's posts under the source filter. '' keeps everything. */

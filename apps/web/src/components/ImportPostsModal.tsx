@@ -75,41 +75,50 @@ export function ImportPostsModal({
         Calendar and Analytics.
       </p>
 
-      <fieldset className="mt-4" disabled={busy || running}>
-        <legend className="mb-1.5 text-sm font-medium text-ink">How far back</legend>
-        <div className="grid grid-cols-2 gap-1.5">
-          {IMPORT_WINDOWS.map((w) => (
-            <label
-              key={w.days}
-              className={cn(
-                'flex min-h-11 cursor-pointer items-center gap-2 rounded-sm border px-3 text-sm md:min-h-9',
-                days === w.days ? 'border-ink bg-surface-strong font-medium' : 'border-hairline',
-                (busy || running) && 'cursor-default opacity-60',
-              )}
-            >
-              <input
-                type="radio"
-                name="import-window"
-                className="accent-ink"
-                checked={days === w.days}
-                onChange={() => setDays(w.days)}
-              />
-              {w.label}
-            </label>
-          ))}
-        </div>
-      </fieldset>
+      {connection.provider === 'wordpress' ? (
+        <p className="mt-4 text-sm text-body-ink">
+          Reads the whole blog, including drafts and articles scheduled on the site, up to 500
+          articles per run.
+        </p>
+      ) : (
+        <fieldset className="mt-4" disabled={busy || running}>
+          <legend className="mb-1.5 text-sm font-medium text-ink">How far back</legend>
+          <div className="grid grid-cols-2 gap-1.5">
+            {IMPORT_WINDOWS.map((w) => (
+              <label
+                key={w.days}
+                className={cn(
+                  'flex min-h-11 cursor-pointer items-center gap-2 rounded-sm border px-3 text-sm md:min-h-9',
+                  days === w.days ? 'border-ink bg-surface-strong font-medium' : 'border-hairline',
+                  (busy || running) && 'cursor-default opacity-60',
+                )}
+              >
+                <input
+                  type="radio"
+                  name="import-window"
+                  className="accent-ink"
+                  checked={days === w.days}
+                  onChange={() => setDays(w.days)}
+                />
+                {w.label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
 
       <ul className="mt-4 list-disc space-y-1 pl-4 text-caption text-muted">
         <li>Nothing is posted, edited or deleted on {platform}. This only reads.</li>
         <li>Posts you published from here are recognised, not duplicated.</li>
         <li>
-          Imported posts are marked “Imported”. They can be viewed and duplicated as a draft, never
-          edited or republished.
+          {connection.provider === 'wordpress'
+            ? 'Articles are marked “Imported”. Their site status is shown separately. Imported HTML cannot be republished through the composer.'
+            : 'Imported posts are marked “Imported”. They can be viewed and duplicated as a draft, never edited or republished.'}
         </li>
         <li>
-          Up to 500 posts per import, newest first. Their numbers are collected over the following
-          hours.
+          {connection.provider === 'wordpress'
+            ? 'Up to 500 articles per import, newest first. WordPress core does not supply analytics.'
+            : 'Up to 500 posts per import, newest first. Their numbers are collected over the following hours.'}
         </li>
       </ul>
 

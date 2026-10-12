@@ -271,11 +271,16 @@ export function usePostGroupActions(opts: {
         onSelect: () => open('retry', failed),
       });
     }
-    out.push({
-      label: imported ? 'Duplicate caption as draft' : 'Duplicate as draft',
-      icon: <Copy size={ICON} />,
-      onSelect: () => void duplicate(group, imported),
-    });
+    if (
+      !group.posts.some(
+        (p) => p.options?.kind === 'wordpress' && p.options.remote?.bodyFormat === 'html',
+      )
+    )
+      out.push({
+        label: imported ? 'Duplicate caption as draft' : 'Duplicate as draft',
+        icon: <Copy size={ICON} />,
+        onSelect: () => void duplicate(group, imported),
+      });
     // Two accounts on one platform need the account name to be told apart.
     const perPlatform = new Map<string, number>();
     for (const l of links)
